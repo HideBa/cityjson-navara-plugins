@@ -25,3 +25,29 @@ export {
   isSupportedCityModelEncoding,
   getPreferredCityModelEncoding,
 } from "./citymodel/supportedEncodings";
+
+export type {
+  CityJSONRoot,
+  CityJSONTransform,
+  CityJSONVertex,
+  CityJSONObjectType,
+  CityJSONObject,
+  CityJSONGeometryType,
+  CityJSONGeometryBase,
+  CityJSONSurfaceGeometry,
+  CityJSONGeometryInstance,
+  CityJSONGeometry,
+  CityJSONSemanticSurfaceType,
+  CityJSONSemanticSurface,
+  CityJSONSemantics,
+  CityJSONMetadata,
+  CityJSONPointOfContact,
+  CityJSONGeometryTemplates,
+} from "./citymodel/cityjson/types";
+export {
+  dequantizeAll,
+  mergeBBox,
+  parseCityObject,
+  mapMetadata,
+} from "./citymodel/cityjson/parseHelpers";
+export { parseCityJSON } from "./citymodel/cityjson/parseCityJSON";
