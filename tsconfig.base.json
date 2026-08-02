@@ -21,6 +21,9 @@
     "paths": {
       "@cityjson/navara-core": ["packages/navara-core/src/index.ts"],
       "@cityjson/navara-cityjson": ["packages/navara-cityjson/src/index.ts"],
+      "@cityjson/navara-cityjson/plugin": [
+        "packages/navara-cityjson/src/plugin.ts"
+      ],
       "@cityjson/navara-flatcitybuf": [
         "packages/navara-flatcitybuf/src/index.ts"
       ],

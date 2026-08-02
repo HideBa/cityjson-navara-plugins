@@ -228,6 +228,9 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    *  report an error for a layer that no longer exists (the old driver's
    *  `if (!latest) return` / catch guard, useTileStreaming.ts). */
   private _deleted = false;
+  /** One console warning per layer, however many unresolvable engine picks
+   *  arrive (see {@link warnUnresolvablePick}). */
+  private warnedUnresolvablePick = false;
 
   private readonly residentModel = createResidentModelMemo();
 
@@ -818,23 +821,29 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       // engine reporting `layerId: undefined` / `properties: null`.
       const claimed = pick.layerId ?? props?.layerId;
       if (typeof claimed === "string" && claimed !== this.id) return null;
+      // There is deliberately NO `batchId` branch, exactly as on the static
+      // path (`CityModelRegistry.resolvePick`, Task B7): the spike measured
+      // `PickableMeshWrapper` allocating ONE uniform batch id for the whole
+      // mesh (both triangles of the probe returned 4666372, with
+      // `properties: null`), so a batch id is not a triangle index and
+      // `batchIdMap()[batchId]` could only ever be a coincidence. A caller
+      // that already knows the indices — a replayed pick, a test, a future
+      // engine that reports them — is answered from `properties`.
+      const objectIndex = props?.objectIndex;
+      const surfaceIndex = props?.surfaceIndex;
+      if (typeof objectIndex !== "number" || typeof surfaceIndex !== "number") {
+        // The engine-pick signature: no indices to resolve with, and under
+        // `pickable-wrapper` there never will be any.
+        this.warnUnresolvablePick();
+        return null;
+      }
       const cellKey = props?.cellKey;
       const cell =
         typeof cellKey === "string" ? this.cells.get(cellKey) : undefined;
+      // Not a warning: a replayed pick naming a cell that has since been
+      // evicted (or never was resident here) is an ordinary race, not a
+      // limitation of the pick path.
       if (!cell) return null;
-      // `batchIdMap()` is EMPTY under the shipped `own-raycast` strategy (the
-      // engine's batch id is per mesh, not per triangle — Task B1 §3), so this
-      // lookup only ever resolves under `pickable-wrapper`; the properties
-      // fallback below is what actually answers a replayed pick today.
-      const entry =
-        typeof pick.batchId === "number"
-          ? cell.handle.batchIdMap()[pick.batchId]
-          : undefined;
-      const objectIndex = entry?.objectIndex ?? props?.objectIndex;
-      const surfaceIndex = entry?.surfaceIndex ?? props?.surfaceIndex;
-      if (typeof objectIndex !== "number" || typeof surfaceIndex !== "number") {
-        return null;
-      }
       return this.selectionFor(cell, objectIndex, surfaceIndex);
     }
 
@@ -866,6 +875,26 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
     }
     if (!best || !bestCell) return null;
     return this.selectionFor(bestCell, best.objectIndex, best.surfaceIndex);
+  }
+
+  /**
+   * Warn once that an engine pick event cannot be resolved to a surface.
+   *
+   * The streaming twin of `CityModelRegistry.warnUnresolvablePick` (Task B7),
+   * and reachable for the same reason: under
+   * `pickStrategy: "pickable-wrapper"` the engine's `PickedFeature` comes back
+   * with `properties: null`, so it names neither the surface nor the resident
+   * cell, and its `batchId` is per MESH rather than per triangle. The shipped
+   * default is `"own-raycast"`, whose picks arrive as a `ScreenPoint` and
+   * never reach here. Once per layer, because a pick event fires on every
+   * click.
+   */
+  private warnUnresolvablePick(): void {
+    if (this.warnedUnresolvablePick) return;
+    this.warnedUnresolvablePick = true;
+    console.warn(
+      `[navara-flatcitybuf] layer "${this.id}": an engine pick event carried no surface indices, so it cannot be resolved — PickableMeshWrapper allocates one uniform batch id per mesh, not per triangle. Use the "own-raycast" strategy (the default) and route picks as screen points.`,
+    );
   }
 
   /** Always a `SurfaceSelection`, exactly like the static path; the app

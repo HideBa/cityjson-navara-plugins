@@ -6,9 +6,12 @@
  * pure TypeScript over plain data (tile arithmetic, cache budgets, hysteresis,
  * feature bucketing, worker message shapes, FCB header admission) plus
  * `WorkerClient`, which only touches the DOM `Worker` constructor from inside
- * its own constructor. The engine-bound half (the `@navaramap/*` imports)
- * lands in a later M7.5 task behind its own entry point, exactly as
- * `@cityjson/navara-cityjson/plugin` does — see Task B1's
+ * its own constructor, and `StreamLayerRegistry`, whose engine seams are all
+ * injected.
+ *
+ * The engine-bound half — `FlatCityBufPlugin` and the `getPickRay` binding —
+ * lives behind the `./plugin` entry point, exactly as
+ * `@cityjson/navara-cityjson/plugin` does; see Task B1's
  * NODE_IMPORT_SAFE = false verdict.
  *
  * `./fcb.worker.ts` is deliberately NOT re-exported: it is a worker entry
@@ -31,10 +34,12 @@ export * from "./workerClient";
 export * from "./fcbSource";
 export * from "./viewportFootprint";
 export * from "./streamLayer";
+export * from "./streamRegistry";
 export * from "./residentModel";
 export * from "./commitPlanner";
 export * from "./settleController";
 export * from "./cellMeshes";
+export * from "./cellMeshFactory";
 export * from "./entryToArrays";
 // The ray *adapter* is engine-free and belongs here; the binding that supplies
 // Navara's real `getPickRay` (`./engineRays`) does NOT, and is re-exported from

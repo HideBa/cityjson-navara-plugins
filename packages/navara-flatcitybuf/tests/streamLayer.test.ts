@@ -868,6 +868,73 @@ describe("FcbStreamLayerHandle interaction parity", () => {
     ).toBeNull();
   });
 
+  it("has NO batchId branch, and warns once about an unresolvable engine pick (C10b fold-in)", async () => {
+    const factory = pickingFactory();
+    // `batchIdMap()` here reports one entry — i.e. a batchId branch WOULD
+    // resolve `batchId: 0` to `{objectIndex: 0, surfaceIndex: 4}`. It must
+    // not: the spike measured PickableMeshWrapper allocating ONE uniform
+    // batch id per MESH, so a batch id is not a triangle index and the match
+    // could only ever be a coincidence. Deleted here exactly as on the static
+    // path (`CityModelRegistry.resolvePick`, Task B7).
+    const { handle } = makeHandle({ meshFactory: factory.factory });
+    await handle.commit(topDownRays());
+    const key = [...factory.created.keys()][0]!;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(
+      handle.resolvePick({ batchId: 0, properties: { cellKey: key } }),
+    ).toBeNull();
+    // The shape the engine actually delivers under `pickable-wrapper`:
+    // `properties: null`, `layerId: undefined` (spike §3).
+    expect(
+      handle.resolvePick({ batchId: 4666372, properties: undefined }),
+    ).toBeNull();
+    // Once per layer, however many clicks arrive.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain("[navara-flatcitybuf]");
+
+    // A feature ROUTED AWAY is not an unresolvable pick — it belongs to
+    // another layer, which is a normal outcome and must stay silent.
+    const other = makeHandle({ meshFactory: pickingFactory().factory });
+    await other.handle.commit(topDownRays());
+    warn.mockClear();
+    expect(
+      other.handle.resolvePick({
+        properties: { layerId: "OTHER", cellKey: key },
+      }),
+    ).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("paints a highlight set BEFORE the first commit onto the cells when they arrive (C10b fold-in)", async () => {
+    const factory = pickingFactory();
+    const { handle } = makeHandle({ meshFactory: factory.factory });
+
+    // The real ordering the app produces: a share link (or a restored
+    // session) applies its selection while the layer is still empty, and the
+    // first cells land seconds later. Nothing revisits them afterwards, so if
+    // the post-sync re-apply does not run, the selected object renders
+    // unhighlighted until the user clicks something.
+    const objectId = "B_5/14/14";
+    handle.setHighlight([{ kind: "object", layerId: "l1", objectId }]);
+    expect(factory.all).toHaveLength(0); // nothing resident yet
+
+    await handle.commit(topDownRays());
+
+    const owner = [...factory.created.values()].find((rec) =>
+      rec.objectKeys.includes(objectId),
+    );
+    expect(owner).toBeDefined();
+    const highlight = srgbHexToLinear(HIGHLIGHT_COLOR_HEX);
+    expect(rendered(owner!)[0]!).toBeCloseTo(highlight[0]!, 6);
+    // ...and only that cell.
+    for (const rec of factory.all) {
+      if (rec === owner) continue;
+      expect(rendered(rec)).toEqual(new Array(CELL_COLOR_LEN).fill(BASE));
+    }
+  });
+
   it("setHighlight paints the selected object's cell and leaves every other cell at its base colours", async () => {
     const factory = pickingFactory();
     const { handle } = makeHandle({ meshFactory: factory.factory });
