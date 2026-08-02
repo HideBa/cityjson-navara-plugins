@@ -9,6 +9,14 @@ export const CITYJSON_PLUGIN_PLACEHOLDER = `@cityjson/navara-cityjson (core ${NA
 
 export { disposeGeometry, geometryFromMeshArrays } from "./cityMeshGeometry";
 
+export type { CityModelMeshOptions } from "./cityModelMesh";
+export { CityModelMesh } from "./cityModelMesh";
+
+export type { PickStrategy } from "./pickStrategy";
+export { DEFAULT_PICK_STRATEGY } from "./pickStrategy";
+
+export type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
+
 export type {
   ObjectSelection,
   PickedFeatureLike,
@@ -25,13 +33,17 @@ export {
   paintLayers,
 } from "./surfaceColorLayers";
 
-export type { GeodeticBounds, Lle } from "./enuPlacement";
+export type { GeodeticBounds, Lle, Placement } from "./enuPlacement";
 export {
+  assertMetricCrs,
+  buildPlacement,
   CrsUnresolvedError,
   geodeticBoundsFromBBox,
   makePlacementFrame,
+  NonMetricCrsError,
   originLleFromOffset,
   placementMatrixFromFrame,
   placementMatrixFromLle,
   resolveEpsg,
+  resolveMetricEpsg,
 } from "./enuPlacement";

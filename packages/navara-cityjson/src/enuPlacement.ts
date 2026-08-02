@@ -56,15 +56,60 @@ export class CrsUnresolvedError extends Error {
   }
 }
 
+export class NonMetricCrsError extends Error {
+  constructor(
+    readonly epsg: number,
+    readonly units: string | undefined,
+  ) {
+    super(
+      `Cannot georeference this layer: CRS EPSG:${epsg} is not metre-based (units: ${
+        units ?? "unspecified"
+      }). CityJSON z, the geoid offset and every downstream distance are metres, so this layer cannot be placed.`,
+    );
+    this.name = "NonMetricCrsError";
+  }
+}
+
 /**
  * The spec 4.3 CRS gate: a layer either has a CRS proj4 can reproject through
  * or it does not load at all. There is no planar fallback — an ungeoreferenced
  * mesh has nowhere to go on a globe renderer.
+ *
+ * Says nothing about units — see {@link resolveMetricEpsg}, which is what a
+ * load path should call.
  */
 export function resolveEpsg(crs: string | number | undefined): number {
   const epsg = typeof crs === "number" ? crs : parseEpsgCode(crs);
   if (epsg === null || epsg === undefined) throw new CrsUnresolvedError(crs);
   if (!ensureProjDef(epsg)) throw new CrsUnresolvedError(crs);
+  return epsg;
+}
+
+/**
+ * The units half of the gate: `epsg`'s proj4 definition must *explicitly*
+ * declare metres.
+ *
+ * proj4 reprojects x/y out of a foot-based or degree-based CRS perfectly well,
+ * so nothing downstream would fail loudly — the layer would just render with
+ * heights (and a geoid offset, and every metre-denominated distance constant)
+ * scaled wrong, which is far worse than a refusal. Absence of an explicit
+ * `+units=m` is treated as "not established", mirroring the app's FlatCityBuf
+ * admission check (`checkAdmission` in
+ * `src/domain/citymodel/flatcitybuf/fcbSource.ts`), so the static load path is
+ * not the hole in that policy.
+ */
+export function assertMetricCrs(epsg: number): void {
+  const units = proj4.defs(`EPSG:${epsg}`)?.units as string | undefined;
+  if (units !== "m") throw new NonMetricCrsError(epsg, units);
+}
+
+/**
+ * The full admission gate for a static layer: resolvable by proj4 AND
+ * metre-based. `CityModelMesh` calls this, not `resolveEpsg`.
+ */
+export function resolveMetricEpsg(crs: string | number | undefined): number {
+  const epsg = resolveEpsg(crs);
+  assertMetricCrs(epsg);
   return epsg;
 }
 
@@ -160,7 +205,36 @@ export function placementMatrixFromFrame(frame: EnuFrame): Matrix4 {
 
 /** ENU(metres) -> ECEF placement matrix for a layer origin. */
 export function placementMatrixFromLle(lle: Lle): Matrix4 {
-  return placementMatrixFromFrame(
-    makeEnuFrame(lle.lng, lle.lat, lle.height),
-  );
+  return placementMatrixFromFrame(makeEnuFrame(lle.lng, lle.lat, lle.height));
+}
+
+/**
+ * Everything a placed mesh needs, produced in one call so the three parts
+ * cannot drift apart.
+ */
+export interface Placement {
+  /** The ENU frame the vertices are projected into. */
+  readonly frame: EnuFrame;
+  /** That same frame as an ENU->ECEF matrix, for the mesh's `matrixWorld`. */
+  readonly matrixWorld: Matrix4;
+  /** The offset baked into `frame`, to hand to `projectPositionsToEnu`. */
+  readonly heightOffset: number;
+}
+
+/**
+ * Build a layer's (or cell's) placement bundle.
+ *
+ * `makePlacementFrame` already documents the frame+offset invariant, but a
+ * caller still had to remember to derive the matrix from the SAME frame and to
+ * pass the SAME offset on to `projectPositionsToEnu` — three values wired by
+ * hand at every call site. This returns all three together, so the only way to
+ * mis-wire them is to ignore the bundle. `CityModelMesh` (Task B6) and the
+ * streaming cell path (Tasks C5/C8) both consume it.
+ */
+export function buildPlacement(
+  originLle: Lle,
+  heightOffset: number,
+): Placement {
+  const frame = makePlacementFrame(originLle, heightOffset);
+  return { frame, matrixWorld: placementMatrixFromFrame(frame), heightOffset };
 }

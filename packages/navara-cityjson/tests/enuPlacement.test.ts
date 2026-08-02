@@ -1,17 +1,21 @@
 import { describe, it, expect } from "vitest";
+import proj4 from "proj4";
 import {
   makeEnuFrame,
   projectPositionsToEnu,
   type Vec3,
 } from "@cityjson/navara-core";
 import {
+  buildPlacement,
   CrsUnresolvedError,
   geodeticBoundsFromBBox,
   makePlacementFrame,
+  NonMetricCrsError,
   originLleFromOffset,
   placementMatrixFromFrame,
   placementMatrixFromLle,
   resolveEpsg,
+  resolveMetricEpsg,
 } from "../src/enuPlacement";
 
 // Fixture CRS: EPSG:7415 (RD New + NAP), the two-buildings fixture's CRS.
@@ -207,5 +211,95 @@ describe("frame + heightOffset pairing", () => {
     // The offset frame's ECEF origin is N metres further from Earth's centre.
     const len = (e: ArrayLike<number>) => Math.hypot(e[12]!, e[13]!, e[14]!);
     expect(len(m.elements) - len(raw.elements)).toBeCloseTo(N, 3);
+  });
+});
+
+/**
+ * `buildPlacement` is the bundle form of the pairing above: one call produces
+ * the frame, the ECEF matrix derived from THAT frame, and the offset that must
+ * be handed to `projectPositionsToEnu`. Task B6 (static layers) and Task C5/C8
+ * (streaming cells) both go through it, so neither can wire one height into the
+ * frame and another into the vertices.
+ */
+describe("buildPlacement", () => {
+  const lle = { lng: 4.3571, lat: 52.0116, height: 5 };
+
+  it("returns a frame, its own matrix, and the offset that built them", () => {
+    const p = buildPlacement(lle, 43);
+    expect(p.heightOffset).toBe(43);
+    expect(p.frame.heightM).toBeCloseTo(48, 12);
+    expect(p.matrixWorld.elements[12]).toBeCloseTo(p.frame.originEcef[0], 9);
+    expect(p.matrixWorld.elements[13]).toBeCloseTo(p.frame.originEcef[1], 9);
+    expect(p.matrixWorld.elements[14]).toBeCloseTo(p.frame.originEcef[2], 9);
+  });
+
+  it("is exactly makePlacementFrame + placementMatrixFromFrame", () => {
+    const p = buildPlacement(lle, 43);
+    const frame = makePlacementFrame(lle, 43);
+    expect(Array.from(p.frame.matrix)).toEqual(Array.from(frame.matrix));
+    expect(Array.from(p.matrixWorld.elements)).toEqual(
+      Array.from(placementMatrixFromFrame(frame).elements),
+    );
+  });
+
+  it("projects a vertex at the origin's own height to ENU z ~ 0", () => {
+    const origin: Vec3 = [85000, 446000, 0];
+    const p = buildPlacement(originLleFromOffset(origin, 7415), 43);
+    const positions = new Float32Array([0, 0, 0]);
+    projectPositionsToEnu(positions, {
+      originOffset: origin,
+      epsg: 7415,
+      frame: p.frame,
+      heightOffset: p.heightOffset,
+    });
+    expect(positions[2]).toBeCloseTo(0, 6);
+  });
+});
+
+/**
+ * The metric-units gate (carried forward from the Task B4 review). The app
+ * refuses a non-metre CRS at FlatCityBuf admission (`checkAdmission` in
+ * `src/domain/citymodel/flatcitybuf/fcbSource.ts`); `resolveEpsg` alone only
+ * asks whether proj4 has SOME definition, which a US-survey-feet CRS also
+ * satisfies. Heights and every downstream distance are metres, so the static
+ * load path applies the same conservative refusal.
+ */
+describe("resolveMetricEpsg", () => {
+  // Registered here rather than relying on a real code, so the assertion is
+  // about `units`, not about which codes this proj4 bundle happens to know.
+  const FEET = 990001;
+  const METRE = 990002;
+  proj4.defs(
+    `EPSG:${FEET}`,
+    "+proj=lcc +lat_0=40.1666666666667 +lon_0=-74 +lat_1=41.0333333333333 +lat_2=40.6666666666667 +x_0=300000 +y_0=0 +ellps=GRS80 +units=us-ft +no_defs +type=crs",
+  );
+  proj4.defs(
+    `EPSG:${METRE}`,
+    "+proj=lcc +lat_0=40.1666666666667 +lon_0=-74 +lat_1=41.0333333333333 +lat_2=40.6666666666667 +x_0=300000 +y_0=0 +ellps=GRS80 +units=m +no_defs +type=crs",
+  );
+
+  it("admits the fixture CRS (RD New is metre-based)", () => {
+    expect(resolveMetricEpsg("https://www.opengis.net/def/crs/EPSG/0/7415")).toBe(
+      7415,
+    );
+    expect(resolveMetricEpsg(28992)).toBe(28992);
+  });
+
+  it("refuses a geographic CRS whose units are degrees", () => {
+    expect(() => resolveMetricEpsg(4326)).toThrow(NonMetricCrsError);
+  });
+
+  it("refuses a projected CRS in US survey feet, and names its units", () => {
+    expect(() => resolveMetricEpsg(FEET)).toThrow(NonMetricCrsError);
+    expect(() => resolveMetricEpsg(FEET)).toThrow(/us-ft/);
+  });
+
+  it("admits the same definition once its units really are metres — the check is on units, not on the code", () => {
+    expect(resolveMetricEpsg(METRE)).toBe(METRE);
+  });
+
+  it("still reports an unresolvable CRS as CrsUnresolvedError, not as non-metric", () => {
+    expect(() => resolveMetricEpsg(undefined)).toThrow(CrsUnresolvedError);
+    expect(() => resolveMetricEpsg(99999)).toThrow(CrsUnresolvedError);
   });
 });
