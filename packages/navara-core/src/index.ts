@@ -54,3 +54,10 @@ export { parseCityJSON } from "./citymodel/cityjson/parseCityJSON";
 
 export type { CityJSONFeature } from "./citymodel/cityjsonseq/types";
 export { parseCityJSONSeq } from "./citymodel/cityjsonseq/parseCityJSONSeq";
+
+export type { LinearRGB } from "./styling/surfaceColors";
+export {
+  SURFACE_COLOR_VALUES,
+  SURFACE_COLOR_HEX,
+  SURFACE_COLORS_LINEAR,
+} from "./styling/surfaceColors";
