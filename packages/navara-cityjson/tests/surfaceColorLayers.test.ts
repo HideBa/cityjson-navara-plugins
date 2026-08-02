@@ -117,6 +117,75 @@ describe("paintLayers", () => {
     expect(Array.from(target.slice(6, 9))).toEqual([0.5, 0.5, 0.5]);
   });
 
+  it("paints every selected surface of the SAME object, not just the last", () => {
+    // 4 vertices, one object ("B1"), two surfaces: v0,v1 -> surface 0;
+    // v2,v3 -> surface 1. Regression for the B16 smoke finding: keying the
+    // resolved selections by object index alone made the second surface
+    // selection evict the first, so only the last-painted face highlighted.
+    const oneObjectIndices = new Uint32Array([0, 0, 0, 0]);
+    const twoSurfaceIndices = new Uint32Array([0, 0, 1, 1]);
+    const target = new Float32Array(base.length);
+    paintLayers(
+      target,
+      base,
+      oneObjectIndices,
+      twoSurfaceIndices,
+      ["B1"],
+      [
+        { kind: "surface", layerId: "L", objectId: "B1", surfaceIndex: 0 },
+        { kind: "surface", layerId: "L", objectId: "B1", surfaceIndex: 1 },
+      ],
+      null,
+    );
+    const [hr, hg, hb] = srgbHexToLinear(HIGHLIGHT_COLOR_HEX);
+    for (const v of [0, 1, 2, 3]) {
+      expect(target[v * 3]).toBeCloseTo(hr, 6);
+      expect(target[v * 3 + 1]).toBeCloseTo(hg, 6);
+      expect(target[v * 3 + 2]).toBeCloseTo(hb, 6);
+    }
+  });
+
+  it("keeps an object-kind selection painting all surfaces of the object", () => {
+    const oneObjectIndices = new Uint32Array([0, 0, 0, 0]);
+    const twoSurfaceIndices = new Uint32Array([0, 0, 1, 1]);
+    const target = new Float32Array(base.length);
+    paintLayers(
+      target,
+      base,
+      oneObjectIndices,
+      twoSurfaceIndices,
+      ["B1"],
+      [{ kind: "object", layerId: "L", objectId: "B1" }],
+      null,
+    );
+    const [hr, hg, hb] = srgbHexToLinear(HIGHLIGHT_COLOR_HEX);
+    for (const v of [0, 1, 2, 3]) {
+      expect(target[v * 3]).toBeCloseTo(hr, 6);
+      expect(target[v * 3 + 1]).toBeCloseTo(hg, 6);
+      expect(target[v * 3 + 2]).toBeCloseTo(hb, 6);
+    }
+  });
+
+  it("leaves an unselected surface of a partially selected object unpainted", () => {
+    const oneObjectIndices = new Uint32Array([0, 0, 0, 0]);
+    const twoSurfaceIndices = new Uint32Array([0, 0, 1, 1]);
+    const target = new Float32Array(base.length);
+    paintLayers(
+      target,
+      base,
+      oneObjectIndices,
+      twoSurfaceIndices,
+      ["B1"],
+      [{ kind: "surface", layerId: "L", objectId: "B1", surfaceIndex: 1 }],
+      null,
+    );
+    expect(Array.from(target.slice(0, 6))).toEqual([
+      0.25, 0.25, 0.25, 0.25, 0.25, 0.25,
+    ]);
+    const [hr] = srgbHexToLinear(HIGHLIGHT_COLOR_HEX);
+    expect(target[6]).toBeCloseTo(hr, 6);
+  });
+
   it("paints hover when nothing is selected", () => {
     const target = new Float32Array(base.length);
     paintLayers(target, base, objectIndices, surfaceIndices, objectKeys, [], {

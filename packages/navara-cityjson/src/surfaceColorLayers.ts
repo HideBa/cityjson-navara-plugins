@@ -127,19 +127,29 @@ export function paintLayers(
 ): void {
   target.set(source);
 
-  // Resolve selections to object indices once, rather than per vertex. A
-  // second selection on the same object overwrites the first — matching the
-  // pre-Navara behaviour, where the store never holds two selections for one
-  // object anyway.
-  const selectedByIdx = new Map<number, Selection>();
+  // Resolve selections to object indices once, rather than per vertex.
+  // Surface selections are keyed by (object, surface), NOT by object alone:
+  // the store can and does hold two surfaces of one building (shift-click a
+  // roof then a wall), and an object-keyed map made the second evict the
+  // first, so only the last-painted face highlighted.
+  const wholeObjects = new Set<number>();
+  const selectedSurfaces = new Map<number, Set<number>>();
   for (const sel of selections) {
     const idx = objectKeys.indexOf(sel.objectId);
-    if (idx >= 0) selectedByIdx.set(idx, sel);
+    if (idx < 0) continue;
+    if (sel.kind === "object") {
+      wholeObjects.add(idx);
+      continue;
+    }
+    const surfaces = selectedSurfaces.get(idx);
+    if (surfaces) surfaces.add(sel.surfaceIndex);
+    else selectedSurfaces.set(idx, new Set([sel.surfaceIndex]));
   }
   const hoveredIdx = hovered ? objectKeys.indexOf(hovered.objectId) : -1;
 
   // Nothing to paint: the restore above is the whole job.
-  if (selectedByIdx.size === 0 && hoveredIdx < 0) return;
+  if (wholeObjects.size === 0 && selectedSurfaces.size === 0 && hoveredIdx < 0)
+    return;
 
   for (let v = 0; v < objectIndices.length; v++) {
     const oIdx = objectIndices[v]!;
@@ -157,8 +167,7 @@ export function paintLayers(
       target[base + 2] = HOVER_RGB[2];
     }
 
-    const sel = selectedByIdx.get(oIdx);
-    if (sel && matchesSurface(sel, sIdx)) {
+    if (wholeObjects.has(oIdx) || selectedSurfaces.get(oIdx)?.has(sIdx)) {
       target[base] = HIGHLIGHT_RGB[0];
       target[base + 1] = HIGHLIGHT_RGB[1];
       target[base + 2] = HIGHLIGHT_RGB[2];
