@@ -1,6 +1,16 @@
 /** Every streaming tunable. All distances are metres. Provisional — tune
  *  against delft.fcb and one large real dataset before treating as settled. */
 export const SETTLE_MS = 350;
+/** Trailing quiet window for a suppressed animated `flyTo`.
+ *
+ *  Measured (B1 §5b): `flyTo` emits a full `movestart … move … moveend` burst
+ *  that is indistinguishable from a user drag, so it must be bracketed by
+ *  `SettleController.suppressUntil(flight, FLYTO_QUIET_MS)` — the promise
+ *  covers the flight itself and this window absorbs the tail (the trace showed
+ *  `moveend` ~280 ms after the last `move` and `idle` ~300 ms after that, on a
+ *  2–3 fps host). 2 s is generous on purpose: over-suppressing costs at most
+ *  one deferred commit, under-suppressing fetches a whole flight path. */
+export const FLYTO_QUIET_MS = 2000;
 export const MOVE_FRAC = 0.2;
 export const SCALE_FACTOR = 1.3;
 export const T_MAX_M = 5000;

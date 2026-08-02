@@ -17,6 +17,31 @@
  *
  * Engine-free by construction (see the NODE_IMPORT_SAFE = false rule): the
  * rays are injected, so this module never imports `@navaramap/*`.
+ *
+ * SKY / ALL-MISS VIEWS — decided in Task C7, deliberately unchanged (C3 review
+ * ledger item). When the camera looks at the sky or at the globe from orbit,
+ * no corner ray meets the layer's ground plane within `T_MAX_M`, so all four
+ * are clamped and the footprint collapses to a small box more or less under
+ * the camera. That is exactly what the pre-migration app did (the old Three
+ * version clamped to the same radius against its Y plane), and the cell cover
+ * it produces is bounded — `MIN_COVER_CELLS`..`MAX_COVER_CELLS` — so the worst
+ * case is one small wasted fetch of cells the user is not looking at, not an
+ * unbounded whole-dataset request. We keep parity rather than adding a
+ * "refuse to stream on globe views" rule, because such a rule needs a
+ * horizon/altitude predicate that would also have to be right for the tilted
+ * near-horizon views that legitimately do stream. Two consequences worth
+ * knowing before revisiting this:
+ *   - `MAX_FOOTPRINT_SPAN_M` is near-dead under the `T_MAX_M` clamp: four rays
+ *     clamped at 5 km can never span the 8 km rejection threshold, so the
+ *     guard only bites on a degenerate/unprojectable CRS result. It stays as a
+ *     cheap backstop, not as the globe-view defence.
+ *   - The real defence against streaming churn while the camera is up in the
+ *     sky is the settle machine (`settleController`) plus `shouldRefetch`
+ *     hysteresis, which already collapse an orbital sweep into at most one
+ *     commit per gesture.
+ * If this is ever revisited, the hook is here: return `null` (the documented
+ * "no usable footprint" signal every caller already handles) when every corner
+ * ray was clamped rather than hit.
  */
 import {
   ecefToEnu,
