@@ -21,3 +21,4 @@ export * from "./throttleGates";
 export * from "./bucketFeatures";
 export * from "./objectRecords";
 export * from "./workerProtocol";
+export * from "./viewportFootprint";
