@@ -22,3 +22,7 @@ export * from "./bucketFeatures";
 export * from "./objectRecords";
 export * from "./workerProtocol";
 export * from "./viewportFootprint";
+// The ray *adapter* is engine-free and belongs here; the binding that supplies
+// Navara's real `getPickRay` (`./engineRays`) does NOT, and is re-exported from
+// the `./plugin` entry point instead (Task C11).
+export * from "./navaraRays";

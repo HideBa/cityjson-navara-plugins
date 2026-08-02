@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@navaramap/three": "0.0.5",
+    "@types/three": "0.183.1",
     "proj4": "2.20.8",
     "@navaramap/three-default-plugin": "0.0.5",
     "three": "0.183.2",
