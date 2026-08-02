@@ -1,0 +1,11 @@
+/**
+ * Public API of @cityjson/navara-core.
+ *
+ * Format-agnostic CityJSON domain code shared by every Navara CityJSON
+ * plugin and by host applications: wire types, parsers, geometry building,
+ * picking indices, and per-surface styling hooks. This package never imports
+ * `@navaramap/*` — it is usable without the engine.
+ */
+
+/** Version of this package, asserted against package.json by tests/version.test.ts. */
+export const NAVARA_CORE_VERSION = "0.0.0";
