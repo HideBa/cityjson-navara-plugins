@@ -1,9 +1,9 @@
 /**
  * How a city-model mesh resolves a screen pick into a surface.
  *
- * - "pickable-wrapper": Navara's GPU pick pipeline resolves the triangle and
- *   the `pick` event carries a `batchId` we map back through
- *   `CityModelMesh.batchIdMap()`.
+ * - "pickable-wrapper": the mesh is registered with Navara's GPU pick pipeline
+ *   so `pick` events fire for it. NOT IMPLEMENTED for per-surface resolution —
+ *   the engine's batch id is per mesh, not per triangle (see below).
  * - "own-raycast": we take `getPickRay(view, x, y)` and raycast the mesh
  *   ourselves, reading `objectIndex`/`surfaceIndex` off the hit face.
  *
@@ -17,10 +17,14 @@ export type PickStrategy = "pickable-wrapper" | "own-raycast";
 /**
  * Set from Task B1's PICK_PATH verdict: `"own-raycast"`.
  *
- * The spike found `PickableMeshWrapper` carries ONE uniform batch id per mesh,
- * so it cannot distinguish surfaces within a city model — the wrapper branch
- * still exists (and `batchIdMap()` still publishes the table it would need) for
- * the day the engine gains per-triangle ids, but it is not the default and no
- * per-surface pick can currently be resolved through it.
+ * **Only `"own-raycast"` resolves a pick today.** The spike found
+ * `PickableMeshWrapper` allocates ONE uniform batch id for a whole mesh (both
+ * triangles of the probe came back as 4666372, with `properties: null`), so a
+ * batch id is a *mesh* identity, not a triangle index, and no per-surface pick
+ * can be recovered from it. Selecting `"pickable-wrapper"` therefore still
+ * registers the mesh with the engine's pick pipeline — so a `pick` event fires
+ * and a per-layer pick is possible — but `resolvePick` of that event returns
+ * `null` with one warning. `batchIdMap()` remains published for the day the
+ * engine gains per-triangle ids; nothing reads it to resolve a pick.
  */
 export const DEFAULT_PICK_STRATEGY: PickStrategy = "own-raycast";

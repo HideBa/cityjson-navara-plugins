@@ -12,6 +12,7 @@
  * The deps are constructor-injected rather than imported precisely so a sibling
  * package (`@cityjson/navara-flatcitybuf`) can drive this with its own fakes.
  */
+import type { Matrix4 } from "three";
 import {
   geoidHeightAt,
   type CityModel,
@@ -46,6 +47,9 @@ export interface PickRayProvider {
 interface MeshHandleLike {
   ref: unknown;
   visible: boolean;
+  /** Patch the descriptor's config. Only `matrixWorld` is ever patched here —
+   *  see {@link CityModelRegistry.resolveHeightOffset}. */
+  update(patch: { matrixWorld: Matrix4 }): void;
   delete(): void;
 }
 
@@ -84,6 +88,7 @@ export class CityModelRegistry {
   private view: CityModelViewLike | null = null;
   private readonly handlesById = new Map<string, CityModelHandle>();
   private readonly pickStrategy: PickStrategy;
+  private warnedUnresolvablePick = false;
 
   constructor(private readonly deps: CityModelRegistryDeps) {
     this.pickStrategy = deps.pickStrategy ?? DEFAULT_PICK_STRATEGY;
@@ -155,10 +160,10 @@ export class CityModelRegistry {
           // own-raycast path: the ray comes from the INJECTED provider, so this
           // branch is exercised in Node with a fake.
           const ray = this.deps.pickRays.getPickRay(pick.x, pick.y);
-          return ray ? mesh.resolveRaycast(ray) : null;
+          return ray ? mesh.resolveRaycastSelection(ray) : null;
         }
-        // pickable-wrapper path: prefer an explicit objectIndex/surfaceIndex
-        // pair, else map the engine's batchId through the mesh's table.
+        // A caller that already knows the indices (a replayed pick, a test, a
+        // future engine that reports them) is answered directly.
         const objectIndex = pick.properties?.objectIndex;
         const surfaceIndex = pick.properties?.surfaceIndex;
         if (
@@ -167,14 +172,12 @@ export class CityModelRegistry {
         ) {
           return mesh.resolveVertexIndices(objectIndex, surfaceIndex);
         }
-        if (typeof pick.batchId === "number") {
-          const entry = mesh.batchIdMap()[pick.batchId];
-          if (!entry) return null;
-          return mesh.resolveVertexIndices(
-            entry.objectIndex,
-            entry.surfaceIndex,
-          );
-        }
+        // There is deliberately NO batchId branch. The spike measured
+        // `PickableMeshWrapper` allocating ONE uniform batch id for the whole
+        // mesh (both triangles of the probe returned 4666372, with
+        // `properties: null`), so a batch id is not a triangle index and
+        // `batchIdMap()[batchId]` could only ever be a coincidence.
+        this.warnUnresolvablePick();
         return null;
       },
       // `CityModelMesh.raycast` is the RaycastHit half of B6's raycast/resolve
@@ -195,12 +198,28 @@ export class CityModelRegistry {
     };
 
     this.handlesById.set(opts.id, handle);
-    this.resolveHeightOffset(opts, handle, mesh);
+    this.resolveHeightOffset(opts, handle, mesh, meshHandle);
     return handle;
   }
 
   getHandle(id: string): CityModelHandle | undefined {
     return this.handlesById.get(id);
+  }
+
+  /**
+   * Warn once that an engine pick event cannot be resolved to a surface.
+   *
+   * Only reachable under `pickStrategy: "pickable-wrapper"`, which the spike
+   * proved cannot carry per-surface identity; the shipped default is
+   * `"own-raycast"`, whose picks arrive as a `ScreenPoint` and never reach
+   * here. Once per registry, because a pick event fires on every click.
+   */
+  private warnUnresolvablePick(): void {
+    if (this.warnedUnresolvablePick) return;
+    this.warnedUnresolvablePick = true;
+    console.warn(
+      `[navara-cityjson] pickStrategy "${this.pickStrategy}" cannot resolve a surface from an engine pick event: PickableMeshWrapper carries one uniform batch id per mesh, not per triangle. Use the "own-raycast" strategy (the default) and route picks as screen points.`,
+    );
   }
 
   handles(): readonly CityModelHandle[] {
@@ -220,6 +239,7 @@ export class CityModelRegistry {
     opts: AddCityModelOptions,
     handle: CityModelHandle,
     mesh: CityModelMesh,
+    meshHandle: MeshHandleLike,
   ): void {
     if (opts.heightOffset !== undefined) return;
     const sample = this.deps.sampleGeoidHeight ?? geoidHeightAt;
@@ -233,6 +253,14 @@ export class CityModelRegistry {
         // flight — its mesh is disposed and must not be touched.
         if (this.handlesById.get(opts.id) !== handle) return;
         mesh.setHeightOffset(metres);
+        // The descriptor captured the OLD placement matrix when it created the
+        // mesh; `setHeightOffset` only rewrote the Object3D. Push the new one
+        // through the engine's own update path so the two cannot disagree —
+        // otherwise a later `handle.update({ position })` would recompose from
+        // the stale frame and snap the layer back to its pre-geoid height.
+        meshHandle.update({
+          matrixWorld: mesh.getPlacement().matrixWorld,
+        });
       })
       .catch((error: unknown) => {
         // Only reachable with an injected sampler that rejects; core's own

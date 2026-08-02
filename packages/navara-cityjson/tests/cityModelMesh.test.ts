@@ -346,9 +346,9 @@ describe("own-raycast pick path", () => {
     m.dispose();
   });
 
-  it("resolveRaycast turns that hit into a surface selection", () => {
+  it("resolveRaycastSelection turns that hit into a surface selection", () => {
     const m = new CityModelMesh({ ...opts, lod: "2" });
-    expect(m.resolveRaycast(down)).toEqual({
+    expect(m.resolveRaycastSelection(down)).toEqual({
       kind: "surface",
       layerId: "L1",
       objectId: "B1",
@@ -367,7 +367,7 @@ describe("own-raycast pick path", () => {
     ).toBeNull();
     m.setVisible(false);
     expect(m.raycast(down)).toBeNull();
-    expect(m.resolveRaycast(down)).toBeNull();
+    expect(m.resolveRaycastSelection(down)).toBeNull();
     m.setVisible(true);
     expect(m.raycast(down)).not.toBeNull();
     m.dispose();

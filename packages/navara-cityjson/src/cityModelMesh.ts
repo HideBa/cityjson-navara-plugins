@@ -313,8 +313,14 @@ export class CityModelMesh {
     };
   }
 
-  /** {@link raycast}, resolved to a selection the app can hold. */
-  resolveRaycast(ray: EcefRay): SurfaceSelection | null {
+  /**
+   * {@link raycast}, resolved to a selection the app can hold.
+   *
+   * Named apart from the *handle*-level `resolveRaycast(ray): RaycastHit`
+   * (shared contract) on purpose: same input, different output, and the two
+   * used to differ only by which object you happened to be holding.
+   */
+  resolveRaycastSelection(ray: EcefRay): SurfaceSelection | null {
     const hit = this.raycast(ray);
     if (!hit) return null;
     return this.resolveVertexIndices(hit.objectIndex, hit.surfaceIndex);
@@ -330,11 +336,12 @@ export class CityModelMesh {
     return { kind: "surface", layerId: this.id, objectId, surfaceIndex };
   }
 
-  /** pickable-wrapper pick path (spike PICK_PATH = "pickable-wrapper"): the
-   *  per-triangle batch id Navara reports back maps 1:1 onto this table, whose
-   *  index is the batch id and whose entry is the triangle's
-   *  (objectIndex, surfaceIndex). Rebuilt with the geometry on every LoD
-   *  change; empty under the own-raycast strategy so nothing pays for it. */
+  /** The table a per-triangle batch id WOULD index: entry `t` is triangle `t`'s
+   *  (objectIndex, surfaceIndex). Published because the shared contract
+   *  requires it, and rebuilt with the geometry on every LoD change — but the
+   *  engine's `PickableMeshWrapper` allocates one batch id per MESH, so
+   *  nothing resolves a pick through it today (see `pickStrategy.ts`). Empty
+   *  under the own-raycast strategy so nothing pays for it. */
   batchIdMap(): ReadonlyArray<SurfaceRef> {
     if (this.pickStrategy !== "pickable-wrapper") return [];
     const map: SurfaceRef[] = [];

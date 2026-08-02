@@ -51,7 +51,7 @@ export interface CityMeshHandle {
   setColors(colors: Float32Array): void;
   setVisible(visible: boolean): void;
   triangleCount(): number;
-  /** index = engine batch id, entry = that triangle's `SurfaceRef`. */
+  /** Entry `t` is triangle `t`'s `SurfaceRef`. See `CityMeshArraysMesh`. */
   batchIdMap(): ReadonlyArray<SurfaceRef>;
   /** ECEF ray in, hit surface + ray distance out. The distance is what lets a
    *  caller holding many of these keep the nearest hit (Task C10b). */
@@ -172,10 +172,11 @@ export class CityMeshArraysMesh {
   }
 
   /**
-   * Same contract as `CityModelMesh.batchIdMap()`: index = engine batch id,
-   * entry = that triangle's `(objectIndex, surfaceIndex)`. Lets a streamed cell
-   * resolve a pick exactly the way a static layer does (Task C10b); empty under
-   * the own-raycast strategy so nothing pays for it.
+   * Same contract as `CityModelMesh.batchIdMap()`: entry `t` is triangle `t`'s
+   * `(objectIndex, surfaceIndex)`. A streamed cell exposes it exactly as a
+   * static layer does, and with the same caveat — the engine's batch id is per
+   * MESH, not per triangle, so nothing resolves a pick through this table today
+   * (see `pickStrategy.ts`). Empty under the own-raycast strategy.
    */
   batchIdMap(): ReadonlyArray<SurfaceRef> {
     if (this.pickStrategy !== "pickable-wrapper") return [];

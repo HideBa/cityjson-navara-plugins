@@ -55,7 +55,9 @@ export interface CityModelHandle {
   getBoundsGeodetic(): GeodeticBounds;
   triangleCount(): number;
   delete(): void;
-  /** index = engine batch id, entry = that triangle's `SurfaceRef`. */
+  /** Entry `t` is triangle `t`'s `SurfaceRef`. Reserved for a future engine
+   *  with per-triangle batch ids; today's is per mesh, so no pick resolves
+   *  through it (see `pickStrategy.ts`). */
   batchIdMap(): ReadonlyArray<SurfaceRef>;
   /** ECEF ray in, hit surface + ray distance out — the raw form, for callers
    *  that raycast several handles and keep the nearest hit. `resolvePick` is

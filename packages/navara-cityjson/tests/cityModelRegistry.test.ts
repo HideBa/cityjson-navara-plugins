@@ -5,7 +5,16 @@
  * modules and would drag `@navaramap/*` (and its module-scope `os.cpus()`
  * crash) into Node. See Global Constraints -> Testing conventions.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import proj4 from "proj4";
 import { Matrix4, Vector3 } from "three";
 import type { CityModel } from "@cityjson/navara-core";
@@ -28,6 +37,25 @@ const FAKE_DESCS = [
 ] as const;
 
 const noRays: PickRayProvider = { getPickRay: () => null };
+
+/**
+ * Hard network tripwire.
+ *
+ * `addCityModel` without an explicit `heightOffset` samples the geoid, and its
+ * default sampler is core's `geoidHeightAt`, which fetches
+ * terrain.reearth.land. Every case here must therefore inject a sampler (see
+ * {@link makeRegistry}); this fails the run loudly if one ever stops doing so,
+ * instead of silently turning a unit test into a network test.
+ */
+const fetchSpy = vi.fn(() => {
+  throw new Error("unit tests must not hit the network");
+});
+beforeAll(() => vi.stubGlobal("fetch", fetchSpy));
+afterAll(() => vi.unstubAllGlobals());
+afterEach(() => {
+  expect(fetchSpy, "a unit test reached the network").not.toHaveBeenCalled();
+  fetchSpy.mockClear();
+});
 
 const CRS = "https://www.opengis.net/def/crs/EPSG/0/7415";
 
@@ -116,6 +144,12 @@ function rayOntoMesh(view: FakeThreeView) {
  * Registry under test, plus the fake plugin shell that attaches it — this keeps
  * the "descriptors registered from inside init()" assertion honest without
  * pulling the real Plugin base class (and its WASM) into Node.
+ *
+ * `sampleGeoidHeight` is stubbed by DEFAULT, not just in the vertical-datum
+ * block: `addCityModel` without an explicit `heightOffset` otherwise falls
+ * through to core's `geoidHeightAt`, which fetches terrain.reearth.land. A unit
+ * test must never touch the network — the cases that care about sampling pass
+ * their own fake through `deps`.
  */
 function makeRegistry(
   view: FakeThreeView,
@@ -124,6 +158,7 @@ function makeRegistry(
   const registry = new CityModelRegistry({
     descriptors: FAKE_DESCS,
     pickRays: noRays,
+    sampleGeoidHeight: async () => 0,
     ...deps,
   });
   view.addPlugin({
@@ -137,7 +172,7 @@ function makeRegistry(
 describe("CityModelRegistry", () => {
   it("registers both descriptors during init, before the view is initialized", async () => {
     const view = new FakeThreeView();
-    const seenInitialized: boolean[] = [];
+    const registerMeshCalls: string[][] = [];
     const registry = new CityModelRegistry({
       descriptors: FAKE_DESCS,
       pickRays: noRays,
@@ -145,9 +180,13 @@ describe("CityModelRegistry", () => {
     view.addPlugin({
       init: async (v) => {
         registry.attach(v);
-        seenInitialized.push(v.initialized);
+        registerMeshCalls.push([...v.registeredMeshes.keys()]);
       },
     });
+
+    // registerMesh before init() throws — the reason attach() is called from
+    // the plugin rather than from the caller.
+    expect(() => view.registerMesh("tooEarly", class {})).toThrow();
 
     await view.init();
 
@@ -157,9 +196,13 @@ describe("CityModelRegistry", () => {
     expect(view.registeredMeshes.get(CITY_MESH_ARRAYS_KEY)).toBe(
       FAKE_DESCS[1][1],
     );
-    // Registration happened inside view.init(), while the view still reported
-    // itself uninitialized — the ordering the real engine enforces.
-    expect(seenInitialized).toEqual([false]);
+    // The load-bearing ordering: the descriptor registries are live by the time
+    // a plugin's init() runs, so registerMesh from inside init() succeeds — it
+    // throws before view.init() (Task B1 finding 2). The plugin ran exactly
+    // once, from inside view.init().
+    expect(registerMeshCalls).toEqual([
+      [CITY_MODEL_MESH_KEY, CITY_MESH_ARRAYS_KEY],
+    ]);
   });
 
   it("addCityModel before init throws with an actionable message", () => {
@@ -291,7 +334,24 @@ describe("CityModelRegistry", () => {
     });
   });
 
-  it("resolvePick maps an engine batchId through the mesh's batchId table", async () => {
+  it("resolvePick of an engine pick event returns null and warns ONCE — a batch id is per mesh, not per triangle", async () => {
+    const view = new FakeThreeView();
+    withFakeDescriptor(view);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const registry = makeRegistry(view, { pickStrategy: "pickable-wrapper" });
+    await view.init();
+
+    const handle = registry.addCityModel(model, { id: "L1", lod: "2" });
+    // The spike measured both triangles of a probe mesh reporting the SAME
+    // batch id (4666372) with properties: null, so there is nothing to resolve.
+    expect(handle.resolvePick({ batchId: 4666372 })).toBeNull();
+    expect(handle.resolvePick({ batchId: 4666372 })).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatch(/own-raycast/);
+    warn.mockRestore();
+  });
+
+  it("batchIdMap still publishes one entry per triangle for a future per-triangle engine", async () => {
     const view = new FakeThreeView();
     withFakeDescriptor(view);
     const registry = makeRegistry(view, { pickStrategy: "pickable-wrapper" });
@@ -299,13 +359,16 @@ describe("CityModelRegistry", () => {
 
     const handle = registry.addCityModel(model, { id: "L1", lod: "2" });
     expect(handle.batchIdMap()).toEqual([{ objectIndex: 0, surfaceIndex: 0 }]);
-    expect(handle.resolvePick({ batchId: 0 })).toEqual({
-      kind: "surface",
-      layerId: "L1",
-      objectId: "B1",
-      surfaceIndex: 0,
-    });
-    expect(handle.resolvePick({ batchId: 99 })).toBeNull();
+
+    // ...and it is empty under the shipped own-raycast default, so nothing
+    // pays to build a table no engine can index.
+    const ownView = new FakeThreeView();
+    withFakeDescriptor(ownView);
+    const ownRegistry = makeRegistry(ownView);
+    await ownView.init();
+    expect(
+      ownRegistry.addCityModel(model, { id: "L1", lod: "2" }).batchIdMap(),
+    ).toEqual([]);
   });
 
   it("resolvePick with a screen point asks the INJECTED pick-ray provider, never the engine", async () => {
@@ -419,6 +482,26 @@ describe("CityModelRegistry vertical datum", () => {
     expect(lat).toBeCloseTo(52.0, 1);
     await vi.waitFor(() =>
       expect(handle.getBoundsGeodetic().maxHeight).toBeCloseTo(6 + 43.2, 3),
+    );
+  });
+
+  it("pushes the re-placed matrixWorld back through the mesh handle, so the descriptor cannot go stale", async () => {
+    const view = new FakeThreeView();
+    withFakeDescriptor(view);
+    const registry = makeRegistry(view, { sampleGeoidHeight: geoidSpy });
+    await view.init();
+
+    registry.addCityModel(model, { id: "L1", lod: "2" });
+    const meshHandle = view.handles[0]!;
+    await vi.waitFor(() => expect(meshHandle.updates).toHaveLength(1));
+
+    // The descriptor captured its matrixWorld at createMesh time; without this
+    // patch a later update({ position }) would recompose from the pre-geoid
+    // frame and snap the layer back down.
+    const patched = meshHandle.updates[0]!.matrixWorld as Matrix4;
+    expect(patched).toBe(meshOf(view).getPlacement().matrixWorld);
+    expect(Array.from(patched.elements)).toEqual(
+      Array.from(meshOf(view).object3d.matrixWorld.elements),
     );
   });
 
