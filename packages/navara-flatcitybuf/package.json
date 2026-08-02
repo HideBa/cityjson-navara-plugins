@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@cityjson/navara-core": "file:../navara-core",
+    "@cityjson/navara-cityjson": "file:../navara-cityjson",
     "@cityjson/flatcitybuf": "^0.3.0"
   },
   "peerDependencies": {

@@ -28,5 +28,6 @@ export default defineConfig({
     "proj4",
     "three",
     "@cityjson/navara-core",
+    "@cityjson/navara-cityjson",
   ],
 });

@@ -15,12 +15,17 @@ import proj4 from "proj4";
 import type { WorkerResponse } from "../src/workerProtocol";
 import {
   ensureProjDef,
+  enuToEcef,
+  geodeticToEcef,
   makeEnuFrame,
   sourceToEnuPoint,
   srgbHexToLinear,
 } from "@cityjson/navara-core";
 import type { Rule } from "@cityjson/navara-core";
 import { cellCentre, makeGrid } from "../src/tileGrid";
+// The other side of the placement seam (Task C8): the frame the MAIN THREAD
+// builds for a cell, asserted here against the vertices the worker bakes.
+import { cellFrame } from "../src/cellMeshes";
 
 interface FakeCityJSONFeature {
   toCityJSON: () => {
@@ -938,6 +943,100 @@ describe("fcb.worker — cells are baked into exact local ENU metres (Task C5 St
         expected[i]![2] - shortcut[i]![2],
       );
       expect(d).toBeGreaterThan(1);
+    }
+
+    teardown();
+  });
+
+  /**
+   * CROSS-SEAM (Task C5 review, CRITICAL): the placement half of the same
+   * claim, asserted against the OTHER side's real code rather than a local
+   * oracle. The worker bakes vertices in its own frame; `cellMeshes.cellFrame`
+   * builds the matrix the engine places that mesh with. If the two frames
+   * disagree by so much as the vertical-datum offset, every cell floats or
+   * sinks — and each module's own tests still pass, because each is
+   * internally consistent. Here the worker's ACTUAL emitted vertices are
+   * pushed through `cellFrame`'s matrix and must land on the ECEF position
+   * the source CRS says they occupy.
+   */
+  it("emits vertices that land on their true ECEF position when placed with cellMeshes.cellFrame (cross-seam)", async () => {
+    const extent: [number, number, number, number, number, number] = [
+      80000, 400000, 0, 180000, 500000, 30,
+    ];
+    const heightOffset = 43.25;
+    const key = "2/0/0";
+    const fx = 85000;
+    const fy = 405000;
+
+    const { handler, posted } = await setupWorker([roofFeature("a", fx, fy)], {
+      extent,
+    });
+    await handler({
+      data: { type: "open", id: 0, url: "fake://irrelevant", heightOffset },
+    });
+    await handler({
+      data: {
+        type: "fetch",
+        id: 1,
+        bbox: [extent[0], extent[1], extent[3], extent[4]],
+        level: 2,
+        cells: [key],
+        lod: null,
+        rules: [],
+        rulesEnabled: false,
+      },
+    });
+    const cellMsg = posted.find(
+      (m): m is Extract<WorkerResponse, { type: "cell" }> => m.type === "cell",
+    );
+    if (!cellMsg) throw new Error("no cell message posted");
+
+    ensureProjDef(28992);
+    const converter = proj4("EPSG:28992", "WGS84") as {
+      forward(coords: [number, number]): [number, number];
+    };
+    // The main thread's placement, built with no knowledge of the worker's.
+    const frame = cellFrame(
+      makeGrid(extent),
+      key,
+      (x, y) => converter.forward([x, y]),
+      heightOffset,
+    );
+
+    // Truth, straight from the source coordinates: geodetic -> ECEF, with the
+    // orthometric z raised onto the ellipsoid by the same offset.
+    const truthEcef = (
+      [
+        [fx - 5, fy - 5, 0],
+        [fx + 5, fy - 5, 0],
+        [fx + 5, fy + 5, 10],
+        [fx - 5, fy + 5, 10],
+      ] as Array<[number, number, number]>
+    ).map((c) => {
+      const [lng, lat] = converter.forward([c[0], c[1]]);
+      return geodeticToEcef(lng, lat, c[2] + heightOffset);
+    });
+
+    const positions = cellMsg.geometry.positions;
+    expect(positions.length).toBeGreaterThan(0);
+    for (let v = 0; v < positions.length / 3; v++) {
+      const world = enuToEcef(frame, [
+        positions[v * 3]!,
+        positions[v * 3 + 1]!,
+        positions[v * 3 + 2]!,
+      ]);
+      // 5 mm: the ENU values crossed a Float32 store at ~10 km from the cell
+      // centre (~1 mm of quantisation), and nothing else may differ.
+      const near = truthEcef.some(
+        (t) =>
+          Math.hypot(t[0] - world[0], t[1] - world[1], t[2] - world[2]) < 5e-3,
+      );
+      if (!near) {
+        throw new Error(
+          `vertex ${v} placed at ECEF [${world.join(", ")}] matches no source corner — ` +
+            `the worker's bake frame and cellFrame() disagree`,
+        );
+      }
     }
 
     teardown();

@@ -97,6 +97,9 @@ importers:
       '@cityjson/flatcitybuf':
         specifier: ^0.3.0
         version: 0.3.0
+      '@cityjson/navara-cityjson':
+        specifier: file:../navara-cityjson
+        version: link:../navara-cityjson
       '@cityjson/navara-core':
         specifier: file:../navara-core
         version: link:../navara-core

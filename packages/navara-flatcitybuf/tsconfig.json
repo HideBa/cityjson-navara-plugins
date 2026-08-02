@@ -6,5 +6,5 @@
     "tsBuildInfoFile": "dist-types/.tsbuildinfo"
   },
   "include": ["src", "tests"],
-  "references": [{ "path": "../navara-core" }]
+  "references": [{ "path": "../navara-core" }, { "path": "../navara-cityjson" }]
 }
