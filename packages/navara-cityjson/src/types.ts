@@ -54,6 +54,22 @@ export interface CityModelHandle {
   resolvePick(pick: PickedFeatureLike | ScreenPoint): Selection | null;
   getBoundsGeodetic(): GeodeticBounds;
   triangleCount(): number;
+  /**
+   * The vertical-datum offset in metres CURRENTLY baked into this layer's
+   * placement — 0 until the async geoid sample lands, then the sampled
+   * undulation (or an explicit `heightOffset`, immediately).
+   *
+   * A method, not a readonly field, precisely because the value changes when
+   * the sample resolves: a snapshotted property would freeze at 0 and quietly
+   * de-correct every reading taken afterwards.
+   *
+   * Published because it is the only way back from an ELLIPSOIDAL height to
+   * the ORTHOMETRIC z the source file contained: `orthometric = geodetic -
+   * heightOffset`. The host's cursor readout needs exactly that (Task B15);
+   * without it a Delft model reads ~43 m high — the mirror image of the bug
+   * the offset exists to fix.
+   */
+  heightOffset(): number;
   delete(): void;
   /** Entry `t` is triangle `t`'s `SurfaceRef`. Reserved for a future engine
    *  with per-triangle batch ids; today's is per mesh, so no pick resolves

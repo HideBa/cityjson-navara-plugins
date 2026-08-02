@@ -505,6 +505,37 @@ describe("CityModelRegistry vertical datum", () => {
     );
   });
 
+  it("publishes the offset on the handle, so the host can report ORTHOMETRIC heights", async () => {
+    // The app's cursor readout converts an ECEF point to a geodetic
+    // (ELLIPSOIDAL) height and must subtract this to get back the source
+    // file's own z. Without it a Delft readout reads ~43 m too high — the
+    // mirror image of the bug the offset itself exists to fix.
+    const view = new FakeThreeView();
+    withFakeDescriptor(view);
+    const registry = makeRegistry(view, { sampleGeoidHeight: geoidSpy });
+    await view.init();
+
+    const handle = registry.addCityModel(model, { id: "L1", lod: "2" });
+    // Before the sample lands the mesh really is placed at 0 — the readout
+    // must track where the layer IS, not where it will be.
+    expect(handle.heightOffset()).toBe(0);
+    await vi.waitFor(() => expect(handle.heightOffset()).toBeCloseTo(43.2, 6));
+  });
+
+  it("publishes an explicit heightOffset straight away", async () => {
+    const view = new FakeThreeView();
+    withFakeDescriptor(view);
+    const registry = makeRegistry(view, { sampleGeoidHeight: geoidSpy });
+    await view.init();
+
+    const handle = registry.addCityModel(model, {
+      id: "L1",
+      lod: "2",
+      heightOffset: 12,
+    });
+    expect(handle.heightOffset()).toBe(12);
+  });
+
   it("does NOT sample when the caller supplied an explicit heightOffset", async () => {
     const view = new FakeThreeView();
     withFakeDescriptor(view);

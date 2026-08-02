@@ -187,6 +187,9 @@ export class CityModelRegistry {
       batchIdMap: (): ReadonlyArray<SurfaceRef> => mesh.batchIdMap(),
       getBoundsGeodetic: (): GeodeticBounds => mesh.getBoundsGeodetic(),
       triangleCount: () => mesh.triangleCount(),
+      // Read through to the placement on every call rather than captured: the
+      // offset starts at 0 and is replaced when the geoid sample below lands.
+      heightOffset: () => mesh.getPlacement().heightOffset,
       delete: () => {
         // Only drop the map entry if it is still ours: a delete() called twice
         // must not evict a same-id layer added in between.
