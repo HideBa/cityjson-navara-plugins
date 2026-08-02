@@ -9,6 +9,22 @@ export const CITYJSON_PLUGIN_PLACEHOLDER = `@cityjson/navara-cityjson (core ${NA
 
 export { disposeGeometry, geometryFromMeshArrays } from "./cityMeshGeometry";
 
+export type {
+  ObjectSelection,
+  PickedFeatureLike,
+  PickMode,
+  ScreenPoint,
+  Selection,
+  SurfaceSelection,
+} from "./selection";
+
+export {
+  computeStyleColors,
+  HIGHLIGHT_COLOR_HEX,
+  HOVER_COLOR_HEX,
+  paintLayers,
+} from "./surfaceColorLayers";
+
 export type { GeodeticBounds, Lle } from "./enuPlacement";
 export {
   CrsUnresolvedError,
