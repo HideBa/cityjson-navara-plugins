@@ -51,3 +51,6 @@ export {
   mapMetadata,
 } from "./citymodel/cityjson/parseHelpers";
 export { parseCityJSON } from "./citymodel/cityjson/parseCityJSON";
+
+export type { CityJSONFeature } from "./citymodel/cityjsonseq/types";
+export { parseCityJSONSeq } from "./citymodel/cityjsonseq/parseCityJSONSeq";
