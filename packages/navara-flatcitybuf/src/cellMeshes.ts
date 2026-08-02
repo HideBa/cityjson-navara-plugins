@@ -43,10 +43,19 @@ import type { CellEntry } from "./streamLayer";
  * One constraint on the implementation: `CityMeshArraysMesh` *wraps* the color
  * array it is given rather than copying it, and {@link syncCellMeshes} calls
  * `setColors(entry.geometry.ruleColors)` right after `create`. So the arrays
- * handed to the engine must NOT wrap `entry.geometry.baseColors` — that write
- * would land in the cache entry's own base buffer and destroy the restore
- * baseline every later recolor and highlight depends on. Pass
- * `ruleColors ?? Float32Array.from(baseColors)`.
+ * handed to the engine must not wrap EITHER of the entry's color buffers —
+ * pass `Float32Array.from(ruleColors ?? baseColors)`, which is exactly what
+ * `entryToArrays` does. Both branches copy:
+ *
+ * - wrapping `baseColors` would land the `setColors(ruleColors)` write in the
+ *   cache entry's own base buffer, destroying the restore baseline
+ *   {@link CellMesh.baseColors} is copied from one line later;
+ * - wrapping `ruleColors` is the same hazard one layer on — {@link CellMesh}
+ *   holds that buffer by reference and it is the *source* the highlight
+ *   restores from, while `paintLayers` writes the highlight into the live
+ *   *target* array in place. Alias the two and `source === target`: the
+ *   restore becomes a self-copy no-op and a highlight can never be cleared
+ *   (proved by Task C10a; `entryToArrays.ts` carries the full reasoning).
  */
 export interface CellMeshFactory {
   create(key: CellKey, entry: CellEntry, frame: EnuFrame): CityMeshHandle;
