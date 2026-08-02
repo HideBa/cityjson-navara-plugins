@@ -1,0 +1,30 @@
+{
+  "name": "@cityjson/navara-cityparquet",
+  "version": "0.0.0",
+  "description": "Placeholder for a future CityParquet Navara plugin (not implemented)",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run --dir tests"
+  },
+  "dependencies": {
+    "@cityjson/navara-core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "8.5.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}
