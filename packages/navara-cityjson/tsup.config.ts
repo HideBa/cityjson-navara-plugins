@@ -1,7 +1,10 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  // Two entries: the default barrel is engine-free and Node-importable, while
+  // `./plugin` carries the three @navaramap-binding modules (the engine crashes
+  // at module scope under Node — Task B1's NODE_IMPORT_SAFE = false).
+  entry: ["src/index.ts", "src/plugin.ts"],
   format: ["esm"],
   target: "es2022",
   dts: {

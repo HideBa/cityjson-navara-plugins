@@ -2,26 +2,17 @@
  * @cityjson/navara-cityjson — Navara plugin for static CityJSON / CityJSONSeq
  * layers.
  *
- * NOTE: this barrel re-exports the three engine-binding modules
- * (`CityJSONPlugin`, `CityModelMeshDesc`, `CityMeshArraysDesc`), so it
- * transitively imports `@navaramap/*` and cannot be loaded under Node
- * (`NODE_IMPORT_SAFE = false`). Unit tests therefore import the specific
- * engine-free module (`../src/cityModelRegistry`, `../src/cityMesh`, ...),
- * never this file — see Global Constraints -> Testing conventions.
+ * **This barrel is engine-free and Node-importable.** The three modules that
+ * import `@navaramap/*` (`CityJSONPlugin`, `CityModelMeshDesc`,
+ * `CityMeshArraysDesc`) are published from the separate
+ * `@cityjson/navara-cityjson/plugin` entry point instead, because the engine
+ * crashes at module scope under Node (`NODE_IMPORT_SAFE = false`). Nothing
+ * reachable from here may import the engine — see Global Constraints ->
+ * Testing conventions.
  */
 import { NAVARA_CORE_VERSION } from "@cityjson/navara-core";
 
 export const CITYJSON_PLUGIN_PLACEHOLDER = `@cityjson/navara-cityjson (core ${NAVARA_CORE_VERSION})`;
-
-export { CityJSONPlugin } from "./CityJSONPlugin";
-export type { CityJSONPluginOptions } from "./CityJSONPlugin";
-export { CityMeshArraysDesc } from "./CityMeshArraysDesc";
-export type { CityMeshArraysDescConfig } from "./CityMeshArraysDesc";
-export { CityModelMeshDesc } from "./CityModelMeshDesc";
-export type {
-  CityModelDescConfig,
-  CityModelDescOptions,
-} from "./CityModelMeshDesc";
 
 export { CITY_MESH_ARRAYS_KEY, CITY_MODEL_MESH_KEY } from "./descriptorKeys";
 
