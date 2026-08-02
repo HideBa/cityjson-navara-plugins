@@ -130,4 +130,43 @@ describe("projectPositionsToEnu", () => {
     expect(positions[4]).toBeCloseTo(want[1], 2);
     expect(positions[5]).toBeCloseTo(want[2], 2);
   });
+
+  // Guards the perf fix: the bulk path hoists one proj4 converter out of the
+  // loop instead of re-constructing it per vertex (950 ms -> 255 ms per 100k
+  // vertices). proj4's three-argument call is exactly `transformer(from, to,
+  // coord)` — the same function `converter.forward` calls — so the hoist must
+  // be bit-for-bit invisible, not merely close.
+  it("is bit-for-bit identical to calling sourceToEnuPoint per vertex", () => {
+    ensureProjDef(EPSG);
+    const [oLng, oLat] = proj4(`EPSG:${EPSG}`, "WGS84", [
+      ORIGIN[0],
+      ORIGIN[1],
+    ]) as [number, number];
+    const frame = makeEnuFrame(oLng, oLat, 3);
+    const opts = { epsg: EPSG, frame, heightOffset: 43.5 } as const;
+
+    const deltas: Array<[number, number, number]> = [];
+    for (let i = 0; i < 64; i++) {
+      deltas.push([(i % 17) * 137.5 - 1000, (i % 11) * 211.25 - 900, i * 0.75]);
+    }
+    const positions = new Float32Array(deltas.flat());
+
+    // Per-vertex oracle, fed the SAME Float32-rounded deltas the bulk path
+    // reads back out of the buffer.
+    const want = new Float32Array(positions.length);
+    for (let i = 0; i < positions.length; i += 3) {
+      const enu = sourceToEnuPoint(
+        positions[i]! + ORIGIN[0],
+        positions[i + 1]! + ORIGIN[1],
+        positions[i + 2]! + ORIGIN[2],
+        opts,
+      );
+      want[i] = enu[0];
+      want[i + 1] = enu[1];
+      want[i + 2] = enu[2];
+    }
+
+    projectPositionsToEnu(positions, { originOffset: ORIGIN, ...opts });
+    expect(positions).toEqual(want);
+  });
 });
