@@ -9,3 +9,19 @@
 
 /** Version of this package, asserted against package.json by tests/version.test.ts. */
 export const NAVARA_CORE_VERSION = "0.0.0";
+
+export type {
+  Vec3,
+  BBox3,
+  BuildingSurfaceType,
+  Surface,
+  CityObject,
+  CityModelMetadata,
+  CityModel,
+} from "./citymodel/types";
+export type { CityModelEncoding } from "./citymodel/supportedEncodings";
+export {
+  CITYMODEL_ENCODING_PRIORITY,
+  isSupportedCityModelEncoding,
+  getPreferredCityModelEncoding,
+} from "./citymodel/supportedEncodings";
