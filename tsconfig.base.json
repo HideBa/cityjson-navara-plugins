@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cityjson/navara-core": ["packages/navara-core/src/index.ts"],
+      "@cityjson/navara-cityjson": ["packages/navara-cityjson/src/index.ts"],
+      "@cityjson/navara-flatcitybuf": [
+        "packages/navara-flatcitybuf/src/index.ts"
+      ],
+      "@cityjson/navara-cityparquet": [
+        "packages/navara-cityparquet/src/index.ts"
+      ]
+    }
+  }
+}
