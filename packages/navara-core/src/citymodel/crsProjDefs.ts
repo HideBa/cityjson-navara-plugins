@@ -13,6 +13,11 @@
  * reprojects a model's CRS to lat/lon) and format-agnostic plugin code
  * (FlatCityBuf admission, which only needs to know whether a CRS is metric)
  * share one list instead of maintaining two that can silently drift apart.
+ *
+ * It is also the single place the *units* gate lives ({@link assertMetricCrs}):
+ * the static load path (`@cityjson/navara-cityjson`'s `resolveMetricEpsg`) and
+ * the FlatCityBuf streaming admission check both call it, so "is this CRS
+ * metre-based?" has exactly one answer per CRS in the whole system.
  */
 import proj4 from "proj4";
 
@@ -40,6 +45,55 @@ export function ensureProjDef(epsgCode: number): boolean {
 
   proj4.defs(key, def);
   return true;
+}
+
+export class NonMetricCrsError extends Error {
+  constructor(
+    readonly epsg: number,
+    readonly units: string | undefined,
+  ) {
+    super(
+      `Cannot georeference this layer: CRS EPSG:${epsg} is not metre-based (units: ${
+        units ?? "unspecified"
+      }). CityJSON z, the geoid offset and every downstream distance are metres, so this layer cannot be placed.`,
+    );
+    this.name = "NonMetricCrsError";
+  }
+}
+
+/**
+ * The units gate: `epsg`'s proj4 definition must *explicitly* declare metres.
+ *
+ * proj4 reprojects x/y out of a foot-based or degree-based CRS perfectly well,
+ * so nothing downstream would fail loudly — the layer would just render with
+ * heights (and a geoid offset, and every metre-denominated distance constant)
+ * scaled wrong, which is far worse than a refusal. Absence of an explicit
+ * `+units=m` is treated as "not established": an unregistered code, or one
+ * whose definition omits `+units`, is refused for the same reason a known
+ * degree-based one is.
+ *
+ * Registration is attempted first, so a caller that has not already run
+ * {@link ensureProjDef} cannot get a spurious refusal for a CRS this package
+ * knows about.
+ */
+export function assertMetricCrs(epsg: number): void {
+  ensureProjDef(epsg);
+  const units = proj4.defs(`EPSG:${epsg}`)?.units as string | undefined;
+  if (units !== "m") throw new NonMetricCrsError(epsg, units);
+}
+
+/**
+ * Boolean form of {@link assertMetricCrs}, for the admission paths that
+ * report a refusal as data rather than throwing (FlatCityBuf's
+ * `checkAdmission` returns an `AdmissionError`). Same gate, same answer.
+ */
+export function isMetricCrs(epsg: number): boolean {
+  try {
+    assertMetricCrs(epsg);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -28,9 +28,22 @@ export interface ResidentObjectRecord {
   readonly children: ReadonlyArray<string>;
 }
 
+/**
+ * Metres added to every vertex's geodetic height, and to each cell's ENU frame
+ * origin: the geoid undulation at the layer (CityJSON z is orthometric, the
+ * ENU frame sits on the WGS84 ellipsoid — see Global Constraints -> Vertical
+ * datum). The PLUGIN resolves it (`geoidHeightAt`, or the caller's explicit
+ * override) before sending `open`, so the worker can bake every cell in the
+ * right frame from the very first fetch and never has to perform a network
+ * request of its own. Omitted means 0, i.e. "treat z as ellipsoidal".
+ */
+interface OpenExtras {
+  readonly heightOffset?: number;
+}
+
 export type WorkerRequest =
-  | { type: "open"; id: number; url: string }
-  | { type: "open"; id: number; blob: Blob }
+  | ({ type: "open"; id: number; url: string } & OpenExtras)
+  | ({ type: "open"; id: number; blob: Blob } & OpenExtras)
   | { type: "probe"; id: number; bbox: [number, number, number, number] }
   | {
       type: "fetch";

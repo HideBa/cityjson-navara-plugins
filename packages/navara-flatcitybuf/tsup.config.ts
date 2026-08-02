@@ -25,6 +25,7 @@ export default defineConfig({
   external: [
     "@navaramap/three",
     "@navaramap/three-default-plugin",
+    "proj4",
     "three",
     "@cityjson/navara-core",
   ],

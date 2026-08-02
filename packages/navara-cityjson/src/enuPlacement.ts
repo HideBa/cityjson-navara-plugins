@@ -22,6 +22,7 @@
 import proj4 from "proj4";
 import { Matrix4 } from "three";
 import {
+  assertMetricCrs,
   ensureProjDef,
   makeEnuFrame,
   parseEpsgCode,
@@ -29,6 +30,12 @@ import {
   type EnuFrame,
   type Vec3,
 } from "@cityjson/navara-core";
+
+// Re-exported, not redefined: the units gate and its error moved into
+// `@cityjson/navara-core` (Task C5) so FlatCityBuf streaming admission and the
+// static load path share ONE implementation. Callers that already import them
+// from here keep working.
+export { NonMetricCrsError, assertMetricCrs } from "@cityjson/navara-core";
 
 export interface Lle {
   readonly lng: number;
@@ -56,20 +63,6 @@ export class CrsUnresolvedError extends Error {
   }
 }
 
-export class NonMetricCrsError extends Error {
-  constructor(
-    readonly epsg: number,
-    readonly units: string | undefined,
-  ) {
-    super(
-      `Cannot georeference this layer: CRS EPSG:${epsg} is not metre-based (units: ${
-        units ?? "unspecified"
-      }). CityJSON z, the geoid offset and every downstream distance are metres, so this layer cannot be placed.`,
-    );
-    this.name = "NonMetricCrsError";
-  }
-}
-
 /**
  * The spec 4.3 CRS gate: a layer either has a CRS proj4 can reproject through
  * or it does not load at all. There is no planar fallback — an ungeoreferenced
@@ -86,26 +79,10 @@ export function resolveEpsg(crs: string | number | undefined): number {
 }
 
 /**
- * The units half of the gate: `epsg`'s proj4 definition must *explicitly*
- * declare metres.
- *
- * proj4 reprojects x/y out of a foot-based or degree-based CRS perfectly well,
- * so nothing downstream would fail loudly — the layer would just render with
- * heights (and a geoid offset, and every metre-denominated distance constant)
- * scaled wrong, which is far worse than a refusal. Absence of an explicit
- * `+units=m` is treated as "not established", mirroring the app's FlatCityBuf
- * admission check (`checkAdmission` in
- * `src/domain/citymodel/flatcitybuf/fcbSource.ts`), so the static load path is
- * not the hole in that policy.
- */
-export function assertMetricCrs(epsg: number): void {
-  const units = proj4.defs(`EPSG:${epsg}`)?.units as string | undefined;
-  if (units !== "m") throw new NonMetricCrsError(epsg, units);
-}
-
-/**
  * The full admission gate for a static layer: resolvable by proj4 AND
- * metre-based. `CityModelMesh` calls this, not `resolveEpsg`.
+ * metre-based (core's `assertMetricCrs` — the same call FlatCityBuf's
+ * `checkAdmission` makes, so neither path is the hole in the other's policy).
+ * `CityModelMesh` calls this, not `resolveEpsg`.
  */
 export function resolveMetricEpsg(crs: string | number | undefined): number {
   const epsg = resolveEpsg(crs);

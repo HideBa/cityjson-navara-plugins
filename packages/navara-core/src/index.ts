@@ -55,7 +55,13 @@ export { parseCityJSON } from "./citymodel/cityjson/parseCityJSON";
 export type { CityJSONFeature } from "./citymodel/cityjsonseq/types";
 export { parseCityJSONSeq } from "./citymodel/cityjsonseq/parseCityJSONSeq";
 
-export { ensureProjDef, parseEpsgCode } from "./citymodel/crsProjDefs";
+export {
+  NonMetricCrsError,
+  assertMetricCrs,
+  ensureProjDef,
+  isMetricCrs,
+  parseEpsgCode,
+} from "./citymodel/crsProjDefs";
 
 export type { EnuFrame } from "./geo/enuFrame";
 export {
@@ -118,3 +124,7 @@ export type {
   SurfaceStyleEvaluator,
 } from "./styling/buildStyleColors";
 export { buildStyleColorsFromArrays } from "./styling/buildStyleColors";
+export {
+  buildRuleColorsFromArrays,
+  compileRuleEvaluator,
+} from "./styling/ruleColors";

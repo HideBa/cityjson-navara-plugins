@@ -4,10 +4,16 @@
  *
  * This barrel is engine-free and Node-importable: everything exported here is
  * pure TypeScript over plain data (tile arithmetic, cache budgets, hysteresis,
- * feature bucketing, worker message shapes). The engine-bound half (the
- * `@navaramap/*` imports and the FCB worker) lands in later M7.5 tasks behind
- * its own entry point, exactly as `@cityjson/navara-cityjson/plugin` does —
- * see Task B1's NODE_IMPORT_SAFE = false verdict.
+ * feature bucketing, worker message shapes, FCB header admission) plus
+ * `WorkerClient`, which only touches the DOM `Worker` constructor from inside
+ * its own constructor. The engine-bound half (the `@navaramap/*` imports)
+ * lands in a later M7.5 task behind its own entry point, exactly as
+ * `@cityjson/navara-cityjson/plugin` does — see Task B1's
+ * NODE_IMPORT_SAFE = false verdict.
+ *
+ * `./fcb.worker.ts` is deliberately NOT re-exported: it is a worker entry
+ * point whose module scope installs an `onmessage` handler, and it is reached
+ * only through `WorkerClient`'s `new Worker(new URL(...))`.
  */
 import { NAVARA_CORE_VERSION } from "@cityjson/navara-core";
 
@@ -21,6 +27,8 @@ export * from "./throttleGates";
 export * from "./bucketFeatures";
 export * from "./objectRecords";
 export * from "./workerProtocol";
+export * from "./workerClient";
+export * from "./fcbSource";
 export * from "./viewportFootprint";
 // The ray *adapter* is engine-free and belongs here; the binding that supplies
 // Navara's real `getPickRay` (`./engineRays`) does NOT, and is re-exported from
