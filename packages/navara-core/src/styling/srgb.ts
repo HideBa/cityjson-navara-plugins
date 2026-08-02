@@ -20,7 +20,7 @@ function srgbChannelToLinear(c: number): number {
  *
  * CSS color names and rgb()/hsl() function syntax — which three.Color's
  * `setStyle` also accepts — are intentionally NOT supported here: `Rule.color`
- * is documented as "CSS hex color" only (see features/rules/types.ts), so
+ * is documented as "CSS hex color" only (see ../rules/types.ts), so
  * hex is the entire contract this function needs to honor.
  */
 function expandHex(h: string): string | null {
@@ -33,9 +33,9 @@ function expandHex(h: string): string | null {
 
 /**
  * Matches three.Color's sRGB → Linear-sRGB conversion (ColorManagement on).
- * NOT hex/255 — see the parity test in ruleColorsWorkerSafe.test.ts. Accepts
- * both 3-digit ("#abc") and 6-digit ("#aabbcc") CSS hex shorthand, matching
- * three.Color's `setStyle` hex-parsing branch (3-digit expansion is
+ * NOT hex/255 — see the parity test in tests/styling/srgbHexToLinear.test.ts.
+ * Accepts both 3-digit ("#abc") and 6-digit ("#aabbcc") CSS hex shorthand,
+ * matching three.Color's `setStyle` hex-parsing branch (3-digit expansion is
  * digit-duplication, verified numerically identical to three's own
  * per-digit `/15` computation — see the parity tests).
  *

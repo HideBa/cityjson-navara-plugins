@@ -68,3 +68,30 @@ export {
   computeOriginOffset,
 } from "./geometry/buildCityMeshArrays";
 export type { PickingIndex, PickResult } from "./picking/types";
+
+export type { RoofMetrics } from "./roofMetrics/types";
+export {
+  computeArea,
+  computeAzimuth,
+  computeElevation,
+  computeInclination,
+  computeRoofMetrics,
+  computeSurfaceNormal,
+} from "./roofMetrics/metrics";
+export { computeFootprintArea } from "./roofMetrics/footprint";
+export type {
+  Condition,
+  ConditionOperator,
+  LogicMode,
+  Rule,
+} from "./rules/types";
+export { evaluateCondition, evaluateRule, matchRule } from "./rules/evaluate";
+
+export type { RGB } from "./styling/srgb";
+export { srgbHexToLinear } from "./styling/srgb";
+export type {
+  CityObjectInfo,
+  SurfaceInfo,
+  SurfaceStyleEvaluator,
+} from "./styling/buildStyleColors";
+export { buildStyleColorsFromArrays } from "./styling/buildStyleColors";
