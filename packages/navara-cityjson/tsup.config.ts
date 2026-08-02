@@ -22,9 +22,13 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   treeshake: true,
+  // proj4 and three are singleton registries (a module-global EPSG table and
+  // `instanceof` checks): bundling either would give the host a second copy
+  // whose registrations are invisible to core's. They stay peer + external.
   external: [
     "@navaramap/three",
     "@navaramap/three-default-plugin",
+    "proj4",
     "three",
     "@cityjson/navara-core",
   ],
