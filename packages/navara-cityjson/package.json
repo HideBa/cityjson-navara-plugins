@@ -20,7 +20,7 @@
     "test": "vitest run --dir tests"
   },
   "dependencies": {
-    "@cityjson/navara-core": "workspace:*"
+    "@cityjson/navara-core": "file:../navara-core"
   },
   "peerDependencies": {
     "@navaramap/three": "0.0.5",
