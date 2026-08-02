@@ -37,6 +37,7 @@ import { CellCache } from "./cellCache";
 import type { CellMeshFactory } from "./cellMeshes";
 import {
   FLYTO_QUIET_MS,
+  GEOID_TIMEOUT_MS,
   RESIDENT_BYTE_BUDGET,
   RESIDENT_TRIANGLE_BUDGET,
   SETTLE_MS,
@@ -119,6 +120,14 @@ export interface OpenStreamOptions {
   readonly heightOffset?: number;
 }
 
+/** The ambient timers, resolved at call time so a test's fake clock (installed
+ *  after the registry was constructed) is still honoured — the same shape
+ *  `settleController.ts` uses for exactly the same reason. */
+const defaultTimers: TimerApi = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (handle) => clearTimeout(handle),
+};
+
 /** proj4's two-CRS converter, typed to the two calls used here. */
 interface Proj4Converter {
   forward(coords: [number, number]): [number, number];
@@ -167,6 +176,12 @@ export class StreamLayerRegistry {
    * first; the controller itself survives, so a suppression window opened
    * across a re-attach is not lost. Ignored after {@link dispose}, so a late
    * `init()` cannot resurrect a torn-down registry with live listeners.
+   *
+   * Ends by committing every layer already open. A layer opened BEFORE the
+   * plugin had a view got no initial commit — `currentRays()` had nothing to
+   * ask — and nothing else would revisit it, so it would sit empty until the
+   * user happened to move the camera. This is the same "a commit is owed and
+   * no camera event will arrive" case `onLodChanged` exists for.
    */
   attach(view: StreamViewLike): void {
     if (this.disposed) return;
@@ -188,6 +203,7 @@ export class StreamLayerRegistry {
       camera: view.camera,
       view,
     });
+    this.commitAll();
   }
 
   /**
@@ -316,10 +332,7 @@ export class StreamLayerRegistry {
       );
       const heightOffsetM =
         opts.heightOffset ??
-        (await (this.deps.sampleGeoidHeight ?? geoidHeightAt)(
-          centreLng,
-          centreLat,
-        ));
+        (await this.sampleHeightOffset(opts.id, centreLng, centreLat));
       if (opts.heightOffset === undefined) {
         // Establishes the worker's placement with the resolved offset. Only
         // now can a `fetch` be dispatched — see `openWorker`.
@@ -370,6 +383,86 @@ export class StreamLayerRegistry {
       client.terminate();
       throw err;
     }
+  }
+
+  /**
+   * The vertical-datum offset, or 0 — but never a hang.
+   *
+   * This is the ONE await in the whole plugin that a network stall can block
+   * indefinitely, and it blocks the layer's entire existence: no worker
+   * placement, no cells, no error. Core's sampler already swallows failures
+   * (it resolves 0 and logs) but it issues a bare `fetch` with no
+   * `AbortSignal`, and browser `fetch` has no default timeout — so a
+   * terrain.reearth.land response that never arrives would leave `openStream`
+   * pending forever.
+   *
+   * Bounded HERE rather than in core's fetch, deliberately:
+   *
+   * - it is the awaiting caller that needs the bound. The static path (Task
+   *   B7) samples the same service without blocking anything — it renders at
+   *   offset 0 and re-places when the sample lands — so core has no such
+   *   requirement and gains nothing from a timeout.
+   * - the sampler is an INJECTED seam. Racing here bounds whatever the host
+   *   supplied, not just core's `fetch`; an `AbortSignal.timeout` inside core
+   *   would bound neither an injected sampler nor core's own `decode` step
+   *   (`createImageBitmap`), which is equally capable of never settling.
+   *
+   * What it does NOT do: cancel the in-flight request. The connection is left
+   * to the browser; we simply stop waiting on it. Adding `AbortSignal.timeout`
+   * to core's fetch is still worth doing for connection hygiene, and is
+   * complementary to this — recorded as a follow-up rather than folded in,
+   * because it changes a module three packages share.
+   *
+   * A rejecting sampler is treated the same way as a stalled one: the vertical
+   * datum is documented as best effort with a 0 fallback (Global Constraints
+   * -> Vertical datum), so it must not be able to fail a layer open.
+   */
+  private async sampleHeightOffset(
+    id: string,
+    lngDeg: number,
+    latDeg: number,
+  ): Promise<number> {
+    const sample = this.deps.sampleGeoidHeight ?? geoidHeightAt;
+    const timers = this.deps.timers ?? defaultTimers;
+    let handle: ReturnType<typeof setTimeout> | null = null;
+    const timedOut = Symbol("geoid-timeout");
+    const deadline = new Promise<typeof timedOut>((resolve) => {
+      handle = timers.setTimeout(() => resolve(timedOut), GEOID_TIMEOUT_MS);
+    });
+    try {
+      const result = await Promise.race([
+        (async () => await sample(lngDeg, latDeg))(),
+        deadline,
+      ]);
+      if (result !== timedOut && Number.isFinite(result)) return result;
+      this.warnGeoidFallback(id, lngDeg, latDeg, result === timedOut);
+      return 0;
+    } catch (error) {
+      this.warnGeoidFallback(id, lngDeg, latDeg, false, error);
+      return 0;
+    } finally {
+      // Both for the browser (a 10 s handle held per layer) and for a test's
+      // fake clock, which would otherwise still have work pending.
+      if (handle !== null) timers.clearTimeout(handle);
+    }
+  }
+
+  private warnGeoidFallback(
+    id: string,
+    lngDeg: number,
+    latDeg: number,
+    timedOut: boolean,
+    error?: unknown,
+  ): void {
+    console.warn(
+      `[navara-flatcitybuf] layer "${id}": the geoid sample at ${lngDeg.toFixed(4)}, ${latDeg.toFixed(4)} ` +
+        (timedOut
+          ? `did not resolve within ${GEOID_TIMEOUT_MS} ms`
+          : `failed`) +
+        `; falling back to heightOffset 0 m — the model will sit at its geoid separation (~43 m for NAP) below the terrain. ` +
+        `Pass \`heightOffset\` to openStream to skip the sample entirely.`,
+      ...(error === undefined ? [] : [error]),
+    );
   }
 
   /**

@@ -11,6 +11,17 @@ export const SETTLE_MS = 350;
  *  2–3 fps host). 2 s is generous on purpose: over-suppressing costs at most
  *  one deferred commit, under-suppressing fetches a whole flight path. */
 export const FLYTO_QUIET_MS = 2000;
+/** How long `openStream` will wait for the geoid sample before opening the
+ *  layer at heightOffset 0.
+ *
+ *  The sample is the one await that blocks a layer's entire existence (the
+ *  worker's placement is established with it, so no cell can be fetched
+ *  first), and core's sampler issues a bare `fetch` — browser `fetch` has no
+ *  default timeout, so an unanswered request would stall the open forever.
+ *  10 s is generous for one 256 px terrain tile on a slow connection and
+ *  still short enough that a dead service degrades to the pre-geoid
+ *  behaviour (model ~43 m low for NAP) instead of an empty viewport. */
+export const GEOID_TIMEOUT_MS = 10_000;
 export const MOVE_FRAC = 0.2;
 export const SCALE_FACTOR = 1.3;
 export const T_MAX_M = 5000;

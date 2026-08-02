@@ -25,7 +25,7 @@ import type { PickRaySource } from "../src/navaraRays";
 import type { WorkerClient } from "../src/workerClient";
 import type { WorkerResponse } from "../src/workerProtocol";
 import type { Ray } from "../src/viewportFootprint";
-import { SETTLE_MS } from "../src/constants";
+import { GEOID_TIMEOUT_MS, SETTLE_MS } from "../src/constants";
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -429,6 +429,98 @@ describe("StreamLayerRegistry.openStream", () => {
     expect(handle.frame.matrix).toEqual(
       makeEnuFrame(...centreLngLat(), 12).matrix,
     );
+  });
+
+  it("bounds the geoid await: a stalled sampler opens the layer at 0 with one warning", async () => {
+    vi.useFakeTimers();
+    try {
+      const trace: string[] = [];
+      const { client } = makeFakeClient({ trace });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const r = makeRegistry({
+        createClient: () => client,
+        getPickRays: () => null,
+        // The failure this guards: core's sampler issues a bare `fetch` with
+        // no AbortSignal, and browser fetch has no default timeout — an
+        // unanswered terrain response would leave the layer pending forever
+        // (no worker placement, no cells, no error).
+        sampleGeoidHeight: () => new Promise<number>(() => {}),
+      });
+
+      const opening = r.openStream(openOpts);
+      let settled = false;
+      void opening.then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(GEOID_TIMEOUT_MS - 1000);
+      expect(settled).toBe(false); // still waiting, as it should be
+      await vi.advanceTimersByTimeAsync(1001);
+
+      const handle = await opening;
+      expect(handle.frame.matrix).toEqual(
+        makeEnuFrame(...centreLngLat(), 0).matrix,
+      );
+      // The placement open still happens — at the fallback offset, so the
+      // worker and the main thread agree on the (wrong-by-the-undulation)
+      // frame rather than disagreeing.
+      expect(trace.filter((t) => t.startsWith("open:"))).toEqual([
+        "open:undefined",
+        "open:0",
+      ]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toContain("did not resolve within");
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a rejecting geoid sampler falls back to 0 instead of failing the open", async () => {
+    const trace: string[] = [];
+    const { client } = makeFakeClient({ trace });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = makeRegistry({
+      createClient: () => client,
+      getPickRays: () => null,
+      sampleGeoidHeight: async () => {
+        throw new Error("terrain service down");
+      },
+    });
+
+    // The vertical datum is documented as best effort with a 0 fallback, so a
+    // sampler that throws must not be able to fail a layer open.
+    const handle = await r.openStream(openOpts);
+    expect(handle.frame.matrix).toEqual(
+      makeEnuFrame(...centreLngLat(), 0).matrix,
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain("failed");
+    warn.mockRestore();
+  });
+
+  it("commits a layer opened BEFORE the plugin had a view, as soon as attach() runs", async () => {
+    const trace: string[] = [];
+    const { client } = makeFakeClient({ trace });
+    let rays: PickRaySource | null = null;
+    const r = makeRegistry({
+      createClient: () => client,
+      getPickRays: () => rays,
+      sampleGeoidHeight: async () => GEOID_M,
+    });
+
+    await r.openStream(openOpts);
+    await flush();
+    // No view yet: there are no corner rays to commit against.
+    expect(trace).not.toContain("probe");
+
+    rays = topDownRays();
+    r.attach(new FakeView());
+    await flush();
+    // ...and no camera gesture was needed. Without this the layer would sit
+    // empty until the user happened to move.
+    expect(trace).toContain("probe");
+    expect(trace).toContain("fetch");
   });
 
   it("refuses an unsupported CRS and terminates the worker", async () => {
