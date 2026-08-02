@@ -19,13 +19,12 @@
     "build": "tsup",
     "test": "vitest run --dir tests"
   },
-  "dependencies": {
-    "proj4": "^2.20.8"
-  },
   "peerDependencies": {
+    "proj4": ">=2.20.0",
     "three": ">=0.183.0"
   },
   "devDependencies": {
+    "proj4": "^2.20.8",
     "three": "0.183.2",
     "tsup": "8.5.0",
     "typescript": "5.9.3",
