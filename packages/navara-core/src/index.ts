@@ -57,6 +57,27 @@ export { parseCityJSONSeq } from "./citymodel/cityjsonseq/parseCityJSONSeq";
 
 export { ensureProjDef, parseEpsgCode } from "./citymodel/crsProjDefs";
 
+export type { EnuFrame } from "./geo/enuFrame";
+export {
+  ecefToEnu,
+  ecefToGeodetic,
+  enuToEcef,
+  geodeticToEcef,
+  makeEnuFrame,
+} from "./geo/enuFrame";
+export type {
+  SourceToEnuOptions,
+  ProjectPositionsOptions,
+} from "./geo/sourceToEnu";
+export { sourceToEnuPoint, projectPositionsToEnu } from "./geo/sourceToEnu";
+export type { RasterPixels, GeoidSampleDeps } from "./geo/geoidHeight";
+export {
+  GEOID_TILEJSON_URL,
+  GEOID_ATTRIBUTION,
+  geoidHeightAt,
+  resetGeoidCacheForTest,
+} from "./geo/geoidHeight";
+
 export type { LinearRGB } from "./styling/surfaceColors";
 export {
   SURFACE_COLOR_VALUES,
