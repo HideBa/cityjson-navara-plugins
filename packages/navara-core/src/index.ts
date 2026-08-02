@@ -61,3 +61,10 @@ export {
   SURFACE_COLOR_HEX,
   SURFACE_COLORS_LINEAR,
 } from "./styling/surfaceColors";
+
+export type { CityMeshArrays } from "./geometry/buildCityMeshArrays";
+export {
+  buildCityMeshArrays,
+  computeOriginOffset,
+} from "./geometry/buildCityMeshArrays";
+export type { PickingIndex, PickResult } from "./picking/types";
