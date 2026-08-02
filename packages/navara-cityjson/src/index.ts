@@ -6,3 +6,5 @@
 import { NAVARA_CORE_VERSION } from "@cityjson/navara-core";
 
 export const CITYJSON_PLUGIN_PLACEHOLDER = `@cityjson/navara-cityjson (core ${NAVARA_CORE_VERSION})`;
+
+export { disposeGeometry, geometryFromMeshArrays } from "./cityMeshGeometry";

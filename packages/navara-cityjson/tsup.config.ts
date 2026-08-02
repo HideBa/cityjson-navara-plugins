@@ -12,7 +12,12 @@ export default defineConfig({
     // here resolves @cityjson/navara-core through node_modules to its built
     // dist/index.d.ts — exactly how a published consumer resolves it, and
     // available because `pnpm -r build` builds navara-core first.
-    compilerOptions: { paths: {} },
+    //
+    // `composite: true` (also inherited from tsconfig.base.json, for `tsc -b`)
+    // makes that same non-project program demand an explicit file list, which
+    // fails with TS6307 as soon as the package has more than one module. The
+    // dts pass only ever needs a plain program rooted at the entry.
+    compilerOptions: { paths: {}, composite: false, incremental: false },
   },
   sourcemap: true,
   clean: true,
