@@ -30,6 +30,8 @@ export * from "./workerProtocol";
 export * from "./workerClient";
 export * from "./fcbSource";
 export * from "./viewportFootprint";
+export * from "./streamLayer";
+export * from "./commitPlanner";
 // The ray *adapter* is engine-free and belongs here; the binding that supplies
 // Navara's real `getPickRay` (`./engineRays`) does NOT, and is re-exported from
 // the `./plugin` entry point instead (Task C11).
