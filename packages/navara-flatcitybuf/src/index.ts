@@ -31,6 +31,7 @@ export * from "./workerClient";
 export * from "./fcbSource";
 export * from "./viewportFootprint";
 export * from "./streamLayer";
+export * from "./residentModel";
 export * from "./commitPlanner";
 export * from "./settleController";
 export * from "./cellMeshes";
