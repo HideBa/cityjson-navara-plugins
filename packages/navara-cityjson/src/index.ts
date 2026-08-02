@@ -1,11 +1,45 @@
 /**
  * @cityjson/navara-cityjson — Navara plugin for static CityJSON / CityJSONSeq
- * layers. Implemented in milestone M7.3; this entry point is a placeholder so
- * the package builds, type-checks, and can be wired into the host app early.
+ * layers.
+ *
+ * NOTE: this barrel re-exports the three engine-binding modules
+ * (`CityJSONPlugin`, `CityModelMeshDesc`, `CityMeshArraysDesc`), so it
+ * transitively imports `@navaramap/*` and cannot be loaded under Node
+ * (`NODE_IMPORT_SAFE = false`). Unit tests therefore import the specific
+ * engine-free module (`../src/cityModelRegistry`, `../src/cityMesh`, ...),
+ * never this file — see Global Constraints -> Testing conventions.
  */
 import { NAVARA_CORE_VERSION } from "@cityjson/navara-core";
 
 export const CITYJSON_PLUGIN_PLACEHOLDER = `@cityjson/navara-cityjson (core ${NAVARA_CORE_VERSION})`;
+
+export { CityJSONPlugin } from "./CityJSONPlugin";
+export type { CityJSONPluginOptions } from "./CityJSONPlugin";
+export { CityMeshArraysDesc } from "./CityMeshArraysDesc";
+export type { CityMeshArraysDescConfig } from "./CityMeshArraysDesc";
+export { CityModelMeshDesc } from "./CityModelMeshDesc";
+export type {
+  CityModelDescConfig,
+  CityModelDescOptions,
+} from "./CityModelMeshDesc";
+
+export { CITY_MESH_ARRAYS_KEY, CITY_MODEL_MESH_KEY } from "./descriptorKeys";
+
+export { CityModelRegistry } from "./cityModelRegistry";
+export type {
+  CityModelRegistryDeps,
+  CityModelViewLike,
+  PickRayProvider,
+} from "./cityModelRegistry";
+
+export { addCityMeshArrays, CityMeshArraysMesh } from "./cityMesh";
+export type {
+  AddCityMeshArraysOptions,
+  CityMeshArraysViewLike,
+  CityMeshHandle,
+} from "./cityMesh";
+
+export type { AddCityModelOptions, CityModelHandle } from "./types";
 
 export { disposeGeometry, geometryFromMeshArrays } from "./cityMeshGeometry";
 
