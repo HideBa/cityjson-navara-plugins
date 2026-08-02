@@ -5,7 +5,9 @@
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -29,8 +31,9 @@
   },
   "devDependencies": {
     "@navaramap/three": "0.0.5",
-    "proj4": "2.20.8",
     "@navaramap/three-default-plugin": "0.0.5",
+    "@types/three": "0.183.1",
+    "proj4": "2.20.8",
     "three": "0.183.2",
     "tsup": "8.5.0",
     "typescript": "5.9.3",
