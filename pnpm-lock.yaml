@@ -34,8 +34,8 @@ importers:
         specifier: 0.0.5
         version: 0.0.5(@navaramap/three@0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       proj4:
-        specifier: ^2.20.8
-        version: 2.21.0
+        specifier: 2.20.8
+        version: 2.20.8
       three:
         specifier: 0.183.2
         version: 0.183.2
@@ -56,8 +56,8 @@ importers:
         version: link:../navara-core
     devDependencies:
       proj4:
-        specifier: ^2.20.8
-        version: 2.21.0
+        specifier: 2.20.8
+        version: 2.20.8
       three:
         specifier: 0.183.2
         version: 0.183.2
@@ -74,8 +74,8 @@ importers:
   packages/navara-core:
     devDependencies:
       proj4:
-        specifier: ^2.20.8
-        version: 2.21.0
+        specifier: 2.20.8
+        version: 2.20.8
       three:
         specifier: 0.183.2
         version: 0.183.2
@@ -105,8 +105,8 @@ importers:
         specifier: 0.0.5
         version: 0.0.5(@navaramap/three@0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       proj4:
-        specifier: ^2.20.8
-        version: 2.21.0
+        specifier: 2.20.8
+        version: 2.20.8
       three:
         specifier: 0.183.2
         version: 0.183.2
@@ -1164,13 +1164,8 @@ packages:
   potpack@1.0.2:
     resolution: {integrity: sha512-choctRBIV9EMT9WGAZHn3V7t0Z2pMQyl0EZE6pFc/6ml3ssw7Dlf/oAOvFwjm1HVsqfQN8GfeFyJ+d8tRzqueQ==}
 
-  proj4@2.21.0:
-    resolution: {integrity: sha512-33HfDftqw8kY+Cl1dcL16SJuqTSzYxmz4re7Nmhk+fs1/N1fFrAkkF579msQTR/4fLeJVSNne8/gpoCz0fk1uw==}
-    peerDependencies:
-      geotiff: '*'
-    peerDependenciesMeta:
-      geotiff:
-        optional: true
+  proj4@2.20.8:
+    resolution: {integrity: sha512-1C8sfT4xY4PAPwk0MroFBTGF4R4bzDXdmPQTGYVLsoNssrZ9odzObxS2dTeGBty8jW8KO7h16C1Hs2JP+ctfFw==}
 
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
@@ -2338,7 +2333,7 @@ snapshots:
 
   potpack@1.0.2: {}
 
-  proj4@2.21.0:
+  proj4@2.20.8:
     dependencies:
       mgrs: 1.0.0
       wkt-parser: 1.5.6
