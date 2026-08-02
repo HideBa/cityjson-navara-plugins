@@ -159,7 +159,16 @@ export function createSettleController(
       beginBurst();
     },
     onMoveEnd() {
-      if (gated()) return;
+      if (gated()) {
+        // A burst that opened BEFORE the gate closed must still end here.
+        // `inBurst` is otherwise only cleared by `fire`/`dispose`, neither of
+        // which a swallowed `moveend` reaches — so it would stay stuck and the
+        // next real gesture's `movestart` would skip `onFirstChange`, silently
+        // failing to abort in-flight work. Only burst liveness resets; the
+        // commit itself stays suppressed.
+        inBurst = false;
+        return;
+      }
       clear();
       armed = true;
       timer = timers.setTimeout(fire, opts.settleMs);

@@ -293,6 +293,68 @@ describe("createSettleController", () => {
     expect(onSettle).toHaveBeenCalledTimes(1);
   });
 
+  it("a suppressed moveend still ENDS the burst, so the next gesture aborts in-flight work", () => {
+    // Regression: the gate closing mid-burst (e.g. a keyboard "reset view"
+    // while the pointer is still down) swallowed the burst's `moveend`, which
+    // is the only event that would have cleared burst liveness. `inBurst` then
+    // stayed stuck and the NEXT real gesture's `movestart` skipped
+    // `onFirstChange` — silently failing to abort in-flight work.
+    const onFirstChange = vi.fn();
+    const c = createSettleController({
+      settleMs: 350,
+      onFirstChange,
+      onSettle: vi.fn(),
+    });
+    c.onMoveStart(); // burst starts, onFirstChange fires (1)
+    c.suppress(() => {}, 100); // programmatic camera move mid-drag
+    vi.advanceTimersByTime(50);
+    c.onMoveEnd(); // swallowed — gate still held
+    vi.advanceTimersByTime(1000);
+    c.onMoveStart(); // next gesture
+    expect(onFirstChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("…and that suppressed moveend still commits nothing", () => {
+    const onSettle = vi.fn();
+    const c = createSettleController({
+      settleMs: 350,
+      onFirstChange: vi.fn(),
+      onSettle,
+    });
+    c.onMoveStart();
+    c.suppress(() => {}, 100);
+    vi.advanceTimersByTime(50);
+    c.onMoveEnd(); // suppressed: ends the burst, arms nothing
+    vi.advanceTimersByTime(1000);
+    expect(onSettle).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0); // no settle timer was armed
+  });
+
+  it("does the same for suppressUntil — an awaited flyTo mid-drag", async () => {
+    const onFirstChange = vi.fn();
+    const onSettle = vi.fn();
+    const c = createSettleController({
+      settleMs: 350,
+      onFirstChange,
+      onSettle,
+    });
+    let resolve!: () => void;
+    const flight = new Promise<void>((r) => {
+      resolve = r;
+    });
+    c.onMoveStart();
+    c.suppressUntil(flight, 100);
+    c.onMoveEnd(); // swallowed
+    resolve();
+    await flight;
+    vi.advanceTimersByTime(100); // quiet window elapses
+    c.onMoveStart();
+    expect(onFirstChange).toHaveBeenCalledTimes(2);
+    c.onMoveEnd();
+    vi.advanceTimersByTime(350);
+    expect(onSettle).toHaveBeenCalledTimes(1);
+  });
+
   it("stays dead when a pending suppressUntil promise settles after dispose", async () => {
     const onSettle = vi.fn();
     const c = createSettleController({
