@@ -407,7 +407,12 @@ describe("StreamLayerRegistry.openStream", () => {
     );
     // ...and the same offset reaches the handle, which rebuilds each cell's
     // ENU frame with it (a disagreement floats or sinks every cell).
-    expect(handle.getBoundsGeodetic()).toBeNull(); // no cell resident yet
+    // The bounds are available before any cell is resident (Task C14) and
+    // carry the sampled offset in their heights — the sharpest place to see
+    // that the offset the worker was opened with is the one the handle uses.
+    const bounds = handle.getBoundsGeodetic()!;
+    expect(bounds.minHeight).toBe(EXTENT[2] + GEOID_M);
+    expect(bounds.maxHeight).toBe(EXTENT[5] + GEOID_M);
     expect(handle.frame.matrix).toEqual(
       makeEnuFrame(...centreLngLat(), GEOID_M).matrix,
     );

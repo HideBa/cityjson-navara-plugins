@@ -761,12 +761,22 @@ describe("FcbStreamLayerHandle interaction parity", () => {
     expect(handle.triangleCount()).toBe(factory.created.size * 7);
   });
 
-  it("getBoundsGeodetic returns null before the first commit and the header extent after", async () => {
+  it("getBoundsGeodetic reports the header extent from the moment the layer is open, before any commit", async () => {
+    // NOT gated on the first commit: cells only become resident once the
+    // camera is already close enough, so an FCB-only workspace could never
+    // fly TO the layer if its bounds appeared only after it had arrived
+    // (found by Task C14's browser smoke — "Fit all" was a no-op on the globe).
     const { handle } = makeHandle({ meshFactory: pickingFactory().factory });
-    expect(handle.getBoundsGeodetic()).toBeNull();
+    const before = handle.getBoundsGeodetic()!;
+    expect(before.west).toBeGreaterThan(3.5);
+    expect(before.east).toBeLessThan(5.5);
+
     await handle.commit(topDownRays());
 
     const b = handle.getBoundsGeodetic()!;
+    // The commit does not move them: the extent is the whole file's, not the
+    // resident cells' union.
+    expect(b).toEqual(before);
     expect(b.west).toBeLessThan(b.east);
     expect(b.south).toBeLessThan(b.north);
     // Delft-ish, from the HEADER extent reprojected — this is what makes

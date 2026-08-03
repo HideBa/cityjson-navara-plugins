@@ -774,17 +774,27 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   /**
    * The layer's geodetic extent, from the FCB header's source-CRS extent.
    *
-   * Null until the first successful commit, so `fitAll` does not frame a layer
-   * that has not proven it has data — and null for a header with no extent at
-   * all (`FcbHeaderModel.extent` is optional; a file without one never passes
-   * admission, so this is defence, not a supported path).
+   * Available from the moment the layer is open — NOT gated on the first
+   * commit. That gate used to exist ("don't frame a layer that has not proven
+   * it has data") and it deadlocked the only workspace that needs it: cells
+   * become resident only when the camera is already close enough for the cover
+   * to fit the budget, so in an FCB-only workspace "Fit all" was a no-op and
+   * the data was unreachable — the browser smoke in Task C14 could not get to
+   * Delft at all. The header extent is known and trustworthy at open time (a
+   * file without one never passes admission), so reporting it is what makes
+   * "fly to this layer" the way IN rather than a reward for already being
+   * there.
+   *
+   * Null only for a DELETED layer (its meshes are gone and it must drop out of
+   * any fit union) or a header with no extent at all — the latter is defence,
+   * not a supported path.
    *
    * The whole header extent, not the resident cells' union: the resident set
    * is a function of where the camera happens to be, so framing it would make
    * `fitLayer` a no-op that re-frames what you are already looking at.
    */
   getBoundsGeodetic(): GeodeticBounds | null {
-    if (this.cells.size === 0) return null;
+    if (this._deleted) return null;
     const extent = this.header.extent;
     if (!extent) return null;
     const [minX, minY, minZ, maxX, maxY, maxZ] = extent;
