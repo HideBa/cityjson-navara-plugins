@@ -21,6 +21,7 @@ import type { EnuFrame, Rule, Surface } from "@cityjson/navara-core";
 // break the engine-binding rule.
 import { paintLayers } from "@cityjson/navara-cityjson";
 import type {
+  EcefRay,
   GeodeticBounds,
   PickedFeatureLike,
   RaycastHit,
@@ -757,6 +758,20 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   }
 
   /**
+   * Metres of geoid undulation baked into this layer's placement.
+   *
+   * Every cell's ENU frame is built with it (`heightOffsetM`, Task C5), so the
+   * cursor readout has to subtract it again to report the z the source file
+   * actually contains: `orthometric = ellipsoidal - heightOffset` (Global
+   * Constraints -> Vertical datum). Without it the status bar reads ~43 m high
+   * over a NAP model — the exact error the offset exists to remove, in the
+   * other direction.
+   */
+  heightOffset(): number {
+    return this.options.heightOffsetM;
+  }
+
+  /**
    * The layer's geodetic extent, from the FCB header's source-CRS extent.
    *
    * Null until the first successful commit, so `fitAll` does not frame a layer
@@ -850,31 +865,65 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
     const raw = this.options.pickRays?.getPickRay(pick.x, pick.y);
     if (raw === null || raw === undefined) return null;
     const ray = toRay(raw);
-    const ecefRay = {
+    const nearest = this.nearestCellHit({
       origin: { x: ray.origin[0], y: ray.origin[1], z: ray.origin[2] },
       direction: {
         x: ray.direction[0],
         y: ray.direction[1],
         z: ray.direction[2],
       },
-    };
-    // NEAREST wins, not first. Resident cells overlap in screen space whenever
-    // the ladder mixes levels or a tall building straddles a cell boundary,
-    // and Map iteration order is insertion order — i.e. whichever cell
-    // happened to commit first, which has nothing to do with what the user
-    // clicked. So every candidate is raycast and the smallest distance taken.
+    });
+    if (!nearest) return null;
+    return this.selectionFor(
+      nearest.cell,
+      nearest.hit.objectIndex,
+      nearest.hit.surfaceIndex,
+    );
+  }
+
+  /**
+   * The raw form of {@link resolvePick}: distance included, so the APP's
+   * cross-layer router can compare this layer's nearest hit against every other
+   * layer's instead of taking whichever answers first
+   * (`resolveNearestHit`, Task B15 — the fourth `InteractionHandle` member, and
+   * the one the app actually calls on every mousemove).
+   *
+   * The hit carries its `cellKey`, which is what makes the round trip work: the
+   * router hands the winning hit back through `resolvePick`, and an
+   * `objectIndex` is meaningful only inside the cell it was measured in. A
+   * static `CityModelHandle` needs no such field because it owns one mesh.
+   */
+  resolveRaycast(ray: EcefRay): RaycastHit | null {
+    const nearest = this.nearestCellHit(ray);
+    return nearest === null
+      ? null
+      : { ...nearest.hit, cellKey: nearest.key };
+  }
+
+  /**
+   * NEAREST wins, not first. Resident cells overlap in screen space whenever
+   * the ladder mixes levels or a tall building straddles a cell boundary, and
+   * Map iteration order is insertion order — i.e. whichever cell happened to
+   * commit first, which has nothing to do with what the user clicked. So every
+   * candidate is raycast and the smallest distance taken.
+   */
+  private nearestCellHit(
+    ray: EcefRay,
+  ): { key: CellKey; cell: CellMesh; hit: RaycastHit } | null {
     let best: RaycastHit | null = null;
     let bestCell: CellMesh | null = null;
-    for (const cell of this.cells.values()) {
-      const hit = cell.handle.resolveRaycast(ecefRay);
+    let bestKey: CellKey | null = null;
+    for (const [key, cell] of this.cells) {
+      const hit = cell.handle.resolveRaycast(ray);
       if (!hit) continue;
       if (best === null || hit.distance < best.distance) {
         best = hit;
         bestCell = cell;
+        bestKey = key;
       }
     }
-    if (!best || !bestCell) return null;
-    return this.selectionFor(bestCell, best.objectIndex, best.surfaceIndex);
+    if (best === null || bestCell === null || bestKey === null) return null;
+    return { key: bestKey, cell: bestCell, hit: best };
   }
 
   /**

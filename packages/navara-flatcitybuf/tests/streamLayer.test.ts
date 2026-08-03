@@ -382,11 +382,21 @@ const FAKE_PICK_RAYS: PickRaySource = {
   getPickRay: () => ({ origin: [0, 0, 0], direction: [0, 0, -1] }),
 };
 
+/** The same ray in the shape `resolveRaycast` takes (the app's router hands it
+ *  an ECEF ray it built itself, not a screen point). */
+const DOWNWARD_RAY = {
+  origin: { x: 0, y: 0, z: 0 },
+  direction: { x: 0, y: 0, z: -1 },
+};
+
 function makeHandle(
   opts: FakeClientOpts & {
     meshFactory?: CellMeshFactory;
     pickRays?: PickRaySource | null;
     onLodChanged?: () => void;
+    /** The vertical-datum offset every cell is placed with. 0 unless a test is
+     *  specifically about it, so the bounds assertions stay readable. */
+    heightOffsetM?: number;
   },
 ) {
   const fake = makeFakeClient(opts);
@@ -403,7 +413,7 @@ function makeHandle(
     frame: FRAME,
     toSourceXY: TO_SOURCE_XY,
     toLngLat: TO_LNG_LAT,
-    heightOffsetM: 0,
+    heightOffsetM: opts.heightOffsetM ?? 0,
     // Injected, so streamLayer.ts never imports addCityMeshArrays and
     // therefore never reaches @navaramap/*. Task C11 supplies the real one.
     meshFactory: opts.meshFactory ?? meshes.factory,
@@ -817,6 +827,60 @@ describe("FcbStreamLayerHandle interaction parity", () => {
       objectId: nearObjectId,
       surfaceIndex: 4,
     });
+  });
+
+  it("resolveRaycast answers with the nearest cell's hit AND its cellKey, so the app's cross-layer router can round-trip it", async () => {
+    // The fourth `InteractionHandle` member (Task B15's `resolveNearestHit`
+    // calls it on EVERY visible layer per mousemove). Without the cellKey the
+    // router's follow-up `resolvePick` cannot tell which cell the indices came
+    // from, and a streamed building would resolve to nothing.
+    const keys = await residentKeys();
+    const [far, near] = keys as [string, string];
+    const factory = pickingFactory({ [far]: 900, [near]: 120 });
+    const { handle } = makeHandle({ meshFactory: factory.factory });
+    await handle.commit(topDownRays());
+
+    const hit = handle.resolveRaycast(DOWNWARD_RAY);
+    expect(hit).toEqual({
+      objectIndex: 0,
+      surfaceIndex: 4,
+      distance: 120,
+      cellKey: near,
+    });
+
+    // The exact round trip the app performs: nearest hit -> the winner
+    // interprets its own indices.
+    expect(
+      handle.resolvePick({
+        layerId: "l1",
+        properties: {
+          layerId: "l1",
+          cellKey: hit!.cellKey,
+          objectIndex: hit!.objectIndex,
+          surfaceIndex: hit!.surfaceIndex,
+        },
+      }),
+    ).toEqual({
+      kind: "surface",
+      layerId: "l1",
+      objectId: factory.created.get(near)!.objectKeys[0]!,
+      surfaceIndex: 4,
+    });
+  });
+
+  it("publishes the vertical-datum offset its cells were placed with", async () => {
+    // The cursor readout subtracts it to get the source file's own z back
+    // (`layerHeightOffset`, app-side); a streaming layer that reported 0 would
+    // read ~43 m high over a NAP model.
+    const { handle } = makeHandle({ heightOffsetM: 43.2 });
+    expect(handle.heightOffset()).toBe(43.2);
+  });
+
+  it("resolveRaycast is null when nothing is resident, or nothing is hit", async () => {
+    const { handle } = makeHandle({ meshFactory: pickingFactory().factory });
+    expect(handle.resolveRaycast(DOWNWARD_RAY)).toBeNull(); // no cells yet
+    await handle.commit(topDownRays());
+    expect(handle.resolveRaycast(DOWNWARD_RAY)).toBeNull(); // none hit
   });
 
   it("resolvePick returns null when no resident cell is hit, and when there is no ray source at all", async () => {
