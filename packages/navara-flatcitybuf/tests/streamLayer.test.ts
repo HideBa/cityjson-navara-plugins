@@ -151,6 +151,9 @@ interface FakeClientOpts {
    *  level swap hits LEVEL_SWAP_TIMEOUT_MS with a partial arrival (B3). */
   readonly stallFetch?: boolean;
   readonly deliverCells?: number;
+  /** Delays a `fetch` before it delivers anything. Set beyond
+   *  LEVEL_SWAP_TIMEOUT_MS to prove which commits the deadline applies to. */
+  readonly fetchDelayMs?: number;
   /** Runs after a `fetch` request has been dispatched but before any cell is
    *  delivered — the only point at which a test can change the layer's rules
    *  "while the fetch is in flight" (B2). */
@@ -241,23 +244,32 @@ function makeFakeClient(opts: FakeClientOpts) {
       const limit = opts.stallFetch
         ? Math.min(opts.deliverCells ?? 0, cells.length)
         : cells.length;
-      cells.slice(0, limit).forEach((key, i) => {
-        if (empty.has(i)) return;
-        onMessage({
-          type: "cell",
-          id: 0,
-          key,
-          // A distinct object per cell: `resolvePick` must be provably
-          // answering from the cell it says it is.
-          geometry: geom(1, `B_${key}`),
-          objects: [],
-          surfaceAttrKeys: [],
-          lodsSeen: opts.lodsSeen ?? [],
+      const deliverCells = () =>
+        cells.slice(0, limit).forEach((key, i) => {
+          if (empty.has(i)) return;
+          onMessage({
+            type: "cell",
+            id: 0,
+            key,
+            // A distinct object per cell: `resolvePick` must be provably
+            // answering from the cell it says it is.
+            geometry: geom(1, `B_${key}`),
+            objects: [],
+            surfaceAttrKeys: [],
+            lodsSeen: opts.lodsSeen ?? [],
+          });
         });
-      });
-      if (opts.stallFetch) return new Promise<void>(() => {});
-      onMessage({ type: "done", id: 0 });
-      return Promise.resolve();
+      const finish = (): Promise<void> => {
+        deliverCells();
+        if (opts.stallFetch) return new Promise<void>(() => {});
+        onMessage({ type: "done", id: 0 });
+        return Promise.resolve();
+      };
+      return opts.fetchDelayMs === undefined
+        ? finish()
+        : new Promise<void>((r) => setTimeout(r, opts.fetchDelayMs)).then(
+            finish,
+          );
     },
   );
 
@@ -471,29 +483,58 @@ describe("FcbStreamLayerHandle.commit", () => {
   });
 
   it(
-    "on a level-swap timeout, keeps the old cache and evicts the partially-arrived cells from the worker (B3)",
+    "on a level-swap timeout, keeps the old level's cache and evicts the partially-arrived cells from the worker (B3)",
     async () => {
-      const { handle, client } = makeHandle({
-        stallFetch: true,
-        deliverCells: 1,
-      });
+      // The stall is turned on only for the SECOND commit: the deadline is
+      // about swapping AWAY from a level that is already on screen, and the
+      // first commit of a layer has nothing to keep (see the next case).
+      const opts = { stallFetch: false, deliverCells: 1 };
+      const { handle, client } = makeHandle(opts);
       await handle.commit(topDownRays());
+      const settled = handle.cacheKeysForTest();
+      const settledLevel = handle.level;
+      expect(settled.length).toBeGreaterThan(0);
+      expect(settledLevel).not.toBeNull();
 
-      const arrived = (client.sendStreamingCalls[0]!.cells as string[])[0]!;
+      opts.stallFetch = true;
+      await handle.commit(raysFrom(2000, 1600));
+
+      const arrived = (client.sendStreamingCalls[1]!.cells as string[])[0]!;
       expect(client.notifyCalls).toContainEqual(
         expect.objectContaining({ type: "cancel" }),
       );
       expect(client.notifyCalls).toContainEqual(
         expect.objectContaining({ type: "evict", cells: [arrived] }),
       );
-      expect(handle.cacheKeysForTest()).toEqual([]);
-      expect(handle.level).toBeNull();
+      // Rolled back: the level that was on screen is still on screen.
+      expect(handle.cacheKeysForTest()).toEqual(settled);
+      expect(handle.level).toBe(settledLevel);
       expect(handle.status).toBe("error");
       // Tracks the constant rather than a magic number: the whole point of this
       // case is that the commit waits out LEVEL_SWAP_TIMEOUT_MS.
     },
     LEVEL_SWAP_TIMEOUT_MS + 3000,
   );
+
+  it("does NOT put the FIRST commit of a layer on the swap deadline — there is nothing to roll back to", async () => {
+    // `planCommit` calls every initial load a swap (`prevLevel` is null, so
+    // `levelChanged` is true), which used to subject it to
+    // LEVEL_SWAP_TIMEOUT_MS. A slow first fetch then produced an EMPTY layer
+    // and an error status with no previous level to fall back to — the M7.5
+    // browser smoke's "auto-fit frames the whole file, host is slow, nothing
+    // ever renders".
+    const { handle, client } = makeHandle({
+      fetchDelayMs: LEVEL_SWAP_TIMEOUT_MS + 200,
+    });
+    await handle.commit(topDownRays());
+
+    expect(handle.status).toBe("idle");
+    expect(handle.level).not.toBeNull();
+    expect(handle.cacheKeysForTest().length).toBeGreaterThan(0);
+    expect(client.notifyCalls).not.toContainEqual(
+      expect.objectContaining({ type: "cancel" }),
+    );
+  });
 
   it("discards a stale commit whose probe response arrives after abortInFlight() bumped the epoch", async () => {
     const { handle, client } = makeHandle({ probeDelayMs: 20 });

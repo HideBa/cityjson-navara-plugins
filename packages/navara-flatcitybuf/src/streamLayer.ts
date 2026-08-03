@@ -413,17 +413,29 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
         .then(() => "done" as const);
 
       let swapTimer: ReturnType<typeof setTimeout> | null = null;
-      const outcome = plan.isSwap
-        ? await Promise.race([
-            fetchPromise,
-            new Promise<"timeout">((resolve) => {
-              swapTimer = setTimeout(
-                () => resolve("timeout"),
-                LEVEL_SWAP_TIMEOUT_MS,
-              );
-            }),
-          ])
-        : await fetchPromise;
+      // The swap deadline exists to bound how long a level change can leave
+      // the user staring at the OLD level, and its failure mode is "keep what
+      // you had". The FIRST commit of a layer is also a swap by construction
+      // (`prevLevel` is null, so `levelChanged` is true) but has nothing to
+      // keep — timing it out just hands back an empty layer, and there is no
+      // previous level to roll back to. That is what the M7.5 browser smoke
+      // hit: the auto-fit frames the whole file, the initial cover is the
+      // whole file, and on a slow host 1.5 s is not enough, so a `.fcb` opened
+      // as the first layer rendered nothing at all. Race only when there is
+      // something to fall back to.
+      const canRollBack = this._level !== null;
+      const outcome =
+        plan.isSwap && canRollBack
+          ? await Promise.race([
+              fetchPromise,
+              new Promise<"timeout">((resolve) => {
+                swapTimer = setTimeout(
+                  () => resolve("timeout"),
+                  LEVEL_SWAP_TIMEOUT_MS,
+                );
+              }),
+            ])
+          : await fetchPromise;
       // The fetch usually wins the race; clearing keeps the loser's timer from
       // holding the event loop (and a test process) open until it fires.
       if (swapTimer !== null) clearTimeout(swapTimer);
@@ -905,9 +917,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    */
   resolveRaycast(ray: EcefRay): RaycastHit | null {
     const nearest = this.nearestCellHit(ray);
-    return nearest === null
-      ? null
-      : { ...nearest.hit, cellKey: nearest.key };
+    return nearest === null ? null : { ...nearest.hit, cellKey: nearest.key };
   }
 
   /**
