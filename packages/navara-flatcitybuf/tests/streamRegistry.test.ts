@@ -25,7 +25,11 @@ import type { PickRaySource } from "../src/navaraRays";
 import type { WorkerClient } from "../src/workerClient";
 import type { WorkerResponse } from "../src/workerProtocol";
 import type { Ray } from "../src/viewportFootprint";
-import { GEOID_TIMEOUT_MS, SETTLE_MS } from "../src/constants";
+import {
+  FLYTO_QUIET_MS,
+  GEOID_TIMEOUT_MS,
+  SETTLE_MS,
+} from "../src/constants";
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -238,6 +242,73 @@ describe("StreamLayerRegistry — camera driver", () => {
 
   it("suppressSettle before attach just runs the function", async () => {
     await expect(makeRegistry().suppressSettle(() => 42)).resolves.toBe(42);
+  });
+
+  it("suppressSettleThenCommit commits ONCE at the destination, with no camera gesture at all", async () => {
+    // The M7.5 smoke's report: an auto-fit onto a city fetched nothing,
+    // because suppression swallows the flight's own camera burst and no other
+    // event was ever going to arrive. A commit is owed.
+    const view = new FakeView();
+    const r = makeRegistry();
+    r.attach(view);
+    const layer = fakeLayer();
+    r.register("l1", layer);
+
+    await r.suppressSettleThenCommit(() => view.gesture(2));
+    // Not while the suppression window is still open: `flyTo` returns before
+    // its animation has run, so committing now would fetch the viewport the
+    // camera is LEAVING.
+    expect(layer.commit).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(FLYTO_QUIET_MS + 50);
+    expect(layer.commit).toHaveBeenCalledTimes(1);
+    // And the flight itself still never looked like a gesture.
+    expect(layer.abortInFlight).not.toHaveBeenCalled();
+  });
+
+  it("a second programmatic move supersedes the first's pending destination commit", async () => {
+    const view = new FakeView();
+    const r = makeRegistry();
+    r.attach(view);
+    const layer = fakeLayer();
+    r.register("l1", layer);
+
+    await r.suppressSettleThenCommit(() => view.gesture(1));
+    await vi.advanceTimersByTimeAsync(FLYTO_QUIET_MS / 2);
+    await r.suppressSettleThenCommit(() => view.gesture(1));
+    await vi.advanceTimersByTimeAsync(FLYTO_QUIET_MS + 50);
+
+    // One commit, for the LAST destination — not one per move.
+    expect(layer.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a move that throws commits nothing — there is no destination", async () => {
+    const view = new FakeView();
+    const r = makeRegistry();
+    r.attach(view);
+    const layer = fakeLayer();
+    r.register("l1", layer);
+
+    await expect(
+      r.suppressSettleThenCommit(() => {
+        throw new Error("camera is not ready");
+      }),
+    ).rejects.toThrow("camera is not ready");
+    await vi.advanceTimersByTimeAsync(FLYTO_QUIET_MS + 50);
+    expect(layer.commit).not.toHaveBeenCalled();
+  });
+
+  it("dispose() cancels a pending destination commit", async () => {
+    const view = new FakeView();
+    const r = makeRegistry();
+    r.attach(view);
+    const layer = fakeLayer();
+    r.register("l1", layer);
+
+    await r.suppressSettleThenCommit(() => view.gesture(1));
+    r.dispose();
+    await vi.advanceTimersByTimeAsync(FLYTO_QUIET_MS + 50);
+    expect(layer.commit).not.toHaveBeenCalled();
   });
 
   it("remove() deletes one layer and drops it from the loop; dispose() deletes the rest", () => {

@@ -141,6 +141,9 @@ export class StreamLayerRegistry {
   private controller: SettleController | null = null;
   private detachController: (() => void) | null = null;
   private disposed = false;
+  /** Pending destination commit — see {@link suppressSettleThenCommit}. */
+  private destinationCommitTimer: ReturnType<TimerApi["setTimeout"]> | null =
+    null;
 
   /**
    * A `PickRaySource` that forwards to whatever the plugin currently has, so
@@ -244,6 +247,57 @@ export class StreamLayerRegistry {
     );
     controller.suppressUntil(result, FLYTO_QUIET_MS);
     return await result;
+  }
+
+  /**
+   * {@link suppressSettle}, plus ONE commit at the move's destination.
+   *
+   * Suppression alone leaves a commit **owed**. Camera events are swallowed
+   * for the whole flight, so a fit that lands squarely on a city fetches
+   * nothing at all: the viewport sits framed and empty until the user happens
+   * to nudge the camera. That was reported from the M7.5 browser smoke, and it
+   * is the same shape as the two cases that already commit out of band —
+   * {@link attach}'s trailing `commitAll()` and `onLodChanged` — "a commit is
+   * owed and no camera event is going to arrive".
+   *
+   * SCHEDULED, not immediate: `flyTo` returns before its animation has run, so
+   * `fn`'s promise settles at the START of the flight and committing then
+   * would fetch the viewport the camera is leaving. The commit is queued for
+   * `FLYTO_QUIET_MS` later, which is exactly when the suppression window
+   * closes and the camera is at rest — the same constant that decides when
+   * real camera events start counting again, so the two can never disagree.
+   *
+   * No double-commit with a user gesture: while the gate is held, camera
+   * events produce nothing at all, so nothing else can commit inside the
+   * window. A gesture that begins the instant the gate reopens races this
+   * commit, and `WorkerClient`'s epoch makes the LATER one win — the same
+   * ordering that already governs two settles in quick succession.
+   *
+   * A rejected move has no destination worth fetching, so it commits nothing.
+   */
+  async suppressSettleThenCommit<T>(fn: () => Promise<T> | T): Promise<T> {
+    const flight = this.suppressSettle(fn);
+    flight.then(
+      () => this.commitAfterSuppression(),
+      () => undefined,
+    );
+    return await flight;
+  }
+
+  /** The queued destination commit of {@link suppressSettleThenCommit}. At
+   *  most one is pending: a second programmatic move before the first landed
+   *  supersedes it, and its own window is the one that matters. */
+  private commitAfterSuppression(): void {
+    if (this.disposed || this.controller === null) return;
+    const timers = this.deps.timers ?? defaultTimers;
+    if (this.destinationCommitTimer !== null) {
+      timers.clearTimeout(this.destinationCommitTimer);
+    }
+    this.destinationCommitTimer = timers.setTimeout(() => {
+      this.destinationCommitTimer = null;
+      if (this.disposed) return;
+      this.commitAll();
+    }, FLYTO_QUIET_MS);
   }
 
   /**
@@ -529,6 +583,12 @@ export class StreamLayerRegistry {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.destinationCommitTimer !== null) {
+      (this.deps.timers ?? defaultTimers).clearTimeout(
+        this.destinationCommitTimer,
+      );
+      this.destinationCommitTimer = null;
+    }
     this.detachController?.();
     this.detachController = null;
     this.controller?.dispose();

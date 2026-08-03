@@ -99,6 +99,16 @@ export class FlatCityBufPlugin extends Plugin<ThreeView, ViewContext> {
     return this.registry.suppressSettle(fn);
   }
 
+  /**
+   * {@link suppressSettle}, plus one commit once the move has landed — for a
+   * programmatic move whose DESTINATION the user is about to look at (a fit, a
+   * camera restore, an alignment). Without it a suppressed move leaves the
+   * viewport framed and empty until the user nudges the camera.
+   */
+  suppressSettleThenCommit<T>(fn: () => Promise<T> | T): Promise<T> {
+    return this.registry.suppressSettleThenCommit(fn);
+  }
+
   openStream(opts: OpenStreamOptions): Promise<FcbStreamLayerHandle> {
     return this.registry.openStream(opts);
   }
