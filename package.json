@@ -17,6 +17,9 @@
   },
   "devDependencies": {
     "@types/node": "24.9.2",
+    "@types/three": "0.183.1",
+    "proj4": "2.20.8",
+    "three": "0.183.2",
     "tsup": "8.5.0",
     "typescript": "5.9.3",
     "vitest": "3.2.4"

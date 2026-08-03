@@ -11,6 +11,15 @@ importers:
       '@types/node':
         specifier: 24.9.2
         version: 24.9.2
+      '@types/three':
+        specifier: 0.183.1
+        version: 0.183.1
+      proj4:
+        specifier: 2.20.8
+        version: 2.20.8
+      three:
+        specifier: 0.183.2
+        version: 0.183.2
       tsup:
         specifier: 8.5.0
         version: 8.5.0(postcss@8.5.25)(typescript@5.9.3)
