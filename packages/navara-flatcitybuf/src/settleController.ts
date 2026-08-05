@@ -27,6 +27,13 @@
  *   camera write (share-link restore, fitAll). `idle` therefore only ever
  *   *flushes* a debounce that a `moveend` already armed (~270–460 ms of
  *   latency saved), and idle ticks on a static scene are ignored.
+ * - **Wheel zoom is NOT silent** (measured 2026-08-05, the gap B1 left open —
+ *   it traced only drags and programmatic moves). A wheel notch emits its own
+ *   complete `movestart … move … moveend` burst, and consecutive notches
+ *   arrive ~250 ms apart, i.e. INSIDE the armed window — so `onMoveStart`'s
+ *   disarm is what turns a four-notch zoom into one commit at the end.
+ *   Nothing here has to arm on `move` or `frustumChanged` to see a zoom, and
+ *   doing so would break the "no commit mid-drag" rule below.
  * - `PROGRAMMATIC_MOVE_EMITS` is **split**: `flyTo` emits a full
  *   `movestart…moveend` burst that is indistinguishable from a drag (§5b),
  *   while `setCamera` (§5c) and `resize` (§5d, `resize` + `frustumChanged`

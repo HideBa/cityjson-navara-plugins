@@ -3,9 +3,9 @@
  * LoD / interaction-parity surface built on top of it.
  *
  * These are the driver-level regressions from the app's
- * `tests/unit/features/streaming/useTileStreaming.test.ts` (B1 ladder, B3
- * swap-timeout evict, B5 sparse backfill, the epoch guard, the too-far and
- * worker-rejection paths), ported onto `handle.commit(rays)` — no React, no
+ * `tests/unit/features/streaming/useTileStreaming.test.ts` (B1 ladder, B5
+ * sparse backfill, the epoch guard, the too-far and worker-rejection paths),
+ * ported onto `handle.commit(rays)` — no React, no
  * OrbitControls, no store. The camera is four ECEF pick rays; everything the
  * old hook read from Zustand is now the handle's own state.
  *
@@ -45,7 +45,6 @@ import type { PickRaySource } from "../src/navaraRays";
 import type { WorkerClient } from "../src/workerClient";
 import type { WorkerResponse } from "../src/workerProtocol";
 import {
-  LEVEL_SWAP_TIMEOUT_MS,
   RESIDENT_BYTE_BUDGET,
   RESIDENT_TRIANGLE_BUDGET,
   VIEWPORT_FEATURE_BUDGET,
@@ -147,12 +146,8 @@ interface FakeClientOpts {
   readonly lodsSeen?: string[];
   readonly probeCount?: number;
   readonly probeDelayMs?: number;
-  /** The fetch delivers `deliverCells` cells and then never settles, so a
-   *  level swap hits LEVEL_SWAP_TIMEOUT_MS with a partial arrival (B3). */
-  readonly stallFetch?: boolean;
-  readonly deliverCells?: number;
-  /** Delays a `fetch` before it delivers anything. Set beyond
-   *  LEVEL_SWAP_TIMEOUT_MS to prove which commits the deadline applies to. */
+  /** Delays a `fetch` before it delivers anything. Set beyond the retired
+   *  1500 ms swap deadline to prove a slow commit still lands. */
   readonly fetchDelayMs?: number;
   /** Runs after a `fetch` request has been dispatched but before any cell is
    *  delivered — the only point at which a test can change the layer's rules
@@ -241,11 +236,8 @@ function makeFakeClient(opts: FakeClientOpts) {
       }
 
       opts.onFetchDispatched?.();
-      const limit = opts.stallFetch
-        ? Math.min(opts.deliverCells ?? 0, cells.length)
-        : cells.length;
       const deliverCells = () =>
-        cells.slice(0, limit).forEach((key, i) => {
+        cells.forEach((key, i) => {
           if (empty.has(i)) return;
           onMessage({
             type: "cell",
@@ -261,7 +253,6 @@ function makeFakeClient(opts: FakeClientOpts) {
         });
       const finish = (): Promise<void> => {
         deliverCells();
-        if (opts.stallFetch) return new Promise<void>(() => {});
         onMessage({ type: "done", id: 0 });
         return Promise.resolve();
       };
@@ -483,49 +474,63 @@ describe("FcbStreamLayerHandle.commit", () => {
   });
 
   it(
-    "on a level-swap timeout, keeps the old level's cache and evicts the partially-arrived cells from the worker (B3)",
+    "a swap fetch slower than the retired 1500 ms deadline still commits, so the layer cannot livelock (2026-08-05)",
     async () => {
-      // The stall is turned on only for the SECOND commit: the deadline is
-      // about swapping AWAY from a level that is already on screen, and the
-      // first commit of a layer has nothing to keep (see the next case).
-      const opts = { stallFetch: false, deliverCells: 1 };
+      // THE REGRESSION. Reported as "FlatCityBuf doesn't load when I move the
+      // camera; only when I switch LoD it loads once".
+      //
+      // A layer's SECOND commit is always a swap: commit 1 runs with an empty
+      // ladder, so the auto LoD resolves to `{kind:"all"}` and that is what is
+      // recorded as the previous selection; the ladder is only LEARNED from
+      // the cells commit 1 returns, after which the same camera resolves to an
+      // exact label. `planCommit` calls that a swap.
+      //
+      // A swap used to be raced against LEVEL_SWAP_TIMEOUT_MS (1500 ms), and
+      // the timeout path returned BEFORE recording the level/LoD/view it had
+      // planned — so the next settle recomputed the identical doomed swap and
+      // the layer never loaded anything again. This pins the fix: a slow swap
+      // is WAITED OUT, adopted, and recorded.
+      const opts = { lodsSeen: ["1.2", "2.2"], fetchDelayMs: 0 };
       const { handle, client } = makeHandle(opts);
       await handle.commit(topDownRays());
-      const settled = handle.cacheKeysForTest();
-      const settledLevel = handle.level;
-      expect(settled.length).toBeGreaterThan(0);
-      expect(settledLevel).not.toBeNull();
+      const firstCover = handle.cacheKeysForTest();
+      expect(firstCover.length).toBeGreaterThan(0);
+      expect(handle.ladder).toEqual(["1.2", "2.2"]);
+      // Commit 1 asked for everything: the ladder was empty, so there was no
+      // label to filter on.
+      expect(client.sendStreamingCalls[0]!.lod).toBeNull();
 
-      opts.stallFetch = true;
-      await handle.commit(raysFrom(2000, 1600));
+      // Well past the old deadline, from the same camera.
+      opts.fetchDelayMs = 1500 + 400;
+      await handle.commit(topDownRays());
 
-      const arrived = (client.sendStreamingCalls[1]!.cells as string[])[0]!;
-      expect(client.notifyCalls).toContainEqual(
+      // The swap happened: a second fetch went out, under the LEARNED label,
+      // and it was adopted rather than cancelled and rolled back.
+      expect(client.sendStreamingCalls).toHaveLength(2);
+      expect(client.sendStreamingCalls[1]!.lod).toBe("1.2");
+      expect(client.notifyCalls).not.toContainEqual(
         expect.objectContaining({ type: "cancel" }),
       );
-      expect(client.notifyCalls).toContainEqual(
-        expect.objectContaining({ type: "evict", cells: [arrived] }),
-      );
-      // Rolled back: the level that was on screen is still on screen.
-      expect(handle.cacheKeysForTest()).toEqual(settled);
-      expect(handle.level).toBe(settledLevel);
-      expect(handle.status).toBe("error");
-      // Tracks the constant rather than a magic number: the whole point of this
-      // case is that the commit waits out LEVEL_SWAP_TIMEOUT_MS.
+      expect(handle.status).toBe("idle");
+      expect(handle.cacheKeysForTest().sort()).toEqual([...firstCover].sort());
+
+      // And it CONVERGED — the whole point. The LoD decision is now recorded,
+      // so a third commit from the same camera is an ordinary hysteresis skip,
+      // not a third doomed swap.
+      await handle.commit(topDownRays());
+      expect(client.sendStreamingCalls).toHaveLength(2);
+      expect(handle.status).toBe("idle");
     },
-    LEVEL_SWAP_TIMEOUT_MS + 3000,
+    10_000,
   );
 
-  it("does NOT put the FIRST commit of a layer on the swap deadline — there is nothing to roll back to", async () => {
+  it("a slow FIRST fetch still commits (the M7.5 auto-fit case)", async () => {
     // `planCommit` calls every initial load a swap (`prevLevel` is null, so
-    // `levelChanged` is true), which used to subject it to
-    // LEVEL_SWAP_TIMEOUT_MS. A slow first fetch then produced an EMPTY layer
-    // and an error status with no previous level to fall back to — the M7.5
-    // browser smoke's "auto-fit frames the whole file, host is slow, nothing
-    // ever renders".
-    const { handle, client } = makeHandle({
-      fetchDelayMs: LEVEL_SWAP_TIMEOUT_MS + 200,
-    });
+    // `levelChanged` is true). When swaps were raced, a slow first fetch
+    // produced an EMPTY layer and an error status with no previous level to
+    // fall back to — the M7.5 browser smoke's "auto-fit frames the whole file,
+    // host is slow, nothing ever renders".
+    const { handle, client } = makeHandle({ fetchDelayMs: 1700 });
     await handle.commit(topDownRays());
 
     expect(handle.status).toBe("idle");

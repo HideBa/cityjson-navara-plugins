@@ -123,6 +123,38 @@ describe("createSettleController", () => {
     expect(onFirstChange).toHaveBeenCalledTimes(2);
   });
 
+  it("commits ONCE for a multi-notch wheel zoom, after the last notch", () => {
+    // MEASURED, 2026-08-05 (spike findings §5e — the gap B1 left open).
+    // A wheel notch is a FULL burst of its own: `movestart … move … moveend`,
+    // one per notch, with the next notch's `movestart` landing inside the
+    // previous notch's armed window. Wheel zoom is NOT silent like
+    // `setCamera`, so no extra arming source is needed — but every notch but
+    // the last must be swallowed, or a four-notch zoom fetches four viewports
+    // the user only passed through.
+    const onFirstChange = vi.fn();
+    const onSettle = vi.fn();
+    const c = createSettleController({
+      settleMs: 350,
+      onFirstChange,
+      onSettle,
+    });
+    for (let notch = 0; notch < 4; notch++) {
+      c.onMoveStart();
+      c.onMove();
+      c.onMove();
+      c.onMoveEnd();
+      // The measured inter-notch gap (~250 ms) is shorter than settleMs.
+      vi.advanceTimersByTime(250);
+      expect(onSettle).not.toHaveBeenCalled();
+    }
+    vi.advanceTimersByTime(350);
+    expect(onSettle).toHaveBeenCalledTimes(1);
+    // And ONE abort for the whole zoom: `moveend` does not end the burst on
+    // its own, so the four notches are a single interaction as far as
+    // in-flight work is concerned — there is nothing to abort a second time.
+    expect(onFirstChange).toHaveBeenCalledTimes(1);
+  });
+
   it("defers, rather than double-commits, when a second burst opens inside the armed window", () => {
     // Measured shape (B1 §5a) is one burst per gesture with inertia INSIDE it,
     // so this is defensive: a fast second gesture landing inside the armed

@@ -208,7 +208,7 @@ export function commitNormal(
  * cover's cells, then drop everything else in one all-or-nothing step: the
  * old level's (or old LoD's) cells can never be reused. Call this only
  * after the WHOLE new cover has fetched successfully; on a
- * `LEVEL_SWAP_TIMEOUT_MS` timeout the caller must discard the partial fetch
+ * a partial fetch the caller abandons (a stale epoch) must be discarded
  * and never call this, leaving the old level/cache untouched.
  *
  * Also enforces the resident budget on the NEW cover via `evictToBudget()`,

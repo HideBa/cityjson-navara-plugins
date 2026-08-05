@@ -31,6 +31,5 @@ export const RESIDENT_TRIANGLE_BUDGET = 4_000_000;
 export const RESIDENT_BYTE_BUDGET = 512 * 1024 * 1024;
 export const MIN_COVER_CELLS = 9;
 export const MAX_COVER_CELLS = 64;
-export const LEVEL_SWAP_TIMEOUT_MS = 1500;
 export const MIN_CELL_M = 50;
 export const BASE_CELL_M = 100;

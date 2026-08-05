@@ -43,7 +43,6 @@ import { toRay, type PickRaySource } from "./navaraRays";
 import { viewportFootprint, type Ray } from "./viewportFootprint";
 import { createResidentModelMemo, type ResidentModel } from "./residentModel";
 import { buildLadder, type LodSelection } from "./levelPolicy";
-import { LEVEL_SWAP_TIMEOUT_MS } from "./constants";
 import {
   cellStatsFromGeometry,
   commitNormal,
@@ -412,53 +411,44 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
         )
         .then(() => "done" as const);
 
-      let swapTimer: ReturnType<typeof setTimeout> | null = null;
-      // The swap deadline exists to bound how long a level change can leave
-      // the user staring at the OLD level, and its failure mode is "keep what
-      // you had". The FIRST commit of a layer is also a swap by construction
-      // (`prevLevel` is null, so `levelChanged` is true) but has nothing to
-      // keep — timing it out just hands back an empty layer, and there is no
-      // previous level to roll back to. That is what the M7.5 browser smoke
-      // hit: the auto-fit frames the whole file, the initial cover is the
-      // whole file, and on a slow host 1.5 s is not enough, so a `.fcb` opened
-      // as the first layer rendered nothing at all. Race only when there is
-      // something to fall back to.
-      const canRollBack = this._level !== null;
-      const outcome =
-        plan.isSwap && canRollBack
-          ? await Promise.race([
-              fetchPromise,
-              new Promise<"timeout">((resolve) => {
-                swapTimer = setTimeout(
-                  () => resolve("timeout"),
-                  LEVEL_SWAP_TIMEOUT_MS,
-                );
-              }),
-            ])
-          : await fetchPromise;
-      // The fetch usually wins the race; clearing keeps the loser's timer from
-      // holding the event loop (and a test process) open until it fires.
-      if (swapTimer !== null) clearTimeout(swapTimer);
+      // NO DEADLINE ON THE FETCH. There used to be one — a swap raced against
+      // `LEVEL_SWAP_TIMEOUT_MS` (1500 ms), whose failure mode was "cancel the
+      // fetch, evict whatever arrived, keep the previous level, report an
+      // error". It was the cause of the 2026-08-05 bug report *"FlatCityBuf
+      // doesn't load when I move the camera; only when I switch LoD it loads
+      // once"*, and it could not be repaired by tuning the constant:
+      //
+      //  1. A layer's SECOND commit is ALWAYS a swap. The first one runs with
+      //     an empty ladder, so `resolveLod` yields `{kind:"all"}` and that is
+      //     what gets recorded as `_lastLod`; the ladder is only LEARNED from
+      //     the `lodsSeen` of the cells that commit returns. From then on
+      //     `resolveLod` yields an exact label, `lodChanged` is true, and
+      //     `planCommit` calls it a swap (measured in the browser:
+      //     `lod {kind:"exact","1.2"} vs prevLod {kind:"all"}`, ladder
+      //     `0|1.2|1.3|2.2`).
+      //  2. A full-cover swap fetch is not a 1.5 s operation. The measured one
+      //     was 16 cells / 1077 features of `fixtures/delft.fcb`.
+      //  3. The timeout path returned BEFORE `_lastLod` / `_level` /
+      //     `_lastCommit` were updated, so the very next settle recomputed the
+      //     identical doomed swap. The layer livelocked: every camera-driven
+      //     commit from then on died on the deadline and nothing new ever
+      //     loaded. Only `onLodChanged` — which switches to a manual exact LoD
+      //     and therefore to a cheaper fetch that can beat the deadline —
+      //     broke the loop, which is exactly the "only when I switch LoD" half
+      //     of the report.
+      //
+      // Waiting costs nothing that the deadline saved: the old level stays on
+      // screen for the whole fetch either way (`commitSwap` runs only after it
+      // resolves), so "kept the previous level" was visually identical to
+      // simply waiting — it just also refused to ever arrive. And cancellation
+      // is already covered, twice over, by the mechanism built for it:
+      // `abortInFlight()` fires on the first camera event of the next gesture
+      // and bumps the epoch, so a fetch the user has moved on from is both
+      // cancelled at the worker and unadoptable here (`isStale`).
+      await fetchPromise;
 
       if (this.isStale(epoch)) return;
 
-      if (outcome === "timeout") {
-        client.notify({ type: "cancel" });
-        if (fetched.size > 0) {
-          // The worker may have gone on to fully decode and cache some of
-          // these anyway, right as the deadline passed — `cancel` only helps
-          // while it is still mid-flight. Either way THIS commit never adopts
-          // them (we return without committing), so the worker must not keep
-          // them either, or they become worker-only entries the main thread's
-          // evict can never reach (B3).
-          client.notify({ type: "evict", cells: [...fetched.keys()] });
-        }
-        this.emitStatus(
-          "error",
-          "Level swap timed out; kept the previous level",
-        );
-        return;
-      }
       if (fetchError !== null) {
         this.emitStatus("error", fetchError);
         return;
