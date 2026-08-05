@@ -43,6 +43,7 @@ import { toRay, type PickRaySource } from "./navaraRays";
 import { viewportFootprint, type Ray } from "./viewportFootprint";
 import { createResidentModelMemo, type ResidentModel } from "./residentModel";
 import { buildLadder, type LodSelection } from "./levelPolicy";
+import { COMMIT_FETCH_TIMEOUT_MS } from "./constants";
 import {
   cellStatsFromGeometry,
   commitNormal,
@@ -411,12 +412,15 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
         )
         .then(() => "done" as const);
 
-      // NO DEADLINE ON THE FETCH. There used to be one — a swap raced against
+      // NO PERFORMANCE DEADLINE ON THE FETCH — only the liveness bound below.
+      //
+      // There used to be a performance one: a swap raced against
       // `LEVEL_SWAP_TIMEOUT_MS` (1500 ms), whose failure mode was "cancel the
       // fetch, evict whatever arrived, keep the previous level, report an
-      // error". It was the cause of the 2026-08-05 bug report *"FlatCityBuf
-      // doesn't load when I move the camera; only when I switch LoD it loads
-      // once"*, and it could not be repaired by tuning the constant:
+      // error". On any host where a full-cover swap took longer than 1.5 s
+      // that produced the 2026-08-05 bug report *"FlatCityBuf doesn't load
+      // when I move the camera; only when I switch LoD it loads once"* — and
+      // once triggered it was permanent, because:
       //
       //  1. A layer's SECOND commit is ALWAYS a swap. The first one runs with
       //     an empty ladder, so `resolveLod` yields `{kind:"all"}` and that is
@@ -426,29 +430,77 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       //     `planCommit` calls it a swap (measured in the browser:
       //     `lod {kind:"exact","1.2"} vs prevLod {kind:"all"}`, ladder
       //     `0|1.2|1.3|2.2`).
-      //  2. A full-cover swap fetch is not a 1.5 s operation. The measured one
-      //     was 16 cells / 1077 features of `fixtures/delft.fcb`.
+      //  2. A full-cover swap fetch need not be a 1.5 s operation. The
+      //     measured one was 16 cells / 1077 features of `fixtures/delft.fcb`,
+      //     which overran the deadline on the (GPU-less) host it was traced
+      //     on.
       //  3. The timeout path returned BEFORE `_lastLod` / `_level` /
       //     `_lastCommit` were updated, so the very next settle recomputed the
-      //     identical doomed swap. The layer livelocked: every camera-driven
-      //     commit from then on died on the deadline and nothing new ever
-      //     loaded. Only `onLodChanged` — which switches to a manual exact LoD
-      //     and therefore to a cheaper fetch that can beat the deadline —
-      //     broke the loop, which is exactly the "only when I switch LoD" half
-      //     of the report.
+      //     identical plan — which was just as slow, and timed out again.
+      //     Once the deadline was overrun even once, every camera-driven
+      //     commit from then on died on it. Only `onLodChanged` — which
+      //     switches to a manual exact LoD and therefore to a cheaper fetch
+      //     that can beat the deadline — broke the loop, which is exactly the
+      //     "only when I switch LoD" half of the report.
       //
-      // Waiting costs nothing that the deadline saved: the old level stays on
+      // Waiting costs nothing that deadline saved: the old level stays on
       // screen for the whole fetch either way (`commitSwap` runs only after it
       // resolves), so "kept the previous level" was visually identical to
-      // simply waiting — it just also refused to ever arrive. And cancellation
-      // is already covered, twice over, by the mechanism built for it:
-      // `abortInFlight()` fires on the first camera event of the next gesture
-      // and bumps the epoch, so a fetch the user has moved on from is both
-      // cancelled at the worker and unadoptable here (`isStale`).
-      await fetchPromise;
+      // simply waiting — it just also refused to ever arrive. And cancelling
+      // work the user has moved on from is already covered by the mechanism
+      // built for it: `abortInFlight()` fires on the first camera event of the
+      // next gesture and bumps the epoch, so such a fetch is both cancelled at
+      // the worker and unadoptable here (`isStale`).
+      //
+      // What IS bounded is liveness. A range read that never answers would
+      // otherwise leave this promise pending until the layer is deleted, with
+      // the status stuck on "fetching" and no error anywhere.
+      // `COMMIT_FETCH_TIMEOUT_MS` is deliberately ~3x the slowest healthy
+      // commit ever measured, so expiry means a stuck transport rather than
+      // large work — see the constant's own note.
+      let livenessTimer: ReturnType<typeof setTimeout> | null = null;
+      const outcome = await Promise.race([
+        fetchPromise,
+        new Promise<"timeout">((resolve) => {
+          livenessTimer = setTimeout(
+            () => resolve("timeout"),
+            COMMIT_FETCH_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      // The fetch usually wins; clearing keeps the loser's timer from holding
+      // the event loop (and a test process) open until it fires.
+      if (livenessTimer !== null) clearTimeout(livenessTimer);
 
       if (this.isStale(epoch)) return;
 
+      if (outcome === "timeout") {
+        client.notify({ type: "cancel" });
+        if (fetched.size > 0) {
+          // Whatever DID arrive is abandoned by this commit, so the worker
+          // must not keep it either — otherwise those become worker-only
+          // entries the main thread's evict can never reach (B3).
+          client.notify({ type: "evict", cells: [...fetched.keys()] });
+        }
+        this.emitStatus(
+          "error",
+          `Stopped waiting for the streaming fetch after ${Math.round(
+            COMMIT_FETCH_TIMEOUT_MS / 1000,
+          )} s; the source did not respond. It will be retried on the next camera settle.`,
+        );
+        // NOTHING is recorded, and that is what makes the retry FRESH rather
+        // than a repeat of the livelock above: `_lastLod`, `_level`,
+        // `_lastCommit` and the cache are all untouched, so the next
+        // `planCommit` sees the same holes (or the same pending swap) it saw
+        // before and returns a full `commit` plan again — `shouldRefetch`
+        // cannot skip it, because `hasHoles` or `isSwap` is still true. The
+        // difference from `LEVEL_SWAP_TIMEOUT_MS` is not the bookkeeping, it
+        // is what expiry MEANS: there, healthy work was being cancelled for
+        // being slow, so re-running it was doomed by construction; here the
+        // transport is stuck, and re-running it is the only thing that can
+        // ever succeed.
+        return;
+      }
       if (fetchError !== null) {
         this.emitStatus("error", fetchError);
         return;

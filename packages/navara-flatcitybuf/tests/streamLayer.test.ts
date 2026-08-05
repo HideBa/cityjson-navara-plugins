@@ -45,6 +45,7 @@ import type { PickRaySource } from "../src/navaraRays";
 import type { WorkerClient } from "../src/workerClient";
 import type { WorkerResponse } from "../src/workerProtocol";
 import {
+  COMMIT_FETCH_TIMEOUT_MS,
   RESIDENT_BYTE_BUDGET,
   RESIDENT_TRIANGLE_BUDGET,
   VIEWPORT_FEATURE_BUDGET,
@@ -149,6 +150,11 @@ interface FakeClientOpts {
   /** Delays a `fetch` before it delivers anything. Set beyond the retired
    *  1500 ms swap deadline to prove a slow commit still lands. */
   readonly fetchDelayMs?: number;
+  /** The fetch delivers `deliverCells` cells and then NEVER settles — a
+   *  transport that has gone silent mid-stream, which is what
+   *  `COMMIT_FETCH_TIMEOUT_MS` exists to bound. */
+  readonly stallFetch?: boolean;
+  readonly deliverCells?: number;
   /** Runs after a `fetch` request has been dispatched but before any cell is
    *  delivered — the only point at which a test can change the layer's rules
    *  "while the fetch is in flight" (B2). */
@@ -236,8 +242,11 @@ function makeFakeClient(opts: FakeClientOpts) {
       }
 
       opts.onFetchDispatched?.();
+      const limit = opts.stallFetch
+        ? Math.min(opts.deliverCells ?? 0, cells.length)
+        : cells.length;
       const deliverCells = () =>
-        cells.forEach((key, i) => {
+        cells.slice(0, limit).forEach((key, i) => {
           if (empty.has(i)) return;
           onMessage({
             type: "cell",
@@ -253,6 +262,7 @@ function makeFakeClient(opts: FakeClientOpts) {
         });
       const finish = (): Promise<void> => {
         deliverCells();
+        if (opts.stallFetch) return new Promise<void>(() => {});
         onMessage({ type: "done", id: 0 });
         return Promise.resolve();
       };
@@ -400,6 +410,9 @@ function makeHandle(
     /** The vertical-datum offset every cell is placed with. 0 unless a test is
      *  specifically about it, so the bounds assertions stay readable. */
     heightOffsetM?: number;
+    /** Resident triangle budget. The real one is 4 M — set it low to make
+     *  `evictToBudget` actually bite within a fixture-sized cover. */
+    maxTriangles?: number;
   },
 ) {
   const fake = makeFakeClient(opts);
@@ -410,7 +423,7 @@ function makeHandle(
     grid: GRID,
     header: HEADER,
     cache: new CellCache<CellEntry>({
-      maxTriangles: RESIDENT_TRIANGLE_BUDGET,
+      maxTriangles: opts.maxTriangles ?? RESIDENT_TRIANGLE_BUDGET,
       maxBytes: RESIDENT_BYTE_BUDGET,
     }),
     frame: FRAME,
@@ -539,6 +552,74 @@ describe("FcbStreamLayerHandle.commit", () => {
     expect(client.notifyCalls).not.toContainEqual(
       expect.objectContaining({ type: "cancel" }),
     );
+  });
+
+  it("bounds a STALLED fetch at COMMIT_FETCH_TIMEOUT_MS, and the next commit retries it fresh", async () => {
+    // The liveness bound, as opposed to the performance deadline that was
+    // removed. A `.fcb` range read that goes silent mid-stream would otherwise
+    // leave `commit()` pending until the layer is deleted, with the status
+    // stuck on "fetching" and no error reported anywhere.
+    vi.useFakeTimers();
+    try {
+      const opts = { stallFetch: true, deliverCells: 1 };
+      const { handle, client } = makeHandle(opts);
+      const pending = handle.commit(topDownRays());
+
+      await vi.advanceTimersByTimeAsync(COMMIT_FETCH_TIMEOUT_MS - 100);
+      expect(handle.status).toBe("fetching");
+
+      await vi.advanceTimersByTimeAsync(200);
+      await pending;
+
+      expect(handle.status).toBe("error");
+      expect(handle.message).toMatch(/did not respond/);
+      // The worker is told to stop, AND to drop the cell that did arrive —
+      // this commit never adopts it, so leaving it in the worker's cache would
+      // make it a worker-only entry the main thread's evict can never reach.
+      const arrived = (client.sendStreamingCalls[0]!.cells as string[])[0]!;
+      expect(client.notifyCalls).toContainEqual(
+        expect.objectContaining({ type: "cancel" }),
+      );
+      expect(client.notifyCalls).toContainEqual(
+        expect.objectContaining({ type: "evict", cells: [arrived] }),
+      );
+      // Nothing was adopted and nothing was recorded.
+      expect(handle.cacheKeysForTest()).toEqual([]);
+      expect(handle.level).toBeNull();
+
+      // FRESH RETRY — the property the livelock fix established. Because the
+      // timeout recorded nothing, the next settle re-plans against the same
+      // (still empty) cache and asks for the whole cover again.
+      opts.stallFetch = false;
+      await handle.commit(topDownRays());
+      expect(handle.status).toBe("idle");
+      expect(handle.level).not.toBeNull();
+      expect(handle.cacheKeysForTest().length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("forwards budget-evicted keys to the worker, so the two caches cannot drift", async () => {
+    // Main/worker cache coherence: `evictToBudget` drops cells from the main
+    // thread's cache, and the worker holds its own decoded copy of each — a
+    // key dropped here and not there is a leak the main thread can never
+    // reach again. One triangle per fixture cell, budget of two, cover of
+    // more than two.
+    const { handle, client } = makeHandle({ maxTriangles: 2 });
+    await handle.commit(topDownRays());
+
+    const cover = coverFor(topDownRays());
+    expect(cover.length).toBeGreaterThan(2);
+    const evicts = requestsOfType(client.notifyCalls, "evict");
+    expect(evicts).toHaveLength(1);
+    const evicted = evicts[0]!.cells as string[];
+    expect(evicted.length).toBe(cover.length - 2);
+    // Exactly the keys the main thread no longer holds.
+    expect(handle.cacheKeysForTest()).toHaveLength(2);
+    for (const key of evicted) {
+      expect(handle.cacheKeysForTest()).not.toContain(key);
+    }
   });
 
   it("discards a stale commit whose probe response arrives after abortInFlight() bumped the epoch", async () => {

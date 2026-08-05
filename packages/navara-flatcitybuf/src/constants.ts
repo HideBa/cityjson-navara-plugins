@@ -22,6 +22,31 @@ export const FLYTO_QUIET_MS = 2000;
  *  still short enough that a dead service degrades to the pre-geoid
  *  behaviour (model ~43 m low for NAP) instead of an empty viewport. */
 export const GEOID_TIMEOUT_MS = 10_000;
+/**
+ * Liveness bound on ONE commit's fetch. Not a performance deadline — a
+ * LIVENESS one.
+ *
+ * The predecessor of this constant, `LEVEL_SWAP_TIMEOUT_MS = 1500`, was a
+ * performance deadline applied to a swap, and it is why the streaming layer
+ * stalled on any host where a full-cover swap took longer than 1.5 s: work
+ * that merely needed more time was cancelled, and the cancelling path recorded
+ * nothing, so the next settle recomputed the same plan (see
+ * `docs/superpowers/reviews/2026-08-03-uxfix-report.md` § Wave 3). Removing it
+ * left the fetch unbounded, which has its own failure: a `.fcb` range read
+ * that never answers (browser `fetch` has no default timeout, exactly as with
+ * the geoid sample above) leaves the layer reporting "fetching" forever, with
+ * `commit()` pending until the layer is deleted.
+ *
+ * 30 s is chosen to be far beyond anything a healthy commit can take — the
+ * slowest real one measured is ~10 s (1115 features, 7.6 MB in ~1 MB ranges,
+ * on a GPU-less host) — so hitting it means the transport is genuinely stuck,
+ * never that the work was merely large. On expiry the commit reports an error
+ * and abandons the fetch, but records NOTHING: the next settle therefore
+ * re-plans from the unchanged cache (still holed, or still a swap) and retries
+ * in full. Retrying a stalled transport is correct; retrying work that was
+ * cancelled for being slow was not.
+ */
+export const COMMIT_FETCH_TIMEOUT_MS = 30_000;
 export const MOVE_FRAC = 0.2;
 export const SCALE_FACTOR = 1.3;
 export const T_MAX_M = 5000;
