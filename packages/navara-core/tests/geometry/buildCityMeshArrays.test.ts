@@ -267,6 +267,85 @@ describe("buildCityMeshArrays LoD filtering (independent oracle)", () => {
   });
 });
 
+describe("buildCityMeshArrays hidden-type filtering", () => {
+  const tri = (z: number) =>
+    makeSurface("RoofSurface", [
+      [0, 0, z],
+      [1, 0, z],
+      [0, 1, z],
+    ]);
+  const typed = (id: string, objectType: string, z: number): CityObject => ({
+    ...makeObject(id, [tri(z)]),
+    objectType,
+  });
+  // A `Building` with no geometry of its own plus the `BuildingPart` that
+  // carries it — the real Delft shape, and the reason the filter folds
+  // second-level types into their parent at all.
+  const model = makeModel({
+    b1: { ...typed("b1", "Building", 0), surfaces: [] },
+    b1p: typed("b1p", "BuildingPart", 1),
+    tree: typed("tree", "SolitaryVegetationObject", 2),
+  });
+  const unfiltered = buildCityMeshArrays(model, "L", [0, 0, 0], null);
+
+  it("drops a BuildingPart's triangles when Building is hidden", () => {
+    const filtered = buildCityMeshArrays(
+      model,
+      "L",
+      [0, 0, 0],
+      null,
+      new Set(["Building"]),
+    );
+    expect(unfiltered.triangleCount).toBe(2);
+    expect(filtered.triangleCount).toBe(1);
+    // The survivor is the vegetation triangle, at z = 2.
+    expect(filtered.positions[2]).toBe(2);
+  });
+
+  it("keeps objectKeys and every surviving object's index identical to the unfiltered build", () => {
+    const filtered = buildCityMeshArrays(
+      model,
+      "L",
+      [0, 0, 0],
+      null,
+      new Set(["Building"]),
+    );
+    // The invariant: a hidden object still consumes its objectKeys slot and
+    // its object index, so every index the unfiltered build assigned still
+    // resolves to the same id.
+    expect(filtered.objectKeys).toEqual(unfiltered.objectKeys);
+    expect(filtered.objectKeys).toEqual(["b1", "b1p", "tree"]);
+    const treeIdx = unfiltered.objectIndices[3]!; // vertex 3 = the tree's first
+    expect(unfiltered.objectKeys[treeIdx]).toBe("tree");
+    for (const idx of filtered.objectIndices) expect(idx).toBe(treeIdx);
+  });
+
+  it("emits an identical build for a null and for an empty hidden set", () => {
+    for (const hidden of [null, new Set<string>()]) {
+      const arrays = buildCityMeshArrays(model, "L", [0, 0, 0], null, hidden);
+      expect(arrays.triangleCount).toBe(unfiltered.triangleCount);
+      expect(arrays.objectKeys).toEqual(unfiltered.objectKeys);
+      expect([...arrays.positions]).toEqual([...unfiltered.positions]);
+      expect([...arrays.objectIndices]).toEqual([...unfiltered.objectIndices]);
+      expect([...arrays.surfaceIndices]).toEqual([
+        ...unfiltered.surfaceIndices,
+      ]);
+    }
+  });
+
+  it("hides an object whose own type is the hidden group", () => {
+    const arrays = buildCityMeshArrays(
+      model,
+      "L",
+      [0, 0, 0],
+      null,
+      new Set(["SolitaryVegetationObject"]),
+    );
+    expect(arrays.triangleCount).toBe(1);
+    expect(arrays.positions[2]).toBe(1); // the BuildingPart's triangle
+  });
+});
+
 describe("computeOriginOffset", () => {
   it("returns zero offset when model has no bbox", () => {
     const emptyModel: CityModel = {

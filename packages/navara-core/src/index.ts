@@ -19,6 +19,10 @@ export type {
   CityModelMetadata,
   CityModel,
 } from "./citymodel/types";
+export {
+  TOPLEVEL_BY_SECOND_LEVEL,
+  toplevelCityObjectType,
+} from "./citymodel/toplevelType";
 export type { CityModelEncoding } from "./citymodel/supportedEncodings";
 export {
   CITYMODEL_ENCODING_PRIORITY,
@@ -96,6 +100,10 @@ export {
   buildCityMeshArrays,
   computeOriginOffset,
 } from "./geometry/buildCityMeshArrays";
+export {
+  buildCityEdgeSegments,
+  DEFAULT_EDGE_ANGLE_DEG,
+} from "./geometry/buildCityEdgeSegments";
 export type { PickingIndex, PickResult } from "./picking/types";
 
 export type { RoofMetrics } from "./roofMetrics/types";

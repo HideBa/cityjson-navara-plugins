@@ -13,6 +13,7 @@
 
 import { ShapeUtils, Vector2 } from "three";
 import type { BBox3, CityModel, Vec3 } from "../citymodel/types";
+import { toplevelCityObjectType } from "../citymodel/toplevelType";
 import { SURFACE_COLORS_LINEAR } from "../styling/surfaceColors";
 
 export interface CityMeshArrays {
@@ -52,12 +53,21 @@ interface SurfaceTriangulation {
  * signature symmetric with the renderer wrappers, which pair `objectKeys`
  * with the layer ID to form a `PickingIndex`; the array builder itself has
  * no use for it.
+ *
+ * `hiddenTypes` holds FIRST-LEVEL group names (`toplevelCityObjectType`), so
+ * hiding "Building" hides its BuildingParts too. A hidden object contributes
+ * no triangles but still takes its `objectKeys` slot and its object index —
+ * object indices must be identical to an unfiltered build, or every consumer
+ * that maps an index back through `objectKeys` (`computeStyleColors`,
+ * `paintLayers`, `resolveVertexIndices`) shifts by the number of hidden
+ * objects before it.
  */
 export function buildCityMeshArrays(
   model: CityModel,
   _layerId: string,
   originOffset: Vec3 = [0, 0, 0],
   selectedLod: string | null = null,
+  hiddenTypes: ReadonlySet<string> | null = null,
 ): CityMeshArrays {
   const objectKeys: string[] = [];
   const triangulationCache = new Map<
@@ -69,7 +79,9 @@ export function buildCityMeshArrays(
   let totalTriangles = 0;
   for (const [id, obj] of Object.entries(model.objects)) {
     if (!obj) continue;
+    // Pushed BEFORE the hidden check: the key list is never filtered.
     objectKeys.push(id);
+    if (isHidden(obj.objectType, hiddenTypes)) continue;
     const surfaceTriangulations: Array<SurfaceTriangulation | null> = [];
     for (const surface of obj.surfaces) {
       if (selectedLod !== null && surface.lod !== selectedLod) continue;
@@ -94,6 +106,11 @@ export function buildCityMeshArrays(
   let objectIdx = 0;
   for (const [id, obj] of Object.entries(model.objects)) {
     if (!obj) continue;
+    if (isHidden(obj.objectType, hiddenTypes)) {
+      // Consumes its index anyway — see `hiddenTypes` above.
+      objectIdx++;
+      continue;
+    }
     const surfaceTriangulations = triangulationCache.get(id) ?? [];
     let cachedSurfaceIdx = 0;
 
@@ -190,6 +207,15 @@ export function buildCityMeshArrays(
     objectKeys,
     triangleCount: totalTriangles,
   };
+}
+
+function isHidden(
+  objectType: string,
+  hiddenTypes: ReadonlySet<string> | null,
+): boolean {
+  return (
+    hiddenTypes !== null && hiddenTypes.has(toplevelCityObjectType(objectType))
+  );
 }
 
 /**
