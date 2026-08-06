@@ -32,6 +32,13 @@ export type {
 
 export type { AddCityModelOptions, CityModelHandle } from "./types";
 
+export type { ThemeEdgeStyle, ThemeStyle } from "./themeStyle";
+export {
+  DEFAULT_THEME_STYLE,
+  ThemeStyleController,
+  themeStylesEqual,
+} from "./themeStyle";
+
 export { disposeGeometry, geometryFromMeshArrays } from "./cityMeshGeometry";
 
 export type { CityModelMeshOptions } from "./cityModelMesh";

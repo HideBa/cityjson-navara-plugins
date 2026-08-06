@@ -11,10 +11,10 @@
  * wraps it lives in `CityMeshArraysDesc.ts`.
  */
 import {
-  FrontSide,
+  DoubleSide,
   Matrix4,
   Mesh,
-  MeshStandardMaterial,
+  MeshBasicMaterial,
   Raycaster,
   Vector3,
 } from "three";
@@ -23,6 +23,7 @@ import { geometryFromMeshArrays } from "./cityMeshGeometry";
 import { CITY_MESH_ARRAYS_KEY } from "./descriptorKeys";
 import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
+import { ThemeStyleController, type ThemeStyle } from "./themeStyle";
 
 export interface AddCityMeshArraysOptions {
   readonly id: string;
@@ -50,6 +51,9 @@ export interface CityMeshHandle {
   /** Swap the vertex-color buffer (rule recolor of a resident cell). */
   setColors(colors: Float32Array): void;
   setVisible(visible: boolean): void;
+  /** Scene-theme presentation (fill multiplier + structural edge lines).
+   *  Independent of `setColors`: a theme never writes vertex colours. */
+  setThemeStyle(style: ThemeStyle): void;
   triangleCount(): number;
   /** Entry `t` is triangle `t`'s `SurfaceRef`. See `CityMeshArraysMesh`. */
   batchIdMap(): ReadonlyArray<SurfaceRef>;
@@ -78,6 +82,7 @@ export class CityMeshArraysMesh {
   readonly matrixWorld: Matrix4;
 
   private readonly arrays: CityMeshArrays;
+  private readonly theme: ThemeStyleController;
 
   constructor(options: AddCityMeshArraysOptions) {
     this.arrays = options.arrays;
@@ -88,13 +93,39 @@ export class CityMeshArraysMesh {
 
     this.object3d = new Mesh(
       geometryFromMeshArrays(options.arrays),
-      // MRT_VERTEX_COLORS_OK = true (Task B1): a plain standard material with
+      // MRT_VERTEX_COLORS_OK = true (Task B1): a plain built-in material with
       // vertex colors renders correctly through Navara's MRT pass, so no
       // shader patching and no custom pass key.
-      new MeshStandardMaterial({
+      //
+      // UNLIT ALBEDO, exactly as `CityModelMesh` — the aerial-perspective pass
+      // runs in `irradiance` mode and lights the g-buffer albedo from the
+      // physical atmosphere, so a lit material would be lit twice and clip to
+      // white at the exposure that calibration needs. The full reasoning, and
+      // why `MeshBasicMaterial` still fills the MRT normal buffer, is on
+      // `CityModelMesh`'s material.
+      new MeshBasicMaterial({
         vertexColors: true,
-        flatShading: true,
-        side: FrontSide,
+      // DOUBLE-SIDED, and not as a convenience: front-face culling removes
+      // real geometry from this data. CityJSON's spec asks for outward-facing
+      // exterior shells, but real files vary — and `orientExteriorRing`
+      // (navara-core's `buildCityMeshArrays`) makes it worse rather than
+      // better on the shapes that matter, because it decides orientation by
+      // asking whether a face's normal points away from the object's bbox
+      // CENTRE. That is right for a convex block and wrong for every concave
+      // one: an L-shaped building's inner walls, a courtyard's inward faces
+      // and anything under an overhang legitimately face their own centroid,
+      // so the heuristic reverses them and `FrontSide` then culls them.
+      // Measured on the Delft sample at a fixed camera with the backdrop off:
+      // ~1.1% of the viewport was building pixels that only appear
+      // double-sided (3400 px, against 56 the other way).
+      //
+      // The cost is bounded: these are opaque solids behind a depth test, so
+      // the extra fragments are overdraw the z-buffer discards, on a model of
+      // ~10^5 triangles. Correct geometry is worth that. Fixing the winding
+      // properly needs solid-orientation analysis (ray parity per shell), not
+      // a centroid guess — worth doing, but it would still not make a viewer
+      // of third-party data safe to cull.
+        side: DoubleSide,
       }),
     );
     this.object3d.name = `cityMesh:${options.id}`;
@@ -118,6 +149,10 @@ export class CityMeshArraysMesh {
     this.object3d.matrixWorldNeedsUpdate = false;
     this.object3d.castShadow = true;
     this.object3d.receiveShadow = true;
+    // Built after the placement above: the edge child copies the mesh's
+    // matrixWorld when it is created, and a cell's frame never changes
+    // afterwards.
+    this.theme = new ThemeStyleController(this.object3d);
   }
 
   /**
@@ -135,6 +170,12 @@ export class CityMeshArraysMesh {
 
   setVisible(visible: boolean): void {
     this.object3d.visible = visible;
+  }
+
+  /** Scene theme, applied through the module both mesh classes share so a
+   *  streamed cell and a static layer look identical under one. */
+  setThemeStyle(style: ThemeStyle): void {
+    this.theme.apply(style);
   }
 
   triangleCount(): number {
@@ -192,6 +233,7 @@ export class CityMeshArraysMesh {
   }
 
   dispose(): void {
+    this.theme.dispose();
     this.object3d.geometry.dispose();
     const material = this.object3d.material;
     if (Array.isArray(material)) {
@@ -226,6 +268,7 @@ export function addCityMeshArrays(
       mesh.setVisible(visible);
       meshHandle.visible = visible;
     },
+    setThemeStyle: (style) => mesh.setThemeStyle(style),
     triangleCount: () => mesh.triangleCount(),
     batchIdMap: () => mesh.batchIdMap(),
     resolveRaycast: (ray) => mesh.resolveRaycast(ray),

@@ -22,9 +22,12 @@
  * resources; the typed arrays die with their last JS reference).
  *
  * Material note: the Task B1 spike measured `MRT_VERTEX_COLORS_OK = true` — a
- * plain `MeshStandardMaterial({ vertexColors: true })` renders correctly
- * through Navara's MRT pass, so the `color` attribute needs no shader
- * patching and this builder emits nothing MRT-specific.
+ * plain built-in material with `vertexColors: true` renders correctly through
+ * Navara's MRT pass, so the `color` attribute needs no shader patching and
+ * this builder emits nothing MRT-specific. Both mesh classes now use
+ * `MeshBasicMaterial` (unlit albedo, lit by the aerial-perspective pass in
+ * `irradiance` mode); the `normal` attribute is still load-bearing, because
+ * that pass reads the MRT normal buffer.
  */
 
 import type { CityMeshArrays } from "@cityjson/navara-core";

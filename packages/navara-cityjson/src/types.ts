@@ -7,8 +7,10 @@ import type { SurfaceStyleEvaluator } from "@cityjson/navara-core";
 import type { GeodeticBounds } from "./enuPlacement";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import type { PickedFeatureLike, ScreenPoint, Selection } from "./selection";
+import type { ThemeStyle } from "./themeStyle";
 
 export type { GeodeticBounds, Lle, Placement } from "./enuPlacement";
+export type { ThemeEdgeStyle, ThemeStyle } from "./themeStyle";
 export type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 export type {
   ObjectSelection,
@@ -25,6 +27,10 @@ export interface AddCityModelOptions {
   readonly crs?: string | number;
   /** LoD to render; `null`/omitted renders every LoD in the model. */
   readonly lod?: string | null;
+  /** First-level object types to build WITHOUT geometry — hiding "Building"
+   *  also hides its BuildingParts (`toplevelCityObjectType`). Omitted or empty
+   *  builds everything. */
+  readonly hiddenTypes?: ReadonlyArray<string>;
   /**
    * Vertical-datum correction in metres. When omitted, the registry samples it
    * asynchronously with `geoidHeightAt(originLng, originLat)` and applies it
@@ -47,8 +53,23 @@ export interface CityModelHandle {
   setVisible(v: boolean): void;
   /** Rebuilds geometry filtered by LoD; `null` clears the filter. */
   setLod(lod: string | null): void;
+  /** Rebuilds geometry without the named first-level types (hiding "Building"
+   *  hides its BuildingParts too); `[]` clears the filter. Geometry, not
+   *  styling — a hidden object stops occluding and stops picking. */
+  setHiddenTypes(types: ReadonlyArray<string>): void;
   /** Per-surface rule colors; `null` restores the semantic base colors. */
   setStyle(evaluator: SurfaceStyleEvaluator | null): void;
+  /**
+   * Scene-theme presentation: a fill multiplier over the vertex colours plus
+   * optional structural edge lines. Orthogonal to {@link setStyle} — a theme
+   * writes no vertex colours, so rules, highlights and picking are unaffected,
+   * and `DEFAULT_THEME_STYLE` restores the photoreal look exactly.
+   *
+   * Not an `AddCityModelOptions` field on purpose: the app pushes the active
+   * style right after the layer is added, and a one-frame default is invisible
+   * during load.
+   */
+  setThemeStyle(style: ThemeStyle): void;
   setHighlight(sel: readonly Selection[], hovered?: Selection): void;
   /** Always returns a `SurfaceSelection`; the app narrows it per `PickMode`. */
   resolvePick(pick: PickedFeatureLike | ScreenPoint): Selection | null;

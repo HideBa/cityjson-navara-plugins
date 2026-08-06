@@ -182,8 +182,9 @@ export type FakeScenes = {
  * allocator. The real `ViewContext` has **no** `addToScene` / `removeFromScene`
  * / `setupMaterialForMRT` methods — `addToScene(passKey)` is a `MeshDesc`
  * method, and `setupMaterialForMRT` is a free export of `@navaramap/three`
- * (which the spike proved we do not need at all: a plain
- * `MeshStandardMaterial({ vertexColors: true })` renders correctly through MRT).
+ * (which the spike proved we do not need at all: a plain built-in material
+ * with `vertexColors: true` renders correctly through MRT — Navara patches
+ * three's own `ShaderLib` entries on import).
  */
 export class FakeViewContext extends FakeEventHandler<FakeViewContextEvents> {
   readonly scenes: FakeScenes = {

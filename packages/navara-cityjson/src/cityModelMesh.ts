@@ -10,10 +10,10 @@
  * streaming cells (Task C8) on one frame implementation.
  */
 import {
-  FrontSide,
+  DoubleSide,
   Matrix4,
   Mesh,
-  MeshStandardMaterial,
+  MeshBasicMaterial,
   Raycaster,
   Vector3,
   type BufferGeometry,
@@ -41,12 +41,17 @@ import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import { computeStyleColors, paintLayers } from "./surfaceColorLayers";
 import type { Selection, SurfaceSelection } from "./selection";
+import { ThemeStyleController, type ThemeStyle } from "./themeStyle";
 
 export interface CityModelMeshOptions {
   readonly id: string;
   readonly model: CityModel;
   readonly crs?: string | number;
   readonly lod?: string | null;
+  /** First-level object types whose geometry is left out of the build (so
+   *  "Building" also drops its BuildingParts). Arrays, not a Set, because this
+   *  travels as a descriptor config; the mesh keeps its own set. */
+  readonly hiddenTypes?: ReadonlyArray<string>;
   /** Metres added to every vertex's geodetic height before the ENU transform
    *  (the geoid undulation at the layer origin). Defaults to 0; Task B7's
    *  registry calls `setHeightOffset()` when its async `geoidHeightAt()`
@@ -64,6 +69,14 @@ export interface CityModelMeshOptions {
   readonly makePlacementMatrix?: (lle: Lle) => Matrix4;
 }
 
+/** Set equality: the app replaces the hidden-type array wholesale on every
+ *  edit, so identity says nothing, and order is not meaningful. */
+function sameTypes(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const t of a) if (!b.has(t)) return false;
+  return true;
+}
+
 export class CityModelMesh {
   readonly id: string;
   readonly epsg: number;
@@ -77,12 +90,14 @@ export class CityModelMesh {
     | undefined;
   private placement: Placement;
   private lod: string | null;
+  private hiddenTypes: ReadonlySet<string>;
   private arrays: CityMeshArrays;
   private baseColors: Float32Array;
   private styleColors: Float32Array | null = null;
   private evaluator: SurfaceStyleEvaluator | null = null;
   private selections: readonly Selection[] = [];
   private hovered: Selection | null = null;
+  private readonly theme: ThemeStyleController;
 
   constructor(options: CityModelMeshOptions) {
     this.id = options.id;
@@ -95,6 +110,7 @@ export class CityModelMesh {
     );
     this.pickStrategy = options.pickStrategy ?? DEFAULT_PICK_STRATEGY;
     this.lod = options.lod ?? null;
+    this.hiddenTypes = new Set(options.hiddenTypes ?? []);
     this.originOffset = computeOriginOffset(options.model);
     this.makePlacementMatrix = options.makePlacementMatrix;
     this.placement = this.computePlacement(options.heightOffset ?? 0);
@@ -104,10 +120,47 @@ export class CityModelMesh {
 
     this.object3d = new Mesh(
       geometryFromMeshArrays(this.arrays),
-      new MeshStandardMaterial({
+      // UNLIT ALBEDO, not a lit material. The renderer this mesh lives in is
+      // calibrated for the PHYSICAL ATMOSPHERE, not for scene lights: the
+      // aerial-perspective pass runs in `irradiance` mode and re-shades the
+      // g-buffer albedo with the atmosphere's own sun + sky irradiance
+      // (`AerialPerspective.irradiance` sets `sunLight = skyLight = true`),
+      // and the tone mapper is driven at exposure ~10. A lit
+      // `MeshStandardMaterial` would be lit TWICE — once by
+      // `SunLightDesc`/`skyLightProbe` at scene-light scale (calibrated for
+      // exposure ~1), then again by the AP pass — and every roof clipped to
+      // white. See docs/superpowers/research/2026-08-04-overbright-scene-diagnosis.md.
+      //
+      // The AP pass reads the MRT normal buffer (`useNormalBuffer: true`), and
+      // `MeshBasicMaterial` fills it: Navara patches three's `basic` ShaderLib
+      // entry on import so the normal varyings are always computed, not only
+      // under `USE_ENVMAP`/`USE_SKINNING` (`overrideMaterialsForMRT`). No
+      // `flatShading` here — the material has no such option, and that patch
+      // `#undef`s `FLAT_SHADED` anyway; our geometry is non-indexed with one
+      // normal per face, so the shading reads flat regardless.
+      new MeshBasicMaterial({
         vertexColors: true,
-        flatShading: true,
-        side: FrontSide,
+      // DOUBLE-SIDED, and not as a convenience: front-face culling removes
+      // real geometry from this data. CityJSON's spec asks for outward-facing
+      // exterior shells, but real files vary — and `orientExteriorRing`
+      // (navara-core's `buildCityMeshArrays`) makes it worse rather than
+      // better on the shapes that matter, because it decides orientation by
+      // asking whether a face's normal points away from the object's bbox
+      // CENTRE. That is right for a convex block and wrong for every concave
+      // one: an L-shaped building's inner walls, a courtyard's inward faces
+      // and anything under an overhang legitimately face their own centroid,
+      // so the heuristic reverses them and `FrontSide` then culls them.
+      // Measured on the Delft sample at a fixed camera with the backdrop off:
+      // ~1.1% of the viewport was building pixels that only appear
+      // double-sided (3400 px, against 56 the other way).
+      //
+      // The cost is bounded: these are opaque solids behind a depth test, so
+      // the extra fragments are overdraw the z-buffer discards, on a model of
+      // ~10^5 triangles. Correct geometry is worth that. Fixing the winding
+      // properly needs solid-orientation analysis (ray parity per shell), not
+      // a centroid guess — worth doing, but it would still not make a viewer
+      // of third-party data safe to cull.
+        side: DoubleSide,
       }),
     );
     this.object3d.name = `cityModel:${this.id}`;
@@ -115,6 +168,10 @@ export class CityModelMesh {
     this.object3d.castShadow = true;
     this.object3d.receiveShadow = true;
     this.applyPlacement();
+    // After `applyPlacement`: the theme's edge child copies the mesh's
+    // matrixWorld when it builds, and every later placement change runs
+    // through `rebuildGeometry` -> `theme.geometryReplaced()`.
+    this.theme = new ThemeStyleController(this.object3d);
   }
 
   private buildArrays(): CityMeshArrays {
@@ -123,6 +180,7 @@ export class CityModelMesh {
       this.id,
       this.originOffset,
       this.lod,
+      this.hiddenTypes.size > 0 ? this.hiddenTypes : null,
     );
     // buildCityMeshArrays emits *source-CRS deltas* from originOffset. Those
     // are NOT ENU metres: a projected CRS carries scale factor and grid
@@ -207,6 +265,23 @@ export class CityModelMesh {
   }
 
   /**
+   * Which first-level object types are left out of the geometry — hiding
+   * "Building" hides its BuildingParts too (`toplevelCityObjectType`).
+   *
+   * A REBUILD, on the same seam `setLod` uses, because a style evaluator
+   * cannot hide anything: it writes RGB into an opaque material, so a
+   * "hidden" object would still occlude what is behind it and still answer a
+   * raycast. Object indices survive the filter (`buildCityMeshArrays`), so the
+   * style and highlight `rebuildGeometry` repaints are unaffected.
+   */
+  setHiddenTypes(types: ReadonlyArray<string>): void {
+    const next = new Set(types);
+    if (sameTypes(next, this.hiddenTypes)) return;
+    this.hiddenTypes = next;
+    this.rebuildGeometry();
+  }
+
+  /**
    * Re-place the mesh at a new vertical-datum offset.
    *
    * `ellipsoidal = orthometric + N`, and the offset is added to BOTH the
@@ -247,6 +322,17 @@ export class CityModelMesh {
     this.object3d.geometry = geometryFromMeshArrays(this.arrays);
     old.dispose();
     this.repaint();
+    // The theme's edge lines were extracted from the geometry just disposed —
+    // an outline of surfaces this LoD (or hidden-type list, or placement) no
+    // longer has. A no-op while no theme with edges is active.
+    this.theme.geometryReplaced();
+  }
+
+  /** Scene theme: a fill multiplier and optional structural edge lines. Pure
+   *  presentation — it writes no vertex colours, so rules, highlights and
+   *  picking are untouched by it. */
+  setThemeStyle(style: ThemeStyle): void {
+    this.theme.apply(style);
   }
 
   setStyle(evaluator: SurfaceStyleEvaluator | null): void {
@@ -374,6 +460,7 @@ export class CityModelMesh {
   }
 
   dispose(): void {
+    this.theme.dispose();
     this.geometry.dispose();
     const material = this.object3d.material;
     if (Array.isArray(material)) {

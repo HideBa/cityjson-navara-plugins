@@ -24,6 +24,7 @@ import { resolveMetricEpsg } from "./enuPlacement";
 import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import type { PickedFeatureLike, ScreenPoint, Selection } from "./selection";
+import type { ThemeStyle } from "./themeStyle";
 import type {
   AddCityModelOptions,
   CityModelHandle,
@@ -134,6 +135,7 @@ export class CityModelRegistry {
         model,
         crs: opts.crs,
         lod: opts.lod ?? null,
+        hiddenTypes: opts.hiddenTypes,
         heightOffset: opts.heightOffset,
         pickStrategy: this.pickStrategy,
       },
@@ -151,8 +153,11 @@ export class CityModelRegistry {
         meshHandle.visible = v;
       },
       setLod: (lod: string | null) => mesh.setLod(lod),
+      setHiddenTypes: (types: ReadonlyArray<string>) =>
+        mesh.setHiddenTypes(types),
       setStyle: (evaluator: SurfaceStyleEvaluator | null) =>
         mesh.setStyle(evaluator),
+      setThemeStyle: (style: ThemeStyle) => mesh.setThemeStyle(style),
       setHighlight: (sel: readonly Selection[], hovered?: Selection) =>
         mesh.setHighlight(sel, hovered ?? null),
       resolvePick: (pick: PickedFeatureLike | ScreenPoint) => {

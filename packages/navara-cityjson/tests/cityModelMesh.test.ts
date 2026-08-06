@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { Matrix4, Vector3 } from "three";
+import { DoubleSide, LineSegments, Matrix4, Vector3 } from "three";
 import type { CityModel } from "@cityjson/navara-core";
 import { CityModelMesh } from "../src/cityModelMesh";
+import type { ThemeStyle } from "../src/themeStyle";
 import { DEFAULT_PICK_STRATEGY } from "../src/pickStrategy";
 import { NonMetricCrsError } from "../src/enuPlacement";
 
@@ -14,6 +15,23 @@ function quad(z: number, lod: string) {
         [85010, 446000, z],
         [85010, 446010, z],
         [85000, 446010, z],
+      ],
+    ] as const,
+    attributes: {},
+    lod,
+  };
+}
+
+/** {@link quad}, translated 20 m east so the two share no edge. */
+function farQuad(z: number, lod: string) {
+  return {
+    type: "RoofSurface" as const,
+    rings: [
+      [
+        [85020, 446000, z],
+        [85030, 446000, z],
+        [85030, 446010, z],
+        [85020, 446010, z],
       ],
     ] as const,
     attributes: {},
@@ -48,6 +66,18 @@ const opts = {
 };
 
 describe("CityModelMesh", () => {
+  // The STATIC counterpart of the same rule on `CityMeshArraysMesh`: real
+  // CityJSON winding is inconsistent, and `orientExteriorRing` mis-orients
+  // concave shapes (a face in an L-shaped building's notch legitimately points
+  // at the object's own centroid), so front-face culling deletes real walls.
+  // Both mesh classes must agree, or the same building renders differently
+  // depending on whether it arrived as a file or as a stream.
+  it("renders double-sided, so a mis-wound face is not culled away", () => {
+    const m = new CityModelMesh({ ...opts, lod: "2" });
+    expect((m.object3d.material as { side: number }).side).toBe(DoubleSide);
+    m.dispose();
+  });
+
   it("builds a mesh placed by the injected ENU matrix", () => {
     const m = new CityModelMesh({ ...opts, lod: "2" });
     expect(m.object3d.matrixAutoUpdate).toBe(false);
@@ -203,6 +233,86 @@ describe("CityModelMesh", () => {
     m.dispose();
     expect(disposedGeometry).toBe(1);
     expect(disposedMaterial).toBe(1);
+  });
+});
+
+/**
+ * Hiding is a GEOMETRY rebuild, not a style: a style evaluator paints RGB into
+ * an opaque material, so a "hidden" object would still occlude and still pick.
+ * Grouping is by first-level type, so the BuildingPart below disappears with
+ * its parent even though nothing is typed "Building".
+ */
+describe("CityModelMesh hidden types", () => {
+  const partModel: CityModel = {
+    ...model,
+    objects: {
+      ...model.objects,
+      B1P: {
+        id: "B1P",
+        objectType: "BuildingPart",
+        attributes: {},
+        surfaces: [quad(5, "2")],
+        bbox: [85000, 446000, 0, 85010, 446010, 6],
+        children: [],
+        parents: ["B1"],
+        lod: "2",
+      },
+      T1: {
+        id: "T1",
+        objectType: "SolitaryVegetationObject",
+        attributes: {},
+        surfaces: [quad(4, "2")],
+        bbox: [85000, 446000, 0, 85010, 446010, 6],
+        children: [],
+        parents: [],
+        lod: "2",
+      },
+    },
+  };
+  const partOpts = { ...opts, model: partModel, lod: "2" };
+
+  it("setHiddenTypes rebuilds without the hidden group's triangles", () => {
+    const m = new CityModelMesh(partOpts);
+    expect(m.triangleCount()).toBe(6); // three quads at LoD 2
+    const before = m.object3d.geometry;
+
+    m.setHiddenTypes(["Building"]);
+    expect(m.object3d.geometry).not.toBe(before);
+    // Both the Building and its BuildingPart are gone; the tree remains.
+    expect(m.triangleCount()).toBe(2);
+
+    m.setHiddenTypes([]);
+    expect(m.triangleCount()).toBe(6);
+    m.dispose();
+  });
+
+  it("builds filtered from the constructor option", () => {
+    const m = new CityModelMesh({ ...partOpts, hiddenTypes: ["Building"] });
+    expect(m.triangleCount()).toBe(2);
+    m.dispose();
+  });
+
+  it("drops a no-op setHiddenTypes instead of rebuilding the geometry", () => {
+    const m = new CityModelMesh({ ...partOpts, hiddenTypes: ["Building"] });
+    const geometry = m.object3d.geometry;
+    m.setHiddenTypes(["Building"]);
+    expect(m.object3d.geometry).toBe(geometry);
+    m.setHiddenTypes([]);
+    expect(m.object3d.geometry).not.toBe(geometry);
+    m.dispose();
+  });
+
+  it("keeps style and highlight across the rebuild", () => {
+    const m = new CityModelMesh(partOpts);
+    m.setStyle((_surface, object) =>
+      object.objectId === "T1" ? [0, 1, 0] : null,
+    );
+    m.setHiddenTypes(["Building"]);
+    // Only the tree survives, so vertex 0 is its — and it is still styled.
+    const colors = m.object3d.geometry.getAttribute("color");
+    expect(colors.getY(0)).toBeGreaterThan(0.9);
+    expect(m.resolveVertex(0)?.objectId).toBe("T1");
+    m.dispose();
   });
 });
 
@@ -396,6 +506,78 @@ describe("placement bundle", () => {
       m.getPlacement().frame.originEcef[0],
       6,
     );
+    m.dispose();
+  });
+});
+
+/**
+ * Scene themes on the model-backed mesh. `themeStyle.ts` is shared with
+ * `CityMeshArraysMesh` and is asserted in full there; what only this class can
+ * break is the interaction with `rebuildGeometry()` — the edge child is
+ * extracted from a geometry that LoD, hidden types and the geoid offset all
+ * replace out from under it.
+ */
+describe("CityModelMesh.setThemeStyle", () => {
+  const CARTOON: ThemeStyle = { fill: "vertex", edges: { color: 0x1a1a1a } };
+
+  /** Two LoDs of DIFFERENT size, so a stale edge child shows up as a wrong
+   *  vertex count and not merely as wrong coordinates. */
+  const twoLodModel: CityModel = {
+    ...model,
+    objects: {
+      B1: {
+        ...model.objects.B1!,
+        surfaces: [quad(6, "2"), quad(3, "1"), farQuad(3, "1")],
+      },
+    },
+  };
+  const twoLodOpts = { ...opts, model: twoLodModel };
+
+  const edgeChild = (m: CityModelMesh) =>
+    m.object3d.children[0] as LineSegments | undefined;
+  const edgeVertices = (m: CityModelMesh) =>
+    edgeChild(m)!.geometry.getAttribute("position").count;
+
+  it("rebuilds the edges from the CURRENT geometry after a LoD change", () => {
+    const m = new CityModelMesh({ ...twoLodOpts, lod: "2" });
+    m.setThemeStyle(CARTOON);
+    // One quad: 4 boundary edges (the split diagonal is coplanar), 2 endpoints
+    // each.
+    expect(edgeVertices(m)).toBe(8);
+
+    m.setLod("1");
+    // Two disjoint quads. Without the cache invalidation this would still read
+    // 8 — the old LoD's outline, drawn over the new geometry.
+    expect(edgeVertices(m)).toBe(16);
+    m.dispose();
+  });
+
+  it("adds no edge child when a rebuild happens on an unthemed mesh", () => {
+    const m = new CityModelMesh({ ...twoLodOpts, lod: "2" });
+    m.setLod("1");
+    expect(m.object3d.children).toHaveLength(0);
+    m.dispose();
+  });
+
+  // The own-raycast strategy calls `intersectObject(mesh, false)`: the edge
+  // child must not be descended into, or a line hit (which carries no `face`)
+  // could answer for the surface under the cursor.
+  it("does not break the own-raycast pick path", () => {
+    const m = new CityModelMesh({ ...opts, lod: "2" });
+    const down = {
+      origin: { x: 1, y: 2, z: 1000 },
+      direction: { x: 0, y: 0, z: -1 },
+    };
+    const before = m.raycast(down);
+    m.setThemeStyle(CARTOON);
+    expect(m.object3d.children).toHaveLength(1);
+    expect(m.raycast(down)).toEqual(before);
+    expect(m.resolveRaycastSelection(down)).toEqual({
+      kind: "surface",
+      layerId: "L1",
+      objectId: "B1",
+      surfaceIndex: 0,
+    });
     m.dispose();
   });
 });

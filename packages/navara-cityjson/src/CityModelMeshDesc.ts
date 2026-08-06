@@ -33,6 +33,9 @@ export interface CityModelDescOptions {
   readonly model: CityModel;
   readonly crs?: string | number;
   readonly lod?: string | null;
+  /** First-level object types built without geometry (see
+   *  `CityModelMesh.setHiddenTypes`); changed afterwards through the handle. */
+  readonly hiddenTypes?: ReadonlyArray<string>;
   /** Initial vertical-datum offset. Usually undefined here — the registry
    *  applies the sampled geoid undulation through `setHeightOffset()` once it
    *  resolves (Global Constraints -> Vertical datum). */
@@ -64,6 +67,7 @@ export class CityModelMeshDesc extends MeshDesc<CityModelDescConfig> {
       model: options.model,
       crs: options.crs,
       lod: options.lod ?? null,
+      hiddenTypes: options.hiddenTypes,
       heightOffset: options.heightOffset,
       pickStrategy: options.pickStrategy,
       // No `makePlacementMatrix` override: the default is core's

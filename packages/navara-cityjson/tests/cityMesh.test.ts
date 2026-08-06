@@ -3,14 +3,24 @@
  * C8/C10a build one of these per resident cell), so this suite imports it
  * directly and never touches `@navaramap/*`.
  */
-import { describe, expect, it } from "vitest";
-import { Matrix4, Vector3, type BufferAttribute } from "three";
+import { describe, expect, it, vi } from "vitest";
+import {
+  DoubleSide,
+  LineBasicMaterial,
+  LineSegments,
+  Matrix4,
+  Vector3,
+  type BufferAttribute,
+  type BufferGeometry,
+  type MeshBasicMaterial,
+} from "three";
 import { makeEnuFrame, type CityMeshArrays } from "@cityjson/navara-core";
 import {
   addCityMeshArrays,
   CityMeshArraysMesh,
   type AddCityMeshArraysOptions,
 } from "../src/cityMesh";
+import { DEFAULT_THEME_STYLE } from "../src/themeStyle";
 import { CITY_MESH_ARRAYS_KEY } from "../src/cityModelRegistry";
 import { FakeThreeView } from "./fakeView";
 
@@ -68,6 +78,17 @@ describe("CityMeshArraysMesh", () => {
     expect(mesh.matrixWorld.elements[12]).toBe(frame.originEcef[0]);
     expect(mesh.triangleCount()).toBe(1);
     mesh.dispose();
+  });
+
+  // Real CityJSON carries inconsistent face winding, and this app's own
+  // `orientExteriorRing` heuristic (flip a face whose normal points at the
+  // object's bbox centre) actively MIS-orients concave geometry — an L-shaped
+  // building's inner walls legitimately face their own centroid. Measured on
+  // the Delft sample at a fixed camera, front-face culling removed ~1.1% of
+  // the viewport in building pixels that double-sided rendering shows.
+  it("renders double-sided, so a mis-wound face is not culled away", () => {
+    const mesh = new CityMeshArraysMesh(opts());
+    expect((mesh.object3d.material as { side: number }).side).toBe(DoubleSide);
   });
 
   it("setColors writes through to the live color attribute", () => {
@@ -155,5 +176,113 @@ describe("addCityMeshArrays", () => {
       layerId: "L1",
       cellKey: "1/0/0",
     });
+  });
+
+  it("publishes setThemeStyle, so a themed layer reaches its streamed cells", async () => {
+    const view = await viewWithCellDescriptor();
+    const handle = addCityMeshArrays(view, opts());
+    handle.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
+    const mesh = (view.handles[0]!.ref as { cityMesh: CityMeshArraysMesh })
+      .cityMesh;
+    expect(mesh.object3d.children).toHaveLength(1);
+  });
+});
+
+/**
+ * Scene themes. The behaviour lives in `themeStyle.ts` and is shared with
+ * `CityModelMesh`, so it is asserted once, here, on the simpler class; the
+ * model-backed suite covers only what a geometry rebuild can break.
+ */
+describe("CityMeshArraysMesh.setThemeStyle", () => {
+  const edgeChild = (m: CityMeshArraysMesh) =>
+    m.object3d.children[0] as LineSegments<BufferGeometry, LineBasicMaterial>;
+
+  it("tints UNCLAMPED, because material.color is a raw linear multiplier", () => {
+    const m = new CityMeshArraysMesh(opts());
+    m.setThemeStyle({ fill: "tint", tintRGB: [0.4, 2.2, 2.6], edges: null });
+    const color = (m.object3d.material as MeshBasicMaterial).color;
+    expect(color.r).toBeCloseTo(0.4, 5);
+    // > 1 is the whole point: `setHex`/`set` would sRGB-convert and clamp this
+    // to 1, and the cyber neon tint would stop being HDR.
+    expect(color.g).toBeCloseTo(2.2, 5);
+    expect(color.b).toBeCloseTo(2.6, 5);
+    m.dispose();
+  });
+
+  it("restores a white multiplier when the fill goes back to vertex colours", () => {
+    const m = new CityMeshArraysMesh(opts());
+    m.setThemeStyle({ fill: "tint", tintRGB: [0.02, 0.02, 0.03], edges: null });
+    m.setThemeStyle(DEFAULT_THEME_STYLE);
+    const color = (m.object3d.material as MeshBasicMaterial).color;
+    expect([color.r, color.g, color.b]).toEqual([1, 1, 1]);
+    m.dispose();
+  });
+
+  it("adds the structural edges as a child of the mesh itself", () => {
+    const m = new CityMeshArraysMesh(opts());
+    m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
+
+    const line = edgeChild(m);
+    expect(line).toBeInstanceOf(LineSegments);
+    // One triangle: three boundary edges, two endpoints each.
+    expect(line.geometry.getAttribute("position").count).toBe(6);
+    // A child, so it inherits the cell's ENU->ECEF placement rather than
+    // needing a second copy of it.
+    expect(line.parent).toBe(m.object3d);
+    expect(line.matrixWorld.elements).toEqual(m.object3d.matrixWorld.elements);
+    m.dispose();
+  });
+
+  it("reads a plain edge colour as sRGB and an hdr triple as linear", () => {
+    const m = new CityMeshArraysMesh(opts());
+    m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
+    // 0x1a is 0.102 in sRGB, ~0.0103 once converted to the working space.
+    expect(edgeChild(m).material.color.r).toBeCloseTo(0.0103, 4);
+
+    m.setThemeStyle({
+      fill: "vertex",
+      edges: { color: 0x00ffff, hdr: [0.4, 2.2, 2.6] },
+    });
+    // Same child, recoloured — and the hdr triple wins, unconverted.
+    expect(m.object3d.children).toHaveLength(1);
+    expect(edgeChild(m).material.color.g).toBeCloseTo(2.2, 5);
+    m.dispose();
+  });
+
+  it("removes AND disposes the edge child when the theme drops edges", () => {
+    const m = new CityMeshArraysMesh(opts());
+    m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
+    const line = edgeChild(m);
+    const geometry = vi.spyOn(line.geometry, "dispose");
+    const material = vi.spyOn(line.material, "dispose");
+
+    m.setThemeStyle(DEFAULT_THEME_STYLE);
+    expect(m.object3d.children).toHaveLength(0);
+    expect(geometry).toHaveBeenCalled();
+    expect(material).toHaveBeenCalled();
+    m.dispose();
+  });
+
+  it("is a no-op for an equal style, so a re-push does not rebuild the edges", () => {
+    const m = new CityMeshArraysMesh(opts());
+    m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
+    const before = edgeChild(m).geometry;
+    // A structurally equal style from a fresh policy object: the app re-pushes
+    // layer state on every sync, and rebuilding the edge geometry each time
+    // would re-extract every edge of every layer per sync.
+    m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
+    expect(edgeChild(m).geometry).toBe(before);
+    m.dispose();
+  });
+
+  it("disposes a live edge child with the mesh", () => {
+    const m = new CityMeshArraysMesh(opts());
+    m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
+    const line = edgeChild(m);
+    const geometry = vi.spyOn(line.geometry, "dispose");
+    const material = vi.spyOn(line.material, "dispose");
+    m.dispose();
+    expect(geometry).toHaveBeenCalled();
+    expect(material).toHaveBeenCalled();
   });
 });

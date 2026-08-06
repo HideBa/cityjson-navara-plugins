@@ -26,6 +26,7 @@ import {
   type PickRayProvider,
 } from "../src/cityModelRegistry";
 import type { PickStrategy } from "../src/pickStrategy";
+import type { ThemeStyle } from "../src/themeStyle";
 import { FakeThreeView } from "./fakeView";
 
 // Stand-ins for CityModelMeshDesc / CityMeshArraysDesc: the registry only ever
@@ -97,6 +98,7 @@ type CityModelConfig = {
   model: CityModel;
   crs?: string | number;
   lod?: string | null;
+  hiddenTypes?: ReadonlyArray<string>;
   heightOffset?: number;
   pickStrategy?: PickStrategy;
 };
@@ -285,6 +287,44 @@ describe("CityModelRegistry", () => {
     // The optional `hovered` argument is normalized to null, which is what
     // CityModelMesh's signature defaults to.
     expect(setHighlight).toHaveBeenCalledWith([selection], null);
+  });
+
+  it("forwards hiddenTypes to the descriptor and through the handle to the mesh", async () => {
+    const view = new FakeThreeView();
+    withFakeDescriptor(view);
+    const registry = makeRegistry(view);
+    await view.init();
+
+    const handle = registry.addCityModel(model, {
+      id: "L1",
+      lod: "2",
+      hiddenTypes: ["Bridge"],
+    });
+    const config = view.addedConfigs[0] as Record<string, CityModelConfig>;
+    expect(config[CITY_MODEL_MESH_KEY]!.hiddenTypes).toEqual(["Bridge"]);
+
+    const setHiddenTypes = vi.spyOn(meshOf(view), "setHiddenTypes");
+    handle.setHiddenTypes(["Building"]);
+    expect(setHiddenTypes).toHaveBeenCalledWith(["Building"]);
+  });
+
+  // A theme is pushed AFTER the layer is added (it is deliberately not an
+  // `AddCityModelOptions` field — a one-frame default is invisible during
+  // load), so the handle is the only route to it.
+  it("forwards a scene theme through the handle to the mesh", async () => {
+    const view = new FakeThreeView();
+    withFakeDescriptor(view);
+    const registry = makeRegistry(view);
+    await view.init();
+
+    const handle = registry.addCityModel(model, { id: "L1", lod: "2" });
+    const style: ThemeStyle = {
+      fill: "tint",
+      tintRGB: [0.02, 0.02, 0.03],
+      edges: { color: 0xffffff, hdr: [0.9, 2, 1.2] },
+    };
+    handle.setThemeStyle(style);
+    expect(meshOf(view).object3d.children).toHaveLength(1);
   });
 
   it("delete removes the handle from the registry and deletes the mesh handle", async () => {
