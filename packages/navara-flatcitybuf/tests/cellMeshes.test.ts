@@ -24,7 +24,7 @@ import { CellCache } from "../src/cellCache";
 import type { CellEntry } from "../src/streamLayer";
 import { cellCentre, makeGrid, type Grid } from "../src/tileGrid";
 import type { Rule } from "@cityjson/navara-core";
-import type { CityMeshHandle } from "@cityjson/navara-cityjson";
+import type { CityMeshHandle, ThemeStyle } from "@cityjson/navara-cityjson";
 
 const GRID: Grid = { originX: 0, originY: 0, rootCell: 1000, maxLevel: 4 };
 
@@ -71,6 +71,7 @@ function factory() {
         ref: null,
         setColors: vi.fn(),
         setVisible: vi.fn(),
+        setThemeStyle: vi.fn(),
         triangleCount: () => 1,
         batchIdMap: () => [{ objectIndex: 0, surfaceIndex: 0 }],
         resolveRaycast: () => null,
@@ -210,6 +211,34 @@ describe("syncCellMeshes", () => {
     });
     expect([...cells.keys()]).toEqual(["1/0/0"]);
     expect(f.created).toHaveLength(1);
+  });
+
+  // The same rule `visible` follows: a cell built while a theme is active has
+  // to come up themed, because nothing revisits it afterwards.
+  it("pushes the layer's active theme to a cell it builds", () => {
+    const cache = new CellCache<CellEntry>({
+      maxTriangles: 1e6,
+      maxBytes: 1e9,
+    });
+    cache.set("1/0/0", entry("a"), { triangles: 1, bytes: 10 });
+    const themeStyle: ThemeStyle = {
+      fill: "tint",
+      tintRGB: [0.02, 0.02, 0.03],
+      edges: { color: 0xffffff },
+    };
+    const f = factory();
+    syncCellMeshes({
+      cache,
+      cells: new Map<string, CellMesh>(),
+      grid: GRID,
+      toLngLat,
+      factory: f,
+      visible: true,
+      rules: [],
+      rulesEnabled: false,
+      themeStyle,
+    });
+    expect(f.created[0]!.handle.setThemeStyle).toHaveBeenCalledWith(themeStyle);
   });
 
   it("places each cell in its OWN frame, and hands the factory the layer's height offset", () => {

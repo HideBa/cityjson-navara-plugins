@@ -141,6 +141,7 @@ describe("fcb.worker — single traversal per commit", () => {
         // this task exists to replace), selectCalls would be 4, not 1.
         cells: ["2/0/0", "2/1/0", "2/2/0", "2/0/1"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },

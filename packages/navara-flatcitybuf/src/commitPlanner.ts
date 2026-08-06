@@ -79,6 +79,16 @@ export function ladderEquals(
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
+/** Order-and-content equality for two hidden-type lists. Both sides come from
+ *  `FcbStreamLayerHandle`, which normalises (sorts and dedups) every list it
+ *  accepts, so a positional compare is exact. */
+export function hiddenTypesEqual(
+  a: ReadonlyArray<string>,
+  b: ReadonlyArray<string>,
+): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
 /** Bytes actually held post-decode, mirroring `CellCache`'s "measured after
  *  decode, not predicted" budget doc — `triangleCount` alone doesn't bound
  *  memory, and `ruleColors` is optional so it must be counted only when
@@ -104,9 +114,14 @@ export interface PlanCommitInput {
   readonly prevLevel: number | null;
   readonly prevCommit: CommitView | null;
   readonly prevLod: LodSelection | null;
+  /** The hidden-type list the RESIDENT cells were fetched under, or `null`
+   *  before this layer's first commit. */
+  readonly prevHiddenTypes: ReadonlyArray<string> | null;
   readonly ladder: ReadonlyArray<string>;
   readonly lodMode: "auto" | "manual";
   readonly selectedLod: string | null;
+  /** The hidden-type list the NEXT fetch will carry. */
+  readonly hiddenTypes: ReadonlyArray<string>;
 }
 
 export type CommitPlan =
@@ -159,7 +174,14 @@ export function planCommit(input: PlanCommitInput): CommitPlan {
   // even though the eviction-policy text only names level changes by name.
   const lodChanged =
     input.prevLod !== null && !lodSelectionEquals(lod, input.prevLod);
-  const isSwap = levelChanged || lodChanged;
+  // Identical argument for the hidden-type set: a resident cell was BAKED
+  // without the types hidden at fetch time, so a toggle leaves every cached
+  // key stale under an unchanged key — invisible to `hasHoles`, and served
+  // forever by hysteresis if it is not treated as a swap.
+  const hiddenTypesChanged =
+    input.prevHiddenTypes !== null &&
+    !hiddenTypesEqual(input.hiddenTypes, input.prevHiddenTypes);
+  const isSwap = levelChanged || lodChanged || hiddenTypesChanged;
 
   const commitView: CommitView = {
     centre: footprint.centre,

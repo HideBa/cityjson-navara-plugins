@@ -113,6 +113,10 @@ export interface OpenStreamOptions {
   readonly rules?: ReadonlyArray<Rule>;
   readonly rulesEnabled?: boolean;
   readonly visible?: boolean;
+  /** First-level object types to stream WITHOUT geometry — hiding "Building"
+   *  also hides its BuildingParts. Seeded before the first commit, so a
+   *  restored layer's very first fetch is already filtered. */
+  readonly hiddenTypes?: ReadonlyArray<string>;
   /** Vertical-datum correction in metres. Supplied wins outright; omitted
    *  means `await geoidHeightAt(centreLng, centreLat)`. Either way it is known
    *  before the worker's placement is established, so every cell bakes in the
@@ -184,7 +188,7 @@ export class StreamLayerRegistry {
    * plugin had a view got no initial commit — `currentRays()` had nothing to
    * ask — and nothing else would revisit it, so it would sit empty until the
    * user happened to move the camera. This is the same "a commit is owed and
-   * no camera event will arrive" case `onLodChanged` exists for.
+   * no camera event will arrive" case `onCommitNeeded` exists for.
    */
   attach(view: StreamViewLike): void {
     if (this.disposed) return;
@@ -257,7 +261,7 @@ export class StreamLayerRegistry {
    * nothing at all: the viewport sits framed and empty until the user happens
    * to nudge the camera. That was reported from the M7.5 browser smoke, and it
    * is the same shape as the two cases that already commit out of band —
-   * {@link attach}'s trailing `commitAll()` and `onLodChanged` — "a commit is
+   * {@link attach}'s trailing `commitAll()` and `onCommitNeeded` — "a commit is
    * owed and no camera event is going to arrive".
    *
    * SCHEDULED, not immediate: `flyTo` returns before its animation has run, so
@@ -415,9 +419,10 @@ export class StreamLayerRegistry {
         pickRays: this.pickRays,
         // A LoD change must refetch even for a viewport that has not moved —
         // hysteresis would otherwise skip the commit and leave the old LoD
-        // resident indefinitely (B1). The handle does not own the camera, so
-        // the driver supplies the forced commit.
-        onLodChanged: () => this.commitLayer(handle),
+        // resident indefinitely (B1) — and so must resuming camera sync, which
+        // left the layer resident on an older viewport. The handle does not own
+        // the camera, so the driver supplies the forced commit.
+        onCommitNeeded: () => this.commitLayer(handle),
       });
 
       // Seeded BEFORE the first commit, deliberately: the handle defaults to
@@ -426,6 +431,10 @@ export class StreamLayerRegistry {
       // cell would need a recolor round trip to catch up (C10a/C10b ledger).
       handle.setVisible(opts.visible ?? true);
       handle.setRules(opts.rules ?? [], opts.rulesEnabled ?? true);
+      // Same reason, one step stronger: an unseeded first fetch would bake the
+      // hidden types' geometry and only drop it on the refetch a later toggle
+      // forces — a visible flash of everything the user had hidden.
+      handle.setHiddenTypes(opts.hiddenTypes ?? []);
 
       this.register(opts.id, handle);
       this.commitLayer(handle);

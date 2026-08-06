@@ -251,6 +251,7 @@ describe("fcb.worker cache — fetch populates records", () => {
         level: 2,
         cells: ["2/0/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -285,6 +286,7 @@ describe("fcb.worker cache — lodsSeen (B1, 2026-07-28 final review)", () => {
         level: 2,
         cells: ["2/0/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -314,6 +316,7 @@ describe("fcb.worker cache — lodsSeen (B1, 2026-07-28 final review)", () => {
         level: 2,
         cells: ["2/0/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -342,6 +345,7 @@ describe("fcb.worker cache — lodsSeen (B1, 2026-07-28 final review)", () => {
         level: 2,
         cells: ["2/0/0"],
         lod: "1.3", // only render 1.3's geometry...
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -374,6 +378,7 @@ describe("fcb.worker cache — recolor", () => {
         level: 2,
         cells: ["2/0/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -430,6 +435,7 @@ describe("fcb.worker cache — recolor", () => {
         level: 2,
         cells: ["2/0/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -502,6 +508,7 @@ describe("fcb.worker cache — on-demand surfaces", () => {
         level: 2,
         cells: ["2/0/0", "2/1/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -537,6 +544,7 @@ describe("fcb.worker cache — on-demand surfaces", () => {
         level: 2,
         cells: ["2/0/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -571,6 +579,7 @@ describe("fcb.worker cache — evict / close genuinely release memory", () => {
         level: 2,
         cells: ["2/0/0", "2/1/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -620,6 +629,7 @@ describe("fcb.worker cache — evict / close genuinely release memory", () => {
         level: 2,
         cells: ["2/0/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -679,6 +689,7 @@ describe("fcb.worker cache — partial fetch failure discards its own cells (B3,
         level: 2,
         cells: ["2/0/0", "2/1/0"],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -766,6 +777,7 @@ describe("fcb.worker cache — partial fetch failure discards its own cells (B3,
       level: 2,
       cells: ["2/0/0", "2/1/0"],
       lod: null,
+      hiddenTypes: [],
       rules: [],
       rulesEnabled: false,
     };
@@ -865,6 +877,7 @@ describe("fcb.worker — cells are baked into exact local ENU metres (Task C5 St
         level: 2,
         cells: [key],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -982,6 +995,7 @@ describe("fcb.worker — cells are baked into exact local ENU metres (Task C5 St
         level: 2,
         cells: [key],
         lod: null,
+        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -1039,6 +1053,83 @@ describe("fcb.worker — cells are baked into exact local ENU metres (Task C5 St
       }
     }
 
+    teardown();
+  });
+});
+
+/**
+ * Per-layer type visibility, baked in the worker. The CELL'S MODEL stays
+ * unfiltered: the inspector, the table and type discovery all read
+ * `cell.objects`, and they must not go blind to the very types the user hid.
+ */
+describe("fcb.worker — hiddenTypes", () => {
+  /** `roofFeature`, with the object type as a parameter. */
+  function typedFeature(
+    id: string,
+    cx: number,
+    cy: number,
+    type: string,
+  ): FakeCityJSONFeature {
+    const f = roofFeature(id, cx, cy);
+    return {
+      toCityJSON: () => {
+        const cj = f.toCityJSON();
+        return {
+          ...cj,
+          CityObjects: { [id]: { ...cj.CityObjects[id]!, type } },
+        };
+      },
+    };
+  }
+
+  const fetchMsg = (hiddenTypes: string[]) => ({
+    type: "fetch",
+    id: 1,
+    bbox: [0, 0, 1000, 200],
+    level: 2,
+    cells: ["2/0/0"],
+    lod: null,
+    rules: [],
+    rulesEnabled: false,
+    hiddenTypes,
+  });
+
+  const cellOf = (posted: WorkerResponse[]) => {
+    const msg = posted.find(
+      (m): m is Extract<WorkerResponse, { type: "cell" }> => m.type === "cell",
+    );
+    if (!msg) throw new Error("no cell message posted");
+    return msg;
+  };
+
+  it("bakes a cell without the hidden group's triangles, records included", async () => {
+    const features = [
+      typedFeature("part", 100, 100, "BuildingPart"),
+      typedFeature("tree", 120, 120, "SolitaryVegetationObject"),
+    ];
+    const unfiltered = await setupWorker(features);
+    await unfiltered.handler({
+      data: { type: "open", id: 0, url: "fake://irrelevant" },
+    });
+    await unfiltered.handler({ data: fetchMsg([]) });
+    expect(cellOf(unfiltered.posted).geometry.triangleCount).toBe(4);
+    teardown();
+
+    const filtered = await setupWorker(features);
+    await filtered.handler({
+      data: { type: "open", id: 0, url: "fake://irrelevant" },
+    });
+    // "Building", not "BuildingPart": the fold is what makes the toggle work
+    // on real data, where the part carries all the geometry.
+    await filtered.handler({ data: fetchMsg(["Building"]) });
+    const cell = cellOf(filtered.posted);
+    expect(cell.geometry.triangleCount).toBe(2);
+    // Object keys and records are NOT filtered — object indices must stay
+    // stable, and the inspector still has to resolve the hidden object.
+    expect(cell.geometry.objectKeys).toEqual(["part", "tree"]);
+    expect(cell.objects.map((o) => o.id)).toEqual(["part", "tree"]);
+    // The surviving vertices all belong to the tree, which is object index 1.
+    expect([...cell.geometry.objectIndices]).toEqual(new Array(6).fill(1));
     teardown();
   });
 });

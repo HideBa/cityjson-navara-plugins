@@ -714,6 +714,33 @@ describe("StreamLayerRegistry.openStream", () => {
     expect((fetches.at(-1)!.rules as unknown[]).length).toBe(1);
   });
 
+  it("seeds hiddenTypes before the first commit, so the first fetch is already filtered", async () => {
+    const trace: string[] = [];
+    const { client } = makeFakeClient({ trace });
+    const r = makeRegistry({
+      createClient: () => client,
+      getPickRays: () => topDownRays(),
+      sampleGeoidHeight: async () => GEOID_M,
+    });
+
+    const handle = await r.openStream({
+      ...openOpts,
+      hiddenTypes: ["Building"],
+    });
+    await flush();
+
+    expect(handle.hiddenTypes).toEqual(["Building"]);
+    const fetches = (
+      client.sendStreaming as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls.map((c) => c[0] as Record<string, unknown>);
+    // Unseeded, the first cells would arrive carrying the geometry the user
+    // had hidden, visible until a toggle forced a refetch.
+    expect(fetches.at(-1)).toMatchObject({
+      type: "fetch",
+      hiddenTypes: ["Building"],
+    });
+  });
+
   it("registers the layer under the settle loop, and a LoD change forces a commit", async () => {
     const trace: string[] = [];
     const view = new FakeView();

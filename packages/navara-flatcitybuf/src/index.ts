@@ -33,6 +33,7 @@ export * from "./workerProtocol";
 export * from "./workerClient";
 export * from "./fcbSource";
 export * from "./viewportFootprint";
+export * from "./queryRegion";
 export * from "./streamLayer";
 export * from "./streamRegistry";
 export * from "./residentModel";
@@ -45,3 +46,11 @@ export * from "./entryToArrays";
 // Navara's real `getPickRay` (`./engineRays`) does NOT, and is re-exported from
 // the `./plugin` entry point instead (Task C11).
 export * from "./navaraRays";
+
+// Re-exported rather than redeclared: `FcbStreamLayerHandle.setThemeStyle`
+// takes exactly the type `CityModelHandle.setThemeStyle` does, and an app
+// holding both kinds of layer must be able to push ONE style object to both.
+// The definition lives in `@cityjson/navara-cityjson/themeStyle`, which takes
+// `three` but never `@navaramap/*`, so this barrel stays Node-importable.
+export type { ThemeEdgeStyle, ThemeStyle } from "@cityjson/navara-cityjson";
+export { DEFAULT_THEME_STYLE } from "@cityjson/navara-cityjson";

@@ -12,14 +12,19 @@
  * `addCityMeshArrays` and therefore never reaches `@navaramap/*`. Task C11's
  * plugin supplies the real factory, built on `entryToArrays`.
  */
-import type { EnuFrame, Rule, Surface } from "@cityjson/navara-core";
+import {
+  toplevelCityObjectType,
+  type EnuFrame,
+  type Rule,
+  type Surface,
+} from "@cityjson/navara-core";
 // `paintLayers` is a VALUE import, deliberately: the highlight layering a
 // streaming cell gets must be byte-for-byte the one a static layer gets, and a
 // second copy here would drift. `@cityjson/navara-cityjson`'s barrel is
 // engine-free and Node-importable (its own doc comment; the `@navaramap/*`
 // modules live behind the separate `/plugin` entry point), so this does not
 // break the engine-binding rule.
-import { paintLayers } from "@cityjson/navara-cityjson";
+import { DEFAULT_THEME_STYLE, paintLayers } from "@cityjson/navara-cityjson";
 import type {
   EcefRay,
   GeodeticBounds,
@@ -27,6 +32,7 @@ import type {
   RaycastHit,
   ScreenPoint,
   Selection,
+  ThemeStyle,
 } from "@cityjson/navara-cityjson";
 import {
   emptyCellGeometry,
@@ -40,7 +46,12 @@ import type { CellKey, Grid } from "./tileGrid";
 import type { FcbHeaderModel } from "./fcbSource";
 import type { CommitView } from "./throttleGates";
 import { toRay, type PickRaySource } from "./navaraRays";
-import { viewportFootprint, type Ray } from "./viewportFootprint";
+import {
+  viewportFootprint,
+  type Footprint,
+  type Ray,
+} from "./viewportFootprint";
+import { queryRegionFrom, type QueryRegion } from "./queryRegion";
 import { createResidentModelMemo, type ResidentModel } from "./residentModel";
 import { buildLadder, type LodSelection } from "./levelPolicy";
 import { COMMIT_FETCH_TIMEOUT_MS } from "./constants";
@@ -48,6 +59,7 @@ import {
   cellStatsFromGeometry,
   commitNormal,
   commitSwap,
+  hiddenTypesEqual,
   ladderEquals,
   lodToWireLabel,
   planCommit,
@@ -114,6 +126,28 @@ export interface StreamLayerEvents {
   ): () => void;
   onCommit(cb: (version: number) => void): () => void;
   onLadder(cb: (ladder: ReadonlyArray<string>) => void): () => void;
+  /**
+   * Fires with the first-level object types this layer has ever streamed,
+   * sorted, whenever that set GROWS. The mirror of {@link onLadder}, and for
+   * the same reason: a streaming layer's vocabulary is discovered cell by
+   * cell, so a UI offering per-type toggles has nothing to list at open time
+   * and would otherwise never learn.
+   */
+  onTypes(cb: (types: ReadonlyArray<string>) => void): () => void;
+  /**
+   * Fires with the region a commit is about to FETCH, and with `null` when the
+   * layer is deleted. Returns its own unsubscribe.
+   *
+   * Separate from {@link onCommit}, deliberately, even though a diagnostic
+   * overlay could almost be driven off that one. `onCommit` fires only when
+   * the resident set actually CHANGED (`fetched.size > 0 || evicted.length >
+   * 0`), so a settle whose cover was already resident — every small camera
+   * nudge inside one cell — issues a real query and emits no commit; an
+   * overlay keyed off `onCommit` would sit on the previous viewport's box and
+   * look broken. This event fires once per dispatched fetch, which is exactly
+   * what "the area the last query asked for" means.
+   */
+  onQueryRegion(cb: (region: QueryRegion | null) => void): () => void;
 }
 
 export interface FcbStreamLayerHandleOptions {
@@ -142,13 +176,23 @@ export interface FcbStreamLayerHandleOptions {
   /** Injected: screen point -> ECEF ray, for `resolvePick` (Tasks C4/C10b). */
   readonly pickRays: PickRaySource | null;
   /**
-   * Called when {@link FcbStreamLayerHandle.setLod} actually changes the LoD
-   * selection. A LoD change must refetch even for a viewport that has not
-   * moved — hysteresis would otherwise skip the commit and leave the old LoD
-   * resident indefinitely — and this handle deliberately does not own the
-   * camera, so the driver (Task C13) supplies the forced-commit hook (B1).
+   * "A commit is owed, and no camera event is going to arrive." Supplied by
+   * the driver (Task C13) because this handle deliberately does not own the
+   * camera, so it cannot fetch its own rays.
+   *
+   * Two callers, both of them state changes the camera knows nothing about:
+   *
+   * - {@link FcbStreamLayerHandle.setLod}, because a LoD change must refetch
+   *   even for a viewport that has not moved — hysteresis would otherwise skip
+   *   the commit and leave the old LoD resident indefinitely (B1);
+   * - {@link FcbStreamLayerHandle.setHiddenTypes}, for the identical reason:
+   *   the resident cells were BAKED without the hidden types, so a toggle is
+   *   only visible after a refetch;
+   * - {@link FcbStreamLayerHandle.setCameraSync} when sync is switched back
+   *   ON, because the layer ignored every settle while it was off and is
+   *   therefore resident on some older viewport (and possibly some older LoD).
    */
-  readonly onLodChanged?: () => void;
+  readonly onCommitNeeded?: () => void;
 }
 
 type Listener<T extends unknown[]> = (...args: T) => void;
@@ -180,8 +224,9 @@ function subscribe<T extends unknown[]>(
  * (Task C7) on `moveend`, never per frame; `abortInFlight()` is what that
  * controller calls on the first event of a gesture.
  *
- * Everything else is the parity surface: `setRules`/`setLod`/`setVisible`
- * drive what the next commit fetches and how it is coloured, and
+ * Everything else is the parity surface:
+ * `setRules`/`setLod`/`setHiddenTypes`/`setVisible` drive what the next commit
+ * fetches and how it is coloured, and
  * `setHighlight`/`resolvePick`/`getBoundsGeodetic`/`triangleCount` make the
  * layer a full participant in the app's picking, highlighting, fit and
  * triangle readout — the four members `InteractionHandle` (Task C13) shares
@@ -203,19 +248,40 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
 
   private _level: number | null = null;
   private _ladder: ReadonlyArray<string> = [];
+  /** Every first-level type ever observed in a committed cell, sorted — see
+   *  {@link StreamLayerEvents.onTypes}. Monotonic: an evicted cell does not
+   *  take its types out of the list a UI is offering toggles for. */
+  private _typesSeen: ReadonlyArray<string> = [];
   private _version = 0;
   private _status: StreamStatus = "idle";
   private _message: string | null = null;
   private _lastCommit: CommitView | null = null;
+  /** The region the last DISPATCHED fetch asked for — see
+   *  {@link StreamLayerEvents.onQueryRegion}. */
+  private _lastQueryRegion: QueryRegion | null = null;
   /** "The LoD the currently resident cells were fetched under" — the driver's
    *  own bookkeeping for `planCommit`'s `lodChanged`, not published state. */
   private _lastLod: LodSelection | null = null;
+  /** "The hidden-type list the currently resident cells were fetched under" —
+   *  the same bookkeeping `_lastLod` is, and read by `planCommit` for the same
+   *  reason: a change invalidates cells that are still resident under their
+   *  old keys. */
+  private _lastHiddenTypes: ReadonlyArray<string> | null = null;
 
   private _visible = true;
+  /** Whether this layer follows the camera at all — see
+   *  {@link FcbStreamLayerHandle.setCameraSync}. */
+  private _cameraSync = true;
   private _rules: ReadonlyArray<Rule> = [];
   private _rulesEnabled = false;
   private _lodMode: "auto" | "manual" = "auto";
   private _selectedLod: string | null = null;
+  /** Sorted and deduped by {@link FcbStreamLayerHandle.setHiddenTypes}. */
+  private _hiddenTypes: ReadonlyArray<string> = [];
+  /** Held for the same reason the highlight is: cells arrive asynchronously,
+   *  so a cell that lands under an active theme has to be able to find out
+   *  what it should look like. */
+  private _themeStyle: ThemeStyle = DEFAULT_THEME_STYLE;
 
   /** Highlight state, held rather than fire-and-forget: cells arrive
    *  asynchronously, so a cell that lands while an object is selected has to
@@ -242,6 +308,12 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   private readonly ladderListeners = new Set<
     Listener<[ReadonlyArray<string>]>
   >();
+  private readonly typesListeners = new Set<
+    Listener<[ReadonlyArray<string>]>
+  >();
+  private readonly queryRegionListeners = new Set<
+    Listener<[QueryRegion | null]>
+  >();
 
   constructor(options: FcbStreamLayerHandleOptions) {
     this.options = options;
@@ -258,6 +330,12 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   get ladder(): ReadonlyArray<string> {
     return this._ladder;
   }
+  /** Published as state as well as an event, exactly like `ladder`: a type
+   *  toggle list mounted after some cells landed must render what has already
+   *  been discovered rather than wait for the next commit. */
+  get typesSeen(): ReadonlyArray<string> {
+    return this._typesSeen;
+  }
   get version(): number {
     return this._version;
   }
@@ -268,6 +346,18 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   }
   get message(): string | null {
     return this._message;
+  }
+
+  /**
+   * The region the last dispatched fetch queried, or `null` before the first
+   * one (and after {@link delete}).
+   *
+   * Published as STATE as well as an event for the same reason `status` is: a
+   * diagnostic overlay switched on mid-session must render the current region
+   * immediately rather than stay blank until the user happens to pan.
+   */
+  lastQueryRegion(): QueryRegion | null {
+    return this._lastQueryRegion;
   }
 
   onStatus(
@@ -281,6 +371,12 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   onLadder(cb: (ladder: ReadonlyArray<string>) => void): () => void {
     return subscribe(this.ladderListeners, cb);
   }
+  onTypes(cb: (types: ReadonlyArray<string>) => void): () => void {
+    return subscribe(this.typesListeners, cb);
+  }
+  onQueryRegion(cb: (region: QueryRegion | null) => void): () => void {
+    return subscribe(this.queryRegionListeners, cb);
+  }
 
   /**
    * Abandon whatever this layer has in flight: bump the epoch so an
@@ -292,8 +388,13 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    * `notify` is genuinely fire-and-forget (`workerClient.ts`): it registers no
    * pending entry, so there is nothing here for a `terminate()`-triggered
    * rejection to leak, and no `catch` is needed.
+   *
+   * A camera-desynced layer ignores this exactly as it ignores {@link commit}
+   * — see {@link setCameraSync} for why "deaf in both directions" is the only
+   * coherent reading of "stop following the camera".
    */
   abortInFlight(): void {
+    if (!this._cameraSync) return;
     this.options.client.newEpoch();
     this.options.client.notify({ type: "cancel" });
   }
@@ -317,6 +418,14 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    */
   async commit(rays: readonly [Ray, Ray, Ray, Ray]): Promise<void> {
     if (this._deleted) return;
+    // The single gate for camera-desynced layers: every commit path — a
+    // settle, the destination commit of a suppressed programmatic move, the
+    // registry's trailing `commitAll()` on attach, a forced one from
+    // `onCommitNeeded` — arrives here, so gating it once covers all of them
+    // and none can leak a fetch past a layer the user froze. Deliberately
+    // BEFORE `newEpoch()`: bumping the epoch would discard a response the
+    // freeze decided to let land (see {@link setCameraSync}).
+    if (!this._cameraSync) return;
     const client = this.options.client;
     const epoch = client.newEpoch();
 
@@ -347,6 +456,11 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
         probeCount = probeResp.count;
       }
 
+      // Read once, and used by BOTH the plan (which decides whether this is a
+      // swap) and the fetch below, so the two can never disagree about what
+      // this commit's cells were baked without.
+      const hiddenTypes = this._hiddenTypes;
+
       const plan = planCommit({
         footprint,
         probeCount,
@@ -355,9 +469,11 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
         prevLevel: this._level,
         prevCommit: this._lastCommit,
         prevLod: this._lastLod,
+        prevHiddenTypes: this._lastHiddenTypes,
         ladder: this._ladder,
         lodMode: this._lodMode,
         selectedLod: this._selectedLod,
+        hiddenTypes,
       });
 
       if (plan.kind === "too-far") {
@@ -370,6 +486,14 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       }
       // Unreachable: plan.kind is "commit" only when footprint is non-null.
       if (footprint === null) return;
+
+      // Publish the region this commit is about to query, at the ONE point it
+      // is decided and from the footprint the `fetch` below actually carries —
+      // never a parallel recomputation, which would be free to drift from the
+      // region really asked for (that is the whole value of the diagnostic).
+      // Before the dispatch rather than after the response, so the overlay
+      // shows what is being fetched while it is being fetched.
+      this.publishQueryRegion(footprint);
 
       this.emitStatus("fetching", null);
       const fetched = new Map<CellKey, FetchedCell>();
@@ -389,6 +513,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
             level: plan.level,
             cells: [...plan.toFetch],
             lod: lodToWireLabel(plan.lod),
+            hiddenTypes,
             rules,
             rulesEnabled,
           },
@@ -528,14 +653,31 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       // monotonically growing record of every label ever seen for this layer,
       // never shrinking as cells are evicted.
       const observedLods: string[] = [];
+      // Discovery of the type vocabulary rides the same fold, and is
+      // monotonic for the same reason the ladder is. Read from the UNFILTERED
+      // `objects` records (the worker never filters those), so a type stays
+      // listed — and therefore re-showable — while it is hidden.
+      const observedTypes: string[] = [];
       for (const { entry } of fetched.values()) {
         observedLods.push(...entry.lodsSeen);
+        for (const o of entry.objects) {
+          observedTypes.push(toplevelCityObjectType(o.objectType));
+        }
       }
       if (observedLods.length > 0) {
         const newLadder = buildLadder([...this._ladder, ...observedLods]);
         if (!ladderEquals(newLadder, this._ladder)) {
           this._ladder = newLadder;
           emit(this.ladderListeners, newLadder);
+        }
+      }
+      if (observedTypes.length > 0) {
+        const newTypes = [
+          ...new Set([...this._typesSeen, ...observedTypes]),
+        ].sort();
+        if (!hiddenTypesEqual(newTypes, this._typesSeen)) {
+          this._typesSeen = newTypes;
+          emit(this.typesListeners, newTypes);
         }
       }
 
@@ -548,6 +690,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       }
 
       this._lastLod = plan.lod;
+      this._lastHiddenTypes = hiddenTypes;
       this._level = plan.level;
       this._lastCommit = plan.commitView;
       this.emitStatus("idle", null);
@@ -567,6 +710,29 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
         err instanceof Error ? err.message : String(err),
       );
     }
+  }
+
+  /**
+   * Record and announce the region this commit is fetching.
+   *
+   * A footprint that cannot be projected back to lng/lat leaves the PREVIOUS
+   * region standing rather than clearing it: the fetch itself is going ahead
+   * regardless (the source-CRS bbox is all the worker needs), so blanking the
+   * overlay would report "nothing is being queried" about a live query. The
+   * only thing lost is that the outline is one commit stale, which is strictly
+   * better than wrong.
+   */
+  private publishQueryRegion(footprint: Footprint): void {
+    const region = queryRegionFrom({
+      layerId: this.id,
+      footprint,
+      epsg: this.header.epsg,
+      heightM: this.options.heightOffsetM,
+      toLngLat: this.options.toLngLat,
+    });
+    if (region === null) return;
+    this._lastQueryRegion = region;
+    emit(this.queryRegionListeners, region);
   }
 
   /** "This commit's result must be thrown away": a newer commit (or an
@@ -599,6 +765,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       rulesEnabled: this._rulesEnabled,
       heightOffsetM: this.options.heightOffsetM,
       layerId: this.id,
+      themeStyle: this._themeStyle,
     });
     if (stale.length > 0) void this.recolorCells(stale);
     // Only when something is actually highlighted. With no selection every
@@ -705,16 +872,79 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
 
   /**
    * Which LoD the next fetch asks for. Forces a commit through
-   * `onLodChanged`: `planCommit` treats a LoD change as a swap, but only ever
+   * `onCommitNeeded`: `planCommit` treats a LoD change as a swap, but only ever
    * runs when the driver commits, and a LoD change alone does not move the
    * camera — without the hook, an unmoved viewport would keep the old LoD
    * resident until the user happened to pan (B1).
+   *
+   * That forced commit is itself gated by {@link setCameraSync}, so a frozen
+   * layer RECORDS the new LoD and applies it on resume rather than fetching
+   * behind the user's back — "no further features are fetched" wins over "a
+   * LoD change refetches", because the freeze is the more recent instruction.
    */
   setLod(mode: "auto" | "manual", lod: string | null): void {
     if (this._lodMode === mode && this._selectedLod === lod) return;
     this._lodMode = mode;
     this._selectedLod = lod;
-    this.options.onLodChanged?.();
+    this.options.onCommitNeeded?.();
+  }
+
+  /**
+   * Which first-level object types the next fetch must NOT bake geometry for
+   * (hiding "Building" hides its BuildingParts too).
+   *
+   * Follows the {@link setLod} template, not {@link setRules}: this changes
+   * GEOMETRY, so it cannot be repaired by a recolor round trip — the affected
+   * cells have to be re-fetched. `planCommit` therefore treats the change as a
+   * swap, and the forced commit is what makes it happen for a viewport that
+   * has not moved. A commit already in flight is discarded by the epoch bump
+   * the forced commit performs, exactly as for a mid-flight LoD change, so no
+   * cell baked under the old list can be installed afterwards.
+   *
+   * Normalised (sorted, deduped) so a re-ordered list from the app is not
+   * mistaken for a change and does not refetch the whole cover.
+   */
+  setHiddenTypes(types: ReadonlyArray<string>): void {
+    const next = [...new Set(types)].sort();
+    if (hiddenTypesEqual(next, this._hiddenTypes)) return;
+    this._hiddenTypes = next;
+    this.options.onCommitNeeded?.();
+  }
+
+  get hiddenTypes(): ReadonlyArray<string> {
+    return this._hiddenTypes;
+  }
+
+  /**
+   * Whether this layer follows the camera. `true` (the default) is the
+   * behaviour every layer has always had: the driver's settle loop commits it
+   * on `moveend`. `false` freezes the resident set exactly as it is — no
+   * probe, no fetch, no eviction — until sync is switched back on.
+   *
+   * IN-FLIGHT WORK IS DELIBERATELY LET LAND, not aborted. `abortInFlight()`
+   * exists and would have been one line here, but the fetch that is in the air
+   * when the user freezes the layer is the fetch for the viewport they were
+   * looking at when they decided to freeze it: its range reads are already
+   * paid for and its cells are already being decoded. Dropping it would leave
+   * the resident set with a hole exactly where the user was looking, and —
+   * because no further commit will run while sync is off — nothing would ever
+   * fill that hole. Aborting saves the tail of at most one fetch and costs a
+   * visibly incomplete freeze, so the cheaper mistake is to let it land.
+   * (Turning sync off during a gesture cannot fetch anything new either way:
+   * the settle debounce fires into the gate above and returns immediately.)
+   *
+   * Switching sync back ON owes a commit for the same reason a LoD change
+   * does — the layer is resident on whatever viewport it was frozen at — so it
+   * goes through the same `onCommitNeeded` hook.
+   */
+  setCameraSync(enabled: boolean): void {
+    if (this._cameraSync === enabled) return;
+    this._cameraSync = enabled;
+    if (enabled) this.options.onCommitNeeded?.();
+  }
+
+  get cameraSync(): boolean {
+    return this._cameraSync;
   }
 
   get lodMode(): "auto" | "manual" {
@@ -733,6 +963,26 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   setVisible(v: boolean): void {
     this._visible = v;
     for (const cell of this.cells.values()) cell.handle.setVisible(v);
+  }
+
+  /**
+   * Scene theme, on the {@link setVisible} template rather than the
+   * {@link setRules} one: it is PRESENTATION, applied to the meshes on the
+   * main thread, so it needs no worker round trip and no refetch — the edge
+   * lines are extracted from the arrays each cell already holds.
+   *
+   * Remembered as well as fanned out, so a cell installed by a later commit
+   * comes up themed (`syncCellMeshes`) instead of photoreal until the user
+   * happens to switch theme again. Each mesh drops a style equal to the one it
+   * already carries, so a re-push costs a comparison per cell.
+   */
+  setThemeStyle(style: ThemeStyle): void {
+    this._themeStyle = style;
+    for (const cell of this.cells.values()) cell.handle.setThemeStyle(style);
+  }
+
+  get themeStyle(): ThemeStyle {
+    return this._themeStyle;
   }
 
   /**
@@ -792,6 +1042,12 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
     this.options.client.terminate();
     for (const cell of this.cells.values()) cell.handle.delete();
     this.cells.clear();
+    // The query region outlived nothing: its whole meaning is "this layer is
+    // fetching here", and the layer is gone. Announced rather than merely
+    // dropped, so a subscriber that draws it takes the outline out of the
+    // scene without having to watch the layer store as well.
+    this._lastQueryRegion = null;
+    emit(this.queryRegionListeners, null);
   }
 
   // ---------------------------------------------------------------------

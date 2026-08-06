@@ -26,9 +26,12 @@ import {
   type Rule,
 } from "@cityjson/navara-core";
 import {
+  CityMeshArraysMesh,
+  DEFAULT_THEME_STYLE,
   HIGHLIGHT_COLOR_HEX,
   type CityMeshHandle,
   type Selection,
+  type ThemeStyle,
 } from "@cityjson/navara-cityjson";
 import {
   FcbStreamLayerHandle,
@@ -36,6 +39,7 @@ import {
   type StreamStatus,
 } from "../src/streamLayer";
 import { CellCache } from "../src/cellCache";
+import { entryToArrays } from "../src/entryToArrays";
 import type { CellMeshFactory } from "../src/cellMeshes";
 import { keysCovering, type CellKey, type Grid } from "../src/tileGrid";
 import { chooseLevel } from "../src/levelPolicy";
@@ -43,7 +47,10 @@ import type { FcbHeaderModel } from "../src/fcbSource";
 import { viewportFootprint, type Ray } from "../src/viewportFootprint";
 import type { PickRaySource } from "../src/navaraRays";
 import type { WorkerClient } from "../src/workerClient";
-import type { WorkerResponse } from "../src/workerProtocol";
+import type {
+  ResidentObjectRecord,
+  WorkerResponse,
+} from "../src/workerProtocol";
 import {
   COMMIT_FETCH_TIMEOUT_MS,
   RESIDENT_BYTE_BUDGET,
@@ -138,6 +145,24 @@ function geom(triangleCount: number, objectKey = "B1") {
  *  the fake worker returns must match. */
 const CELL_COLOR_LEN = 1 * 3 * 3;
 
+/** The minimum `ResidentObjectRecord` the handle's own folds read: an id and
+ *  an object type. */
+function objectRecord(id: string, objectType: string): ResidentObjectRecord {
+  return {
+    id,
+    objectType,
+    attributes: {},
+    bbox: [0, 0, 0, 1, 1, 1],
+    lod: null,
+    surfaceCount: 0,
+    roofMetrics: [],
+    footprintAreaSqM: 0,
+    volumeCuM: null,
+    parents: [],
+    children: [],
+  };
+}
+
 interface FakeClientOpts {
   /** Requested cells the worker genuinely finds nothing in, BY REQUEST ORDER
    *  — the real keys depend on `chooseLevel`, so a test names positions, not
@@ -145,6 +170,10 @@ interface FakeClientOpts {
    *  message" contract (fcb.worker.ts), which is exactly what B5 is about. */
   readonly emptyCellIndices?: readonly number[];
   readonly lodsSeen?: string[];
+  /** One `ResidentObjectRecord` per entry, of that `objectType`, in EVERY
+   *  delivered cell — the raw material for `onTypes` discovery. Read at
+   *  delivery time, so a test can change it between commits. */
+  readonly objectTypes?: readonly string[];
   readonly probeCount?: number;
   readonly probeDelayMs?: number;
   /** Delays a `fetch` before it delivers anything. Set beyond the retired
@@ -255,7 +284,9 @@ function makeFakeClient(opts: FakeClientOpts) {
             // A distinct object per cell: `resolvePick` must be provably
             // answering from the cell it says it is.
             geometry: geom(1, `B_${key}`),
-            objects: [],
+            objects: (opts.objectTypes ?? []).map((t, i) =>
+              objectRecord(`${key}_o${i}`, t),
+            ),
             surfaceAttrKeys: [],
             lodsSeen: opts.lodsSeen ?? [],
           });
@@ -308,16 +339,30 @@ const requestsOfType = (
 /** Recording mesh factory implementing the REAL `CityMeshHandle`, so a member
  *  added to the shared contract breaks this file loudly. */
 function recordingFactory() {
-  const created: Array<{ key: string; entry: CellEntry; deleted: boolean }> =
-    [];
+  const created: Array<{
+    key: string;
+    entry: CellEntry;
+    deleted: boolean;
+    style: ThemeStyle;
+  }> = [];
   const factory: CellMeshFactory = {
     create(key, entry) {
-      const rec = { key, entry, deleted: false };
+      const rec = {
+        key,
+        entry,
+        deleted: false,
+        // A mesh is born photoreal; the layer pushes its active theme at
+        // install time, so this is what the fake starts from too.
+        style: DEFAULT_THEME_STYLE,
+      };
       created.push(rec);
       const handle: CityMeshHandle = {
         ref: null,
         setColors: vi.fn(),
         setVisible: vi.fn(),
+        setThemeStyle: (style: ThemeStyle) => {
+          rec.style = style;
+        },
         triangleCount: () => entry.geometry.triangleCount,
         batchIdMap: () => [],
         resolveRaycast: () => null,
@@ -329,6 +374,43 @@ function recordingFactory() {
     },
   };
   return { factory, created };
+}
+
+/**
+ * A factory over the REAL `CityMeshArraysMesh`, for the one assertion a
+ * recording fake cannot make: that a theme change actually adds and removes
+ * the edge child. Engine-free — `cityMesh.ts` takes `three` but never
+ * `@navaramap/*`.
+ */
+function realMeshFactory() {
+  const meshes = new Map<string, CityMeshArraysMesh>();
+  const factory: CellMeshFactory = {
+    create(key, entry, frame) {
+      const mesh = new CityMeshArraysMesh({
+        id: key,
+        arrays: entryToArrays(entry),
+        frame,
+        layerId: "l1",
+        cellKey: key,
+      });
+      meshes.set(key, mesh);
+      const handle: CityMeshHandle = {
+        ref: mesh,
+        setColors: (c) => mesh.setColors(c),
+        setVisible: (v) => mesh.setVisible(v),
+        setThemeStyle: (s) => mesh.setThemeStyle(s),
+        triangleCount: () => mesh.triangleCount(),
+        batchIdMap: () => mesh.batchIdMap(),
+        resolveRaycast: (r) => mesh.resolveRaycast(r),
+        delete: () => {
+          meshes.delete(key);
+          mesh.dispose();
+        },
+      };
+      return handle;
+    },
+  };
+  return { factory, meshes };
 }
 
 /**
@@ -370,6 +452,7 @@ function pickingFactory(hitDistances: Readonly<Record<string, number>> = {}) {
         setVisible: (v: boolean) => {
           rec.visible = v;
         },
+        setThemeStyle: vi.fn(),
         triangleCount: () => 7,
         batchIdMap: () => [{ objectIndex: 0, surfaceIndex: 4 }],
         resolveRaycast: () =>
@@ -406,7 +489,7 @@ function makeHandle(
   opts: FakeClientOpts & {
     meshFactory?: CellMeshFactory;
     pickRays?: PickRaySource | null;
-    onLodChanged?: () => void;
+    onCommitNeeded?: () => void;
     /** The vertical-datum offset every cell is placed with. 0 unless a test is
      *  specifically about it, so the bounds assertions stay readable. */
     heightOffsetM?: number;
@@ -434,7 +517,7 @@ function makeHandle(
     // therefore never reaches @navaramap/*. Task C11 supplies the real one.
     meshFactory: opts.meshFactory ?? meshes.factory,
     pickRays: opts.pickRays === undefined ? FAKE_PICK_RAYS : opts.pickRays,
-    onLodChanged: opts.onLodChanged,
+    onCommitNeeded: opts.onCommitNeeded,
   });
   return { handle, client: fake, meshes };
 }
@@ -682,6 +765,107 @@ describe("FcbStreamLayerHandle.commit", () => {
 });
 
 // ---------------------------------------------------------------------
+// The query-region diagnostic seam: "which area did the last fetch ask
+// for?", published so a UI can draw it without recomputing it.
+// ---------------------------------------------------------------------
+
+describe("FcbStreamLayerHandle.onQueryRegion", () => {
+  it("publishes exactly the bbox the fetch put on the wire", async () => {
+    const { handle, client } = makeHandle({});
+    const seen: Array<unknown> = [];
+    handle.onQueryRegion((r) => seen.push(r));
+    await handle.commit(topDownRays());
+
+    const fetched = client.sendStreamingCalls[0]!;
+    expect(fetched.type).toBe("fetch");
+    // THE assertion of this whole feature: the drawn region and the fetched
+    // region are one value, so the overlay cannot drift from the query.
+    expect(handle.lastQueryRegion()!.bbox).toEqual(fetched.bbox);
+    // ...and the probe agreed with it too.
+    expect(requestsOfType(client.sendCalls, "probe")[0]!.bbox).toEqual(
+      fetched.bbox,
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(handle.lastQueryRegion());
+  });
+
+  it("carries the layer id, the header EPSG, the span and the layer's ground-plane height", async () => {
+    const { handle } = makeHandle({ heightOffsetM: 43.25 });
+    await handle.commit(topDownRays());
+    const region = handle.lastQueryRegion()!;
+    expect(region.layerId).toBe("l1");
+    expect(region.epsg).toBe(HEADER.epsg);
+    expect(region.heightM).toBe(43.25);
+    const [minX, minY, maxX, maxY] = region.bbox;
+    expect(region.span).toBeCloseTo(Math.max(maxX - minX, maxY - minY), 6);
+    // A closed ring a renderer can place: every vertex finite, all four
+    // corners present.
+    expect(region.ring.length).toBeGreaterThanOrEqual(4);
+    for (const [lng, lat] of region.ring) {
+      expect(Number.isFinite(lng)).toBe(true);
+      expect(Number.isFinite(lat)).toBe(true);
+    }
+  });
+
+  it("republishes on the next commit that actually fetches", async () => {
+    const { handle, client } = makeHandle({});
+    await handle.commit(topDownRays());
+    const first = handle.lastQueryRegion()!;
+
+    const seen: Array<unknown> = [];
+    handle.onQueryRegion((r) => seen.push(r));
+    await handle.commit(pannedRays());
+    expect(client.sendStreamingCalls.filter((m) => m.type === "fetch")).toEqual(
+      [expect.anything(), expect.anything()],
+    );
+    expect(seen).toHaveLength(1);
+    expect(handle.lastQueryRegion()).not.toBe(first);
+    expect(handle.lastQueryRegion()!.bbox).not.toEqual(first.bbox);
+  });
+
+  it("stays put when hysteresis skips a commit — no fetch, no new region", async () => {
+    const { handle, client } = makeHandle({});
+    await handle.commit(topDownRays());
+    const first = handle.lastQueryRegion()!;
+    const fetches = client.sendStreamingCalls.length;
+
+    const seen: Array<unknown> = [];
+    handle.onQueryRegion((r) => seen.push(r));
+    await handle.commit(topDownRays());
+    expect(client.sendStreamingCalls.length).toBe(fetches);
+    expect(seen).toEqual([]);
+    expect(handle.lastQueryRegion()).toBe(first);
+  });
+
+  it("publishes nothing for a too-far commit, which queries no features", async () => {
+    const { handle } = makeHandle({
+      probeCount: VIEWPORT_FEATURE_BUDGET + 1,
+    });
+    const seen: Array<unknown> = [];
+    handle.onQueryRegion((r) => seen.push(r));
+    await handle.commit(topDownRays());
+    expect(handle.status).toBe("too-far");
+    expect(seen).toEqual([]);
+    expect(handle.lastQueryRegion()).toBeNull();
+  });
+
+  it("clears and announces null on delete, so a subscriber can take the outline out of the scene", async () => {
+    const { handle } = makeHandle({});
+    await handle.commit(topDownRays());
+    expect(handle.lastQueryRegion()).not.toBeNull();
+
+    const seen: Array<unknown> = [];
+    handle.onQueryRegion((r) => seen.push(r));
+    handle.delete();
+    expect(seen).toEqual([null]);
+    expect(handle.lastQueryRegion()).toBeNull();
+    // Idempotent, like the rest of `delete()`.
+    handle.delete();
+    expect(seen).toEqual([null]);
+  });
+});
+
+// ---------------------------------------------------------------------
 // Task C10b: worker-baked recolor, LoD control, lifecycle, and the
 // interaction-parity surface.
 // ---------------------------------------------------------------------
@@ -854,9 +1038,9 @@ describe("FcbStreamLayerHandle rules and LoD", () => {
     );
   });
 
-  it("setLod forces a commit through onLodChanged, and only when the selection really changed", () => {
+  it("setLod forces a commit through onCommitNeeded, and only when the selection really changed", () => {
     const forced = vi.fn();
-    const { handle } = makeHandle({ onLodChanged: forced });
+    const { handle } = makeHandle({ onCommitNeeded: forced });
 
     handle.setLod("manual", "2.2");
     expect(forced).toHaveBeenCalledTimes(1);
@@ -875,6 +1059,62 @@ describe("FcbStreamLayerHandle rules and LoD", () => {
     expect(requestsOfType(client.sendStreamingCalls, "fetch")[0]!.lod).toBe(
       "2.2",
     );
+  });
+});
+
+describe("FcbStreamLayerHandle.setCameraSync", () => {
+  it("fetches nothing once sync is off — not even a probe — and keeps the resident set", async () => {
+    const { handle, client } = makeHandle({});
+    await handle.commit(topDownRays());
+    const resident = handle.cacheKeysForTest();
+    expect(resident.length).toBeGreaterThan(0);
+    const sent = client.sendCalls.length;
+
+    handle.setCameraSync(false);
+    // A camera settle somewhere else entirely: with sync on this is a level
+    // swap, i.e. the most disruptive commit there is.
+    await handle.commit(raysFrom(2000, 1600));
+
+    expect(client.sendCalls.length).toBe(sent); // no probe, no fetch
+    expect(handle.cacheKeysForTest()).toEqual(resident);
+  });
+
+  it("lets in-flight work land rather than aborting it, so the freeze has no hole in it", async () => {
+    const { handle, client } = makeHandle({ probeDelayMs: 20 });
+    const inFlight = handle.commit(topDownRays());
+    handle.setCameraSync(false);
+    // What the driver does on the NEXT camera gesture; a desynced layer must
+    // ignore it, or the response above would be discarded by the epoch bump.
+    handle.abortInFlight();
+    await inFlight;
+
+    expect(client.notifyCalls).not.toContainEqual(
+      expect.objectContaining({ type: "cancel" }),
+    );
+    expect(handle.cacheKeysForTest().length).toBeGreaterThan(0);
+  });
+
+  it("commits once when sync is switched back on, and applies a LoD chosen while frozen", async () => {
+    const forced = vi.fn();
+    const { handle, client } = makeHandle({ onCommitNeeded: forced });
+    await handle.commit(topDownRays());
+
+    handle.setCameraSync(false);
+    handle.setLod("manual", "2.2");
+    // Recorded, not fetched: the freeze is the more recent instruction.
+    expect(forced).toHaveBeenCalledTimes(1);
+    expect(requestsOfType(client.sendStreamingCalls, "fetch")).toHaveLength(1);
+
+    handle.setCameraSync(true);
+    expect(forced).toHaveBeenCalledTimes(2);
+    handle.setCameraSync(true); // idempotent: no second catch-up commit
+    expect(forced).toHaveBeenCalledTimes(2);
+
+    // The driver answers `onCommitNeeded` with a commit; the frozen LoD choice
+    // is what goes on the wire.
+    await handle.commit(topDownRays());
+    const fetches = requestsOfType(client.sendStreamingCalls, "fetch");
+    expect(fetches[fetches.length - 1]!.lod).toBe("2.2");
   });
 });
 
@@ -1303,5 +1543,167 @@ describe("FcbStreamLayerHandle lifecycle", () => {
     await handle.commit(topDownRays());
     expect(client.sendCalls).toEqual([]);
     expect(client.sendStreamingCalls).toEqual([]);
+  });
+});
+
+/**
+ * Per-layer type visibility. Geometry is baked in the worker, so a toggle is a
+ * REFETCH, not a recolor — the `setLod` template, not the `setRules` one.
+ */
+describe("FcbStreamLayerHandle.setHiddenTypes", () => {
+  it("puts the hidden types on the wire and refetches the whole cover as a swap", async () => {
+    const { handle, client } = makeHandle({});
+    await handle.commit(topDownRays());
+    const first = requestsOfType(client.sendStreamingCalls, "fetch")[0]!;
+    expect(first.hiddenTypes).toEqual([]);
+
+    handle.setHiddenTypes(["Building"]);
+    await handle.commit(topDownRays());
+    const second = requestsOfType(client.sendStreamingCalls, "fetch")[1]!;
+    expect(second.hiddenTypes).toEqual(["Building"]);
+    // Every resident cell was baked with the old list, so all of them are
+    // stale even though none of the keys changed.
+    expect([...(second.cells as string[])].sort()).toEqual(
+      coverFor(topDownRays()).sort(),
+    );
+  });
+
+  it("forces a commit through onCommitNeeded, and only when the normalised list changed", () => {
+    const forced = vi.fn();
+    const { handle } = makeHandle({ onCommitNeeded: forced });
+
+    handle.setHiddenTypes(["Building"]);
+    expect(forced).toHaveBeenCalledTimes(1);
+    handle.setHiddenTypes(["Building"]);
+    expect(forced).toHaveBeenCalledTimes(1);
+    // A re-ordered (or duplicated) list is the same set: refetching the whole
+    // cover for it would be a full re-decode for no change on screen.
+    handle.setHiddenTypes(["Bridge", "Building"]);
+    expect(forced).toHaveBeenCalledTimes(2);
+    handle.setHiddenTypes(["Building", "Bridge", "Building"]);
+    expect(forced).toHaveBeenCalledTimes(2);
+    expect(handle.hiddenTypes).toEqual(["Bridge", "Building"]);
+
+    handle.setHiddenTypes([]);
+    expect(forced).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps a cell baked under the old list from landing after a toggle", async () => {
+    const forced = vi.fn();
+    const factory = pickingFactory();
+    const { handle } = makeHandle({
+      meshFactory: factory.factory,
+      // Delivers nothing until after the toggle below has bumped the epoch.
+      fetchDelayMs: 5,
+      onCommitNeeded: forced,
+    });
+
+    const inFlight = handle.commit(topDownRays());
+    handle.setHiddenTypes(["Building"]);
+    // The driver answers `onCommitNeeded` with a commit; its `newEpoch()` is
+    // what strands the fetch above.
+    expect(forced).toHaveBeenCalledTimes(1);
+    await handle.commit(topDownRays());
+    const afterToggle = [...factory.all];
+    await inFlight;
+
+    // Nothing from the superseded commit was installed on top.
+    expect(factory.all).toEqual(afterToggle);
+    expect(handle.cacheKeysForTest().length).toBeGreaterThan(0);
+  });
+});
+
+describe("FcbStreamLayerHandle.onTypes", () => {
+  it("unions the first-level types across commits and fires only on growth", async () => {
+    // `lodsSeen` makes the SECOND commit a real fetch (the ladder learned in
+    // commit 1 changes the auto LoD selection, which is a swap) rather than a
+    // hysteresis skip — the same lever the ladder tests use.
+    const opts = { objectTypes: ["BuildingPart"], lodsSeen: ["2.2"] };
+    const { handle, client } = makeHandle(opts);
+    const seen: Array<ReadonlyArray<string>> = [];
+    handle.onTypes((t) => seen.push(t));
+
+    await handle.commit(topDownRays());
+    // Folded, not verbatim: the part is what carries geometry, but the toggle
+    // the user is offered says "Building".
+    expect(handle.typesSeen).toEqual(["Building"]);
+    expect(seen).toHaveLength(1);
+
+    opts.objectTypes = ["Building", "Road"];
+    await handle.commit(topDownRays());
+    expect(client.sendStreamingCalls).toHaveLength(2);
+    expect(handle.typesSeen).toEqual(["Building", "Road"]);
+    expect(seen).toHaveLength(2);
+
+    // A commit that observes nothing new is silent, even though it re-observed
+    // both types.
+    await handle.commit(topDownRays());
+    expect(seen).toHaveLength(2);
+  });
+
+  it("keeps a hidden type listed, so it can be switched back on", async () => {
+    const { handle } = makeHandle({ objectTypes: ["Building"] });
+    await handle.commit(topDownRays());
+    handle.setHiddenTypes(["Building"]);
+    await handle.commit(topDownRays());
+    // The worker filters GEOMETRY only; `objects` records still name the
+    // hidden objects, which is what keeps the toggle list stable.
+    expect(handle.typesSeen).toEqual(["Building"]);
+  });
+});
+
+/**
+ * Scene themes on a streaming layer. The look itself is `themeStyle.ts` in
+ * `@cityjson/navara-cityjson` and is asserted there; what only this class can
+ * break is REACH — every resident cell, and every cell that lands afterwards.
+ */
+describe("FcbStreamLayerHandle.setThemeStyle", () => {
+  const CYBER: ThemeStyle = {
+    fill: "tint",
+    tintRGB: [0.06, 0.07, 0.12],
+    edges: { color: 0x00ffff, hdr: [0.4, 2.2, 2.6] },
+  };
+
+  it("styles every cell that is already resident", async () => {
+    const { handle, meshes } = makeHandle({});
+    await handle.commit(topDownRays());
+    expect(meshes.created.length).toBeGreaterThan(0);
+    for (const rec of meshes.created) expect(rec.style).toBe(DEFAULT_THEME_STYLE);
+
+    handle.setThemeStyle(CYBER);
+    for (const rec of meshes.created) expect(rec.style).toBe(CYBER);
+  });
+
+  // The streaming twin of the highlight/visibility rule: a cell that lands
+  // after the theme was chosen must come up themed, not photoreal until the
+  // user happens to switch theme again.
+  it("styles a cell installed after the theme was set", async () => {
+    const { handle, meshes } = makeHandle({});
+    await handle.commit(topDownRays());
+    const before = meshes.created.length;
+
+    handle.setThemeStyle(CYBER);
+    // Pan far enough to fetch a cover the first commit never asked for.
+    await handle.commit(raysFrom(500, 400, 3000, 3000));
+    const arrivedLater = meshes.created.slice(before);
+
+    expect(arrivedLater.length).toBeGreaterThan(0);
+    for (const rec of arrivedLater) expect(rec.style).toBe(CYBER);
+  });
+
+  it("takes the edge children back off the cells on the way back to photoreal", async () => {
+    const real = realMeshFactory();
+    const { handle } = makeHandle({ meshFactory: real.factory });
+    await handle.commit(topDownRays());
+
+    handle.setThemeStyle(CYBER);
+    for (const mesh of real.meshes.values()) {
+      expect(mesh.object3d.children).toHaveLength(1);
+    }
+
+    handle.setThemeStyle(DEFAULT_THEME_STYLE);
+    for (const mesh of real.meshes.values()) {
+      expect(mesh.object3d.children).toHaveLength(0);
+    }
   });
 });

@@ -28,7 +28,7 @@ import {
 // These are imported rather than redeclared: a local copy would drift the
 // moment either side gained a member — and Task C10b resolves picks through
 // exactly `batchIdMap()`/`resolveRaycast()` on this handle.
-import type { CityMeshHandle } from "@cityjson/navara-cityjson";
+import type { CityMeshHandle, ThemeStyle } from "@cityjson/navara-cityjson";
 import { cellCentre, type CellKey, type Grid } from "./tileGrid";
 import type { CellCache } from "./cellCache";
 import type { CellEntry } from "./streamLayer";
@@ -122,6 +122,11 @@ export interface SyncCtx {
   readonly rulesEnabled: boolean;
   /** Vertical-datum offset the worker already applied; the frame must match. */
   readonly heightOffsetM?: number;
+  /** The layer's active scene theme, pushed to every cell built here for the
+   *  same reason `visible` is: nothing revisits a cell after it is installed,
+   *  so one that lands mid-theme would stay photoreal until the user switched
+   *  theme again. Omitted by callers that never theme. */
+  readonly themeStyle?: ThemeStyle;
   /** Stamped into each new cell's `PickingIndex` so a pick resolves to the
    *  owning layer. `PickingIndex.layerId` is readonly, so the caller cannot
    *  fill it after the fact without rebuilding the `CellMesh` — it is passed
@@ -177,6 +182,7 @@ export function syncCellMeshes(ctx: SyncCtx): CellKey[] {
       cellFrame(ctx.grid, key, ctx.toLngLat, ctx.heightOffsetM ?? 0),
     );
     handle.setVisible(ctx.visible);
+    if (ctx.themeStyle) handle.setThemeStyle(ctx.themeStyle);
     if (entry.geometry.ruleColors) handle.setColors(entry.geometry.ruleColors);
     ctx.cells.set(key, {
       handle,

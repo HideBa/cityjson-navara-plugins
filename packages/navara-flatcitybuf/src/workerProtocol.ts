@@ -52,6 +52,10 @@ export type WorkerRequest =
       level: number;
       cells: CellKey[];
       lod: string | null;
+      /** First-level object types whose geometry this fetch must NOT bake —
+       *  hiding "Building" also hides its BuildingParts. The cell's own model
+       *  and its `objects` records stay unfiltered. */
+      hiddenTypes: ReadonlyArray<string>;
       rules: ReadonlyArray<Rule>;
       rulesEnabled: boolean;
     }

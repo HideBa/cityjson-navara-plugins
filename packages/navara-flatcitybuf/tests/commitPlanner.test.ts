@@ -175,6 +175,8 @@ describe("planCommit", () => {
       prevLevel: null,
       prevCommit: null,
       prevLod: null,
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder: [],
       lodMode: "auto",
       selectedLod: null,
@@ -191,6 +193,8 @@ describe("planCommit", () => {
       prevLevel: null,
       prevCommit: null,
       prevLod: null,
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder: [],
       lodMode: "auto",
       selectedLod: null,
@@ -207,6 +211,8 @@ describe("planCommit", () => {
       prevLevel: null,
       prevCommit: null,
       prevLod: null,
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder: [],
       lodMode: "auto",
       selectedLod: null,
@@ -223,6 +229,8 @@ describe("planCommit", () => {
       prevLevel: null,
       prevCommit: null,
       prevLod: null,
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder: [],
       lodMode: "auto",
       selectedLod: null,
@@ -239,6 +247,8 @@ describe("planCommit", () => {
       prevLevel: null,
       prevCommit: null,
       prevLod: null,
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder: [],
       lodMode: "auto",
       selectedLod: null,
@@ -262,6 +272,8 @@ describe("planCommit", () => {
       prevLevel: 2,
       prevCommit: { centre: FOOTPRINT.centre, span: FOOTPRINT.span },
       prevLod: { kind: "all" },
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder: [],
       lodMode: "auto",
       selectedLod: null,
@@ -283,6 +295,8 @@ describe("planCommit", () => {
       prevLevel: 2,
       prevCommit: { centre: FOOTPRINT.centre, span: FOOTPRINT.span }, // identical -> no hysteresis trigger
       prevLod: { kind: "all" },
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder: [],
       lodMode: "auto",
       selectedLod: null,
@@ -305,6 +319,8 @@ describe("planCommit", () => {
       prevLevel: 1, // different from the chosen level 2
       prevCommit: { centre: FOOTPRINT.centre, span: FOOTPRINT.span },
       prevLod: { kind: "all" },
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder: [],
       lodMode: "auto",
       selectedLod: null,
@@ -328,6 +344,8 @@ describe("planCommit", () => {
       prevLevel: 2, // SAME level
       prevCommit: { centre: FOOTPRINT.centre, span: FOOTPRINT.span },
       prevLod: { kind: "exact", lod: "0" }, // different from the resolved "1"
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder,
       lodMode: "auto",
       selectedLod: null,
@@ -337,6 +355,61 @@ describe("planCommit", () => {
     expect(plan.lod).toEqual({ kind: "exact", lod: "1" });
     expect(plan.isSwap).toBe(true);
     expect([...plan.toFetch].sort()).toEqual([...DESIRED_16].sort());
+  });
+
+  // Same argument as the LoD case: the cells resident under an unchanged key
+  // were BAKED without the previously hidden types, so once `hasHoles` is
+  // false hysteresis would serve that stale geometry indefinitely.
+  it("commits as a SWAP when only the hidden types changed", () => {
+    const cache = newCache();
+    for (const k of DESIRED_16)
+      cache.set(k, fakeEntry(k), { triangles: 1, bytes: 1 });
+    const plan = planCommit({
+      footprint: FOOTPRINT,
+      probeCount: 0,
+      grid: GRID,
+      cache,
+      prevLevel: 2,
+      prevCommit: { centre: FOOTPRINT.centre, span: FOOTPRINT.span },
+      prevLod: { kind: "all" },
+      prevHiddenTypes: [],
+      hiddenTypes: ["Building"],
+      ladder: [],
+      lodMode: "auto",
+      selectedLod: null,
+    });
+    expect(plan.kind).toBe("commit");
+    if (plan.kind !== "commit") throw new Error("expected commit");
+    expect(plan.isSwap).toBe(true);
+    expect([...plan.toFetch].sort()).toEqual([...DESIRED_16].sort());
+  });
+
+  it("does not swap for an unchanged hidden-type list, or before the first commit", () => {
+    const cache = newCache();
+    for (const k of DESIRED_16)
+      cache.set(k, fakeEntry(k), { triangles: 1, bytes: 1 });
+    const base = {
+      footprint: FOOTPRINT,
+      probeCount: 0,
+      grid: GRID,
+      cache,
+      prevLevel: 2,
+      // Moved far enough to defeat hysteresis, so the plan is a commit either
+      // way and the assertion is really about `isSwap`.
+      prevCommit: { centre: [0, 0] as const, span: 675 },
+      prevLod: { kind: "all" } as const,
+      ladder: [],
+      lodMode: "auto" as const,
+      selectedLod: null,
+    };
+    for (const input of [
+      { ...base, prevHiddenTypes: ["Building"], hiddenTypes: ["Building"] },
+      { ...base, prevHiddenTypes: null, hiddenTypes: ["Building"] },
+    ]) {
+      const plan = planCommit(input);
+      if (plan.kind !== "commit") throw new Error("expected commit");
+      expect(plan.isSwap).toBe(false);
+    }
   });
 
   it("commits (not a swap) with an EMPTY toFetch when hysteresis alone triggers a refresh of an already fully-covered view", () => {
@@ -351,6 +424,8 @@ describe("planCommit", () => {
       prevLevel: 2,
       prevCommit: { centre: [0, 0], span: 675 }, // moved = hypot(337.5,337.5)=477.3 > 675*0.2=135
       prevLod: { kind: "all" },
+      prevHiddenTypes: [],
+      hiddenTypes: [],
       ladder: [],
       lodMode: "auto",
       selectedLod: null,
