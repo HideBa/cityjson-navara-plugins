@@ -72,21 +72,53 @@ const OTHER_ATTRIBUTES_COLUMN = "other_attributes";
 /**
  * Wraps `bytes` as a hyparquet `AsyncBuffer`.
  *
- * hyparquet slices ABSOLUTE file offsets, so the view must be normalised onto
- * an `ArrayBuffer` of its own: a `readFile` result can be a window into a
- * larger pooled buffer, and a non-zero `byteOffset` would shift every offset in
- * the footer. The copy is spelled out rather than written as
- * `bytes.buffer.slice(...)` because `Uint8Array#buffer` is typed
- * `ArrayBufferLike`, which would widen the result to include
- * `SharedArrayBuffer`.
+ * hyparquet slices ABSOLUTE file offsets, so the buffer it slices must begin at
+ * byte 0 of the file: a `readFile` result can be a window into a larger pooled
+ * buffer, and a non-zero `byteOffset` would shift every offset in the footer.
+ *
+ * A view that already spans its whole buffer — what `fetch().arrayBuffer()`,
+ * `Blob.arrayBuffer()` and `new Uint8Array(buffer)` all produce, i.e. the path
+ * every browser caller takes — needs no normalising, so it is sliced in place.
+ * Copying it would double peak memory for a whole package, which on a large
+ * one is the difference between opening and not.
  */
 function asyncBufferOf(bytes: Uint8Array): AsyncBuffer {
-  const buf = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buf).set(bytes);
+  const spansWholeBuffer =
+    bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+  const buf: ArrayBufferLike = spansWholeBuffer
+    ? bytes.buffer
+    : copyToOwnBuffer(bytes);
   return {
     byteLength: buf.byteLength,
-    slice: (start: number, end?: number) => buf.slice(start, end),
+    // `Uint8Array#buffer` is typed `ArrayBufferLike`, so its `slice` is typed
+    // to return the same — a `SharedArrayBuffer` slices to a
+    // `SharedArrayBuffer`, which `AsyncBuffer` does not admit. hyparquet only
+    // ever wraps the result in a `DataView`/`Uint8Array`, which both accept a
+    // shared buffer, so the cast is a typing formality rather than a claim
+    // that the buffer is unshared.
+    slice: (start: number, end?: number) => buf.slice(start, end) as ArrayBuffer,
   };
+}
+
+/**
+ * Copies a partial view onto an `ArrayBuffer` of its own.
+ *
+ * The allocation can fail on a package near the runtime's buffer limit, and a
+ * bare `RangeError` from here would be the one error escaping this package that
+ * is not a `CityParquetError`, so it is translated at the point it happens.
+ */
+function copyToOwnBuffer(bytes: Uint8Array): ArrayBuffer {
+  try {
+    const buf = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buf).set(bytes);
+    return buf;
+  } catch (cause) {
+    const mb = Math.round(bytes.byteLength / 1_000_000);
+    throw new CityParquetError(
+      `There was not enough memory to load this file (about ${mb} MB).`,
+      { cause },
+    );
+  }
 }
 
 /**

@@ -21,6 +21,28 @@ const FIXTURE = fileURLToPath(
   ),
 );
 
+/**
+ * Counts the `slice` calls made against one `ArrayBuffer` instance, by shadowing
+ * the prototype method with an own property that delegates to it.
+ *
+ * This is the mechanical test for "did the reader copy?": hyparquet reads a
+ * file only through `AsyncBuffer.slice`, so a buffer that is sliced is a buffer
+ * that was read in place, and one that is never sliced was copied first.
+ */
+function instrumentSlice(buffer: ArrayBuffer): { calls: number } {
+  const counter = { calls: 0 };
+  const original = buffer.slice.bind(buffer);
+  Object.defineProperty(buffer, "slice", {
+    configurable: true,
+    writable: true,
+    value: (start: number, end?: number) => {
+      counter.calls += 1;
+      return original(start, end);
+    },
+  });
+  return counter;
+}
+
 describe("readCityParquetTable", () => {
   it("reads the fixture package table", async () => {
     const t = await readCityParquetTable(await readFile(FIXTURE));
@@ -83,6 +105,62 @@ describe("readCityParquetTable", () => {
     ]) {
       expect(keys).not.toContain(skipped);
     }
+  });
+
+  it("slices the caller's own buffer when the view spans it", async () => {
+    const raw = await readFile(FIXTURE);
+    const buf = new ArrayBuffer(raw.byteLength);
+    new Uint8Array(buf).set(raw);
+    const sliced = instrumentSlice(buf);
+
+    const t = await readCityParquetTable(new Uint8Array(buf));
+
+    // The reader read THROUGH the caller's buffer — no up-front copy, which on
+    // a large package is the difference between opening and not.
+    expect(sliced.calls).toBeGreaterThan(0);
+    expect(t.rows.length).toBe(3);
+  });
+
+  it("copies a partial view, so absolute footer offsets still land", async () => {
+    const raw = await readFile(FIXTURE);
+    const padded = new ArrayBuffer(raw.byteLength + 8);
+    new Uint8Array(padded, 8).set(raw);
+    const sliced = instrumentSlice(padded);
+
+    const t = await readCityParquetTable(
+      new Uint8Array(padded, 8, raw.byteLength),
+    );
+
+    // The offset buffer was NOT sliced: hyparquet's absolute offsets would be
+    // 8 bytes wrong against it, so this path must normalise onto a copy.
+    expect(sliced.calls).toBe(0);
+    expect(t.rows.length).toBe(3);
+  });
+
+  it("reports a failed normalising copy as a CityParquetError", async () => {
+    const padded = new ArrayBuffer(64);
+    const view = new Uint8Array(padded, 8, 16);
+    const RealArrayBuffer = globalThis.ArrayBuffer;
+    // The only allocation this reader makes itself is the normalising copy, and
+    // it happens synchronously before the first `await` — so a stub that lives
+    // for exactly the length of the call reaches that one site and no other.
+    globalThis.ArrayBuffer = function FailingArrayBuffer() {
+      throw new RangeError("Array buffer allocation failed");
+    } as unknown as ArrayBufferConstructor;
+    let pending: Promise<unknown>;
+    try {
+      pending = readCityParquetTable(view);
+    } finally {
+      globalThis.ArrayBuffer = RealArrayBuffer;
+    }
+
+    const caught = await pending.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(caught).toBeInstanceOf(CityParquetError);
+    expect((caught as CityParquetError).message).toMatch(/not enough memory/i);
+    expect((caught as CityParquetError).cause).toBeInstanceOf(RangeError);
   });
 
   it("rejects a non-parquet buffer with a friendly error", async () => {
