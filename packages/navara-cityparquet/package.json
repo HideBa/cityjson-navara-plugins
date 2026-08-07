@@ -1,7 +1,7 @@
 {
   "name": "@cityjson/navara-cityparquet",
   "version": "0.0.0",
-  "description": "Placeholder for a future CityParquet Navara plugin (not implemented)",
+  "description": "CityParquet reader: parquet package -> CityModel (engine-free)",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

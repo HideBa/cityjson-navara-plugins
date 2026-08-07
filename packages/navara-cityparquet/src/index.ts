@@ -12,8 +12,6 @@
  * bytes — a test, or a single-file `.parquet` drop — needs no manifest.
  */
 
-import { NAVARA_CORE_VERSION } from "@cityjson/navara-core";
-
 export { CityParquetError } from "./footer";
 export type { CityFooter, CityGeometryColumnMeta } from "./footer";
 
@@ -31,9 +29,3 @@ export {
   assembleCityParquetModel,
   parseCityParquetManifest,
 } from "./packageAssembly";
-
-/**
- * Retained only until the host app's plugin wiring is finalised — a parent-repo
- * test still asserts this constant. Removed with that test.
- */
-export const CITYPARQUET_PLUGIN_PLACEHOLDER = `@cityjson/navara-cityparquet (core ${NAVARA_CORE_VERSION})`;
