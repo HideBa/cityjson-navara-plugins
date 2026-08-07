@@ -185,6 +185,42 @@ describe("decodeWkb", () => {
     expect(() => decodeWkb(t.out().slice(0, 20))).toThrow(/offset 18/);
   });
 
+  /**
+   * The terminal boundary of the cursor's bounds check, which the interior
+   * cuts above never reach. A buffer short by exactly one byte, and an empty
+   * buffer, are the two inputs where an off-by-one in `pos + n > byteLength`
+   * would let `DataView` raise a native `RangeError` instead — silently
+   * escaping every downstream `e instanceof WkbError` handler. A zero-length
+   * BYTE_ARRAY is a real parquet value, not a hypothetical.
+   */
+  it("throws WkbError, not a bare RangeError, at the exact end of the buffer", () => {
+    const w = new W();
+    w.u8(1).u32(1015).u32(1);
+    polygonZ(w, 0);
+    const full = w.out();
+    expect(() => decodeWkb(full)).not.toThrow();
+
+    const shortByOne = full.slice(0, full.length - 1);
+    expect(() => decodeWkb(shortByOne)).toThrow(WkbError);
+    expect(() => decodeWkb(shortByOne)).not.toThrow(RangeError);
+
+    expect(() => decodeWkb(new Uint8Array(0))).toThrow(WkbError);
+    expect(() => decodeWkb(new Uint8Array(0))).not.toThrow(RangeError);
+  });
+
+  /**
+   * A hostile element count must fail on the first missing byte rather than
+   * preallocating four billion slots — the decoder pushes as it reads for
+   * exactly this reason.
+   */
+  it("rejects a hostile element count without preallocating", () => {
+    const started = Date.now();
+    expect(() =>
+      decodeWkb(new W().u8(1).u32(1015).u32(0xffffffff).out()),
+    ).toThrow(WkbError);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it("rejects a GeometryCollection member that is not a PolyhedralSurfaceZ", () => {
     const w = new W();
     w.u8(1).u32(1007).u32(1).u8(1).u32(1006).u32(1);
