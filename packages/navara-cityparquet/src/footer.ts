@@ -44,10 +44,16 @@ export interface CityFooter {
   sourceFormat: string | null;
 }
 
-/** Every failure this package raises while reading a CityParquet file. */
+/**
+ * Every failure this package raises while reading a CityParquet file.
+ *
+ * `message` is always a sentence fit to show a user; `options.cause` carries
+ * the underlying error when one exists (a vendored library's internal failure,
+ * say), so nothing has to pattern-match a third party's message text.
+ */
 export class CityParquetError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "CityParquetError";
   }
 }
