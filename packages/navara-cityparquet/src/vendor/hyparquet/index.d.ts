@@ -31,6 +31,16 @@ export function parquetMetadataAsync(file: AsyncBuffer): Promise<FileMetaData>;
 
 export function parquetSchema(metadata: FileMetaData): SchemaTree;
 
+/**
+ * Overrides for hyparquet's own logical-type parsers; anything omitted keeps
+ * the library's default. Only the two we override are declared — the upstream
+ * set is far wider (see `convert.js`'s `DEFAULT_PARSERS`).
+ */
+export interface ParquetParsers {
+  geometryFromBytes?(bytes: Uint8Array | undefined): unknown;
+  geographyFromBytes?(bytes: Uint8Array | undefined): unknown;
+}
+
 export function parquetReadObjects(options: {
   file: AsyncBuffer;
   metadata?: FileMetaData;
@@ -38,5 +48,6 @@ export function parquetReadObjects(options: {
   rowStart?: number;
   rowEnd?: number;
   utf8?: boolean;
+  parsers?: ParquetParsers;
   compressors?: Record<string, unknown>;
 }): Promise<Record<string, unknown>[]>;

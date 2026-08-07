@@ -26,6 +26,7 @@ import {
   parseCityFooter,
   propsColumnFor,
 } from "./footer";
+import { DEFAULT_PARSERS } from "./vendor/hyparquet/convert.js";
 import type { AsyncBuffer, FileMetaData } from "./vendor/hyparquet/index.js";
 import {
   parquetMetadataAsync,
@@ -68,6 +69,35 @@ const IDENTITY_COLUMNS = [
 
 /** The catch-all attribute container, when the writer emitted one. */
 const OTHER_ATTRIBUTES_COLUMN = "other_attributes";
+
+/**
+ * Keeps a GEOMETRY/GEOGRAPHY-annotated column's cells as their raw WKB bytes.
+ *
+ * hyparquet reads the footer's GeoParquet `geo` metadata and stamps every
+ * column it declares with a `GEOMETRY` logical type (`geoparquet.js`'s
+ * `markGeoColumns`), whose default parser converts the blob to **GeoJSON**
+ * (`convert.js`'s `geometryFromBytes`). The CityParquet writer declares its
+ * LoD0 footprint column in `geo` for interoperability, so exactly one of a
+ * file's geometry columns comes back as an object while the rest stay bytes —
+ * measured on the fixture, where `geometry_lod0_0` was GeoJSON and
+ * `geometry_lod2_2` was a `Uint8Array`.
+ *
+ * That conversion is pure loss for this reader: GeoJSON has no
+ * PolyhedralSurface and no semantics, and the WKB decoder downstream needs the
+ * original bytes.
+ * The identity parser turns it off, which also saves parsing every footprint
+ * twice.
+ *
+ * The defaults are spread in because a PARTIAL `parsers` option does not work:
+ * `readRowGroup` merges it over the defaults and then spreads the whole options
+ * object on top, putting the partial back — so the merge is undone and every
+ * unnamed parser (`stringFromBytes` included) goes missing. See `convert.d.ts`.
+ */
+const RAW_WKB_PARSERS = {
+  ...DEFAULT_PARSERS,
+  geometryFromBytes: (bytes: Uint8Array | undefined) => bytes,
+  geographyFromBytes: (bytes: Uint8Array | undefined) => bytes,
+};
 
 /**
  * Wraps `bytes` as a hyparquet `AsyncBuffer`.
@@ -228,7 +258,9 @@ function buildProjection(
  *
  * Rows come back with `utf8: false`, which is what the WKB decoder downstream
  * depends on: STRING-annotated columns are still JS strings, while the
- * un-annotated `BYTE_ARRAY` geometry blobs stay raw `Uint8Array`.
+ * un-annotated `BYTE_ARRAY` geometry blobs stay raw `Uint8Array`. A column the
+ * footer's GeoParquet `geo` metadata declares needs {@link RAW_WKB_PARSERS} on
+ * top of that, or hyparquet hands it back as GeoJSON.
  */
 export async function readCityParquetTable(
   bytes: Uint8Array,
@@ -253,6 +285,7 @@ export async function readCityParquetTable(
       metadata,
       columns,
       utf8: false,
+      parsers: RAW_WKB_PARSERS,
       compressors,
     }),
   );

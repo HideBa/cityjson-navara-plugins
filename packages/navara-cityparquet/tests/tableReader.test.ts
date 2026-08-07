@@ -58,6 +58,10 @@ describe("readCityParquetTable", () => {
     const part = t.rows.find((r) => r.object_type === "BuildingPart");
     expect(part).toBeDefined();
     expect(part?.geometry_lod2_2).toBeInstanceOf(Uint8Array);
+    // `geometry_lod0_0` is declared in the file's GeoParquet `geo` metadata, so
+    // hyparquet's default parsers would hand it back as GeoJSON — it must reach
+    // the WKB decoder as bytes like every other geometry column.
+    expect(part?.geometry_lod0_0).toBeInstanceOf(Uint8Array);
     expect(typeof part?.id).toBe("string");
   });
 

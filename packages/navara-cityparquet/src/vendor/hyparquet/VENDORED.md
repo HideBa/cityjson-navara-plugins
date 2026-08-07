@@ -6,7 +6,10 @@
   (the Node-only entry point; it imports `fs` and re-imports the `hyparquet`
   package by name, which would not resolve from here and which we never use).
   Upstream's `types/` is not vendored — see `index.d.ts`, hand-written for the
-  three entry points this package calls.
+  three entry points this package calls, and `convert.d.ts`, hand-written for
+  the one internal export we import (`DEFAULT_PARSERS`). Both are `.d.ts` files
+  and the re-vendoring step below only copies `.js`, so an upgrade leaves them
+  in place.
 
 ## Why vendored rather than a dependency
 
@@ -38,6 +41,24 @@ the file for the V2 path, so this is the only change:
 ```
 
 That is the **entire** diff against upstream 1.28.1. Nothing else was edited.
+
+## Upstream quirks worked around from the OUTSIDE (no edit here)
+
+- **A partial `parsers` option silently loses the parsers it does not name.**
+  `rowgroup.js`'s `readRowGroup` builds its column decoder as
+  `{ parsers: { ...DEFAULT_PARSERS, ...options.parsers }, ...options }` — the
+  trailing `...options` puts the caller's raw `parsers` object straight back on
+  top of the merge it just did, so overriding one parser drops all the others
+  and the first STRING column throws `parsers.stringFromBytes is not a
+  function`. `tableReader.ts` therefore spreads `DEFAULT_PARSERS` itself and
+  passes a complete object (which also stays correct if upstream fixes the
+  ordering). This is why `convert.d.ts` exists.
+- **A GeoParquet-declared column comes back as GeoJSON, not WKB.**
+  `geoparquet.js`'s `markGeoColumns` stamps every column named in the footer's
+  `geo` metadata with a `GEOMETRY` logical type, and `convert.js` then runs it
+  through `wkbToGeojson`. The CityParquet writer declares its LoD0 footprint
+  column there, so exactly one geometry column per file would arrive as an
+  object; the identity parsers above turn that off.
 
 ## Un-vendor condition
 
