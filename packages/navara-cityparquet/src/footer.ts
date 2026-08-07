@@ -196,9 +196,15 @@ const GEOMETRY_PROPERTIES_PREFIX = "geometry_properties";
 const LOD_SUFFIX = /^lod(\d{1,3})_(\d{1,3})$/;
 
 /**
- * The LoD a geometry column carries, or `null` when `name` is not a geometry
- * column at all (an attribute column, a `geometry_properties_*` sibling, a
- * `geometry_vertices_*` column of an Arrow-native encoding).
+ * The LoD a geometry column carries, or `null` when `name` does not fit the
+ * reserved geometry-column grammar (a `geometry_properties_*` sibling, a
+ * `geometry_vertices_*` column of an Arrow-native encoding, an ordinary
+ * attribute name like `b3_volume_lod2`).
+ *
+ * This is a NAME test and nothing more: a source attribute that happens to be
+ * spelled `geometry_lod2_2` matches it. Callers must exclude the columns the
+ * footer declares in `attributes` first — the footer, not the spelling, is
+ * what makes a column an attribute.
  *
  * The returned string is the DISPLAY spelling, matching what
  * `parseCityJSON` reports for the same source data: a `.0` minor is stripped

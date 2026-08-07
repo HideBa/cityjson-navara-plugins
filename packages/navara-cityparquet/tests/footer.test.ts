@@ -126,6 +126,66 @@ describe("parseCityFooter (further shapes)", () => {
     });
   });
 
+  it("accepts a PROJJSON id whose code is a digit string", () => {
+    // PROJJSON permits a string code, and cityparquet-rs reads one
+    // (`citygml/crs.rs`) — so a file written that way must still resolve.
+    expect(
+      parseCityFooter([
+        {
+          key: "city",
+          value: JSON.stringify({
+            ...CITY,
+            crs: {
+              type: "CompoundCRS",
+              id: { authority: "EPSG", code: "7415" },
+            },
+          }),
+        },
+      ]).epsg,
+    ).toBe(7415);
+  });
+
+  it("rejects a non-array columns or attributes", () => {
+    expect(() =>
+      parseCityFooter([
+        {
+          key: "city",
+          value: JSON.stringify({
+            version: "0.1.0-draft",
+            columns: { name: "geometry_lod2_2" },
+          }),
+        },
+      ]),
+    ).toThrow(CityParquetError);
+    expect(() =>
+      parseCityFooter([
+        {
+          key: "city",
+          value: JSON.stringify({
+            version: "0.1.0-draft",
+            attributes: "b3_h_maaiveld",
+          }),
+        },
+      ]),
+    ).toThrow(CityParquetError);
+  });
+
+  it("rejects a columns entry with no encoding", () => {
+    // The encoding token is how a caller refuses an encoding it cannot read,
+    // so a column that declares none cannot be silently assumed to be WKB.
+    expect(() =>
+      parseCityFooter([
+        {
+          key: "city",
+          value: JSON.stringify({
+            version: "0.1.0-draft",
+            columns: [{ name: "geometry_lod2_2" }],
+          }),
+        },
+      ]),
+    ).toThrow(CityParquetError);
+  });
+
   it("rejects a value that is not JSON, or not a JSON object", () => {
     expect(() => parseCityFooter([{ key: "city", value: "{oops" }])).toThrow(
       /not a CityParquet file/i,
