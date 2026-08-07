@@ -3,6 +3,10 @@ export const CITYMODEL_ENCODING_PRIORITY = [
   "cityjsonseq",
   "flatcitybuf",
   "citygml",
+  // Appended LAST on purpose: this array is also the STAC preference order, and
+  // a collection that offers CityParquet alongside anything else should still
+  // resolve to the encoding it resolved to before CityParquet existed.
+  "cityparquet",
 ] as const;
 
 export type CityModelEncoding = (typeof CITYMODEL_ENCODING_PRIORITY)[number];

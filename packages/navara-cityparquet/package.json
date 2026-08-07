@@ -20,7 +20,8 @@
     "test": "vitest run --dir tests"
   },
   "dependencies": {
-    "@cityjson/navara-core": "file:../navara-core"
+    "@cityjson/navara-core": "file:../navara-core",
+    "hyparquet-compressors": "1.1.1"
   },
   "devDependencies": {
     "proj4": "2.20.8",

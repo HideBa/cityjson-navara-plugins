@@ -12,6 +12,7 @@ describe("CITYMODEL_ENCODING_PRIORITY", () => {
       "cityjsonseq",
       "flatcitybuf",
       "citygml",
+      "cityparquet",
     ]);
   });
 });
@@ -21,6 +22,7 @@ describe("isSupportedCityModelEncoding", () => {
     expect(isSupportedCityModelEncoding("cityjson")).toBe(true);
     expect(isSupportedCityModelEncoding("cityjsonseq")).toBe(true);
     expect(isSupportedCityModelEncoding("flatcitybuf")).toBe(true);
+    expect(isSupportedCityModelEncoding("cityparquet")).toBe(true);
   });
 
   it("rejects unrelated values", () => {
@@ -34,6 +36,13 @@ describe("getPreferredCityModelEncoding", () => {
     expect(getPreferredCityModelEncoding(["flatcitybuf", "cityjsonseq"])).toBe(
       "cityjsonseq",
     );
+  });
+
+  it("never prefers cityparquet over an older encoding", () => {
+    expect(getPreferredCityModelEncoding(["cityparquet", "citygml"])).toBe(
+      "citygml",
+    );
+    expect(getPreferredCityModelEncoding(["cityparquet"])).toBe("cityparquet");
   });
 
   it("returns null when no encodings are provided", () => {
