@@ -514,6 +514,151 @@ describe("decodeTableObjects (synthetic rows)", () => {
     }
   });
 
+  it("labels faces from a bigint face_semantics list (INT64 writers)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const objects = decodeTableObjects(
+        tableOf(
+          [
+            {
+              id: "a",
+              object_type: "Building",
+              geometry_lod2_2: wkbMultiPolygonZ([[TRIANGLE], [SQUARE]]),
+              geometry_properties_lod2_2: {
+                type: "MultiSurface",
+                surfaces: JSON.stringify([
+                  { type: "GroundSurface" },
+                  { type: "RoofSurface" },
+                ]),
+                // A LIST<INT64> column reads back as bigints. Rejecting them
+                // would leave every surface "unknown" on a file that renders.
+                face_semantics: [0n, 1n],
+              },
+            },
+          ],
+          { geometryColumns: [LOD2_COLUMN] },
+        ),
+      );
+      const surfaces = at(objects, "a").surfaces;
+      expect(surfaces.map((s) => s.type)).toEqual([
+        "GroundSurface",
+        "RoofSurface",
+      ]);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("warns when face_semantics yields no usable index", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const objects = decodeTableObjects(
+        tableOf(
+          [
+            {
+              id: "bad-entries",
+              object_type: "Building",
+              geometry_lod2_2: wkbMultiPolygonZ([[TRIANGLE]]),
+              geometry_properties_lod2_2: {
+                type: "MultiSurface",
+                surfaces: JSON.stringify([{ type: "RoofSurface" }]),
+                // Neither an index nor a null: the silent-death shape.
+                face_semantics: ["0"],
+              },
+            },
+            {
+              id: "all-null",
+              object_type: "Building",
+              geometry_lod2_2: wkbMultiPolygonZ([[TRIANGLE]]),
+              geometry_properties_lod2_2: {
+                type: "MultiSurface",
+                surfaces: JSON.stringify([{ type: "RoofSurface" }]),
+                face_semantics: [null],
+              },
+            },
+          ],
+          { geometryColumns: [LOD2_COLUMN] },
+        ),
+      );
+      expect(at(objects, "bad-entries").surfaces[0]?.type).toBe("unknown");
+      expect(at(objects, "all-null").surfaces[0]?.type).toBe("unknown");
+      const messages = warn.mock.calls.map((c) => String(c[0]));
+      expect(
+        messages.some((m) => m.includes("not usable surface indices")),
+      ).toBe(true);
+      expect(messages.some((m) => m.includes("no usable index"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("treats prototype-shaped ids and attribute names as ordinary keys", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const objects = decodeTableObjects(
+        tableOf(
+          [
+            { id: "__proto__", object_type: "Building", polluted: 1 },
+            { id: "constructor", object_type: "Building" },
+            { id: "toString", object_type: "Building" },
+          ],
+          { attributes: ["polluted"] },
+        ),
+      );
+      // The map carries no inherited members at all, so a hostile id can
+      // neither vanish into a setter nor be mistaken for an existing entry.
+      expect(Object.getPrototypeOf(objects)).toBeNull();
+      expect(Object.keys(objects).sort()).toEqual([
+        "__proto__",
+        "constructor",
+        "toString",
+      ]);
+      expect(at(objects, "__proto__").id).toBe("__proto__");
+      expect(at(objects, "__proto__").attributes.polluted).toBe(1);
+      expect(at(objects, "constructor").objectType).toBe("Building");
+      // None of these are duplicates, so nothing may warn about one.
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("keeps diverted attributes whose names shadow Object.prototype", () => {
+    const objects = decodeTableObjects(
+      tableOf([
+        {
+          id: "a",
+          object_type: "Building",
+          other_attributes:
+            '{"hasOwnProperty":1,"toString":"kept","__proto__":{"injected":true}}',
+        },
+      ]),
+    );
+    const attributes = at(objects, "a").attributes;
+    expect(attributes.hasOwnProperty).toBe(1);
+    expect(attributes.toString).toBe("kept");
+    // The injected key is an ordinary entry, not a new prototype.
+    expect(Object.getPrototypeOf(attributes)).toBeNull();
+    expect(Object.keys(attributes).sort()).toEqual([
+      "__proto__",
+      "hasOwnProperty",
+      "toString",
+    ]);
+  });
+
+  it("does not read a declared attribute off the row's prototype", () => {
+    const objects = decodeTableObjects(
+      tableOf(
+        // The row carries no `constructor` column — and `row.constructor` on an
+        // ordinary object is `Object` itself, not undefined.
+        [{ id: "a", object_type: "Building" }],
+        { attributes: ["constructor", "toString"] },
+      ),
+    );
+    expect(at(objects, "a").attributes).toEqual({});
+  });
+
   it("reports each warning kind once, then summarises the rest", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

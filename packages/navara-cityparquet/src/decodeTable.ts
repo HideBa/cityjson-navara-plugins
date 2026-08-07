@@ -121,6 +121,35 @@ function isEmptyCell(value: unknown): boolean {
 }
 
 /**
+ * A map with NO prototype, for keys that come out of a third-party file.
+ *
+ * Every string key in this module — an object id, an attribute name, a diverted
+ * `other_attributes` key, a semantic surface's attribute — is written by
+ * whoever produced the file, and a plain `{}` gives those keys meanings they
+ * must not have. `map["__proto__"] = value` invokes the inherited setter
+ * instead of creating an entry, so the object silently vanishes and, worse, the
+ * map's own prototype changes; `"constructor" in map` and
+ * `"toString" in map` are both true on an empty `{}`, which turns an innocent
+ * attribute name into a phantom collision. A null-prototype map has none of
+ * those inherited members, so every key is just a key.
+ */
+function bareMap<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
+/**
+ * Own-property test that survives a hostile key. Used instead of `in` even on
+ * a {@link bareMap} — the map is safe, but stating the intent at the call site
+ * is what stops the next edit from reintroducing the bug — and it is REQUIRED
+ * on the hyparquet row objects, which have an ordinary prototype: a
+ * footer-declared attribute named `constructor` would otherwise read back
+ * `Object` itself from a row that never carried the column.
+ */
+function hasOwn(target: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(target, key);
+}
+
+/**
  * Console warnings, deduplicated by kind.
  *
  * Every condition this decoder warns about is systematic: a writer that emits
@@ -264,8 +293,9 @@ function readAttributes(
   id: string,
   warnings: DecodeWarnings,
 ): JsonObject {
-  const attributes: JsonObject = {};
+  const attributes = bareMap<unknown>();
   for (const column of footer.attributes) {
+    if (!hasOwn(row, column)) continue;
     const cell = row[column];
     if (isEmptyCell(cell)) continue;
     attributes[attributeKeyForColumn(column)] = attributeValue(cell);
@@ -277,7 +307,7 @@ function readAttributes(
     warnings,
   );
   for (const [key, value] of Object.entries(diverted)) {
-    if (key in attributes) continue;
+    if (hasOwn(attributes, key)) continue;
     attributes[key] = attributeValue(value);
   }
   return attributes;
@@ -366,20 +396,73 @@ function tryParseJson(text: string): unknown {
 }
 
 /**
+ * One `face_semantics` entry as an index into `surfaces`, or `null` for a face
+ * that carries no semantics.
+ *
+ * A `bigint` is accepted because the column is `LIST<INT32>` in the reference
+ * writer but nothing forces that: an INT64 list arrives from hyparquet as
+ * bigints, and rejecting them would leave every face of that file `"unknown"`
+ * — colour-by-semantics quietly dead on a file that renders perfectly. This is
+ * the same conversion attribute cells already get. A non-integer or negative
+ * index is not a usable index either; those are reported, not silently
+ * swallowed.
+ */
+function semanticIndex(entry: unknown): number | null {
+  const value = typeof entry === "bigint" ? Number(entry) : entry;
+  if (typeof value !== "number") return null;
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+/**
  * The `face_semantics` field: one index into `surfaces` per WKB face, flat
  * across every shell and solid member (the writer flattens; only `shells`,
- * which this viewer does not need, could re-nest it). A `null` entry means the
- * face carries no semantics.
+ * which this viewer does not need, could re-nest it).
+ *
+ * The two ways this can go quiet are both reported, because the symptom of
+ * either — every surface `"unknown"` — looks exactly like a file that simply
+ * has no semantics: entries of a type that is not an index at all, and a
+ * non-empty list that yields no usable index. The second fires on a legitimate
+ * all-null list too; the message says only what is true (the faces are
+ * unlabelled), and `DecodeWarnings` caps it at two console lines per file.
  */
 function readFaceSemantics(
   props: unknown,
+  id: string,
+  columnName: string,
+  warnings: DecodeWarnings,
 ): ReadonlyArray<number | null> | null {
   if (!isPlainObject(props)) return null;
   const raw = props.face_semantics;
   if (!Array.isArray(raw)) return null;
-  return raw.map((entry: unknown) =>
-    typeof entry === "number" ? entry : null,
-  );
+
+  let unreadable = 0;
+  let usable = 0;
+  const indices = raw.map((entry: unknown) => {
+    const index = semanticIndex(entry);
+    if (index !== null) {
+      usable += 1;
+      return index;
+    }
+    if (!isEmptyCell(entry)) unreadable += 1;
+    return null;
+  });
+
+  if (unreadable > 0) {
+    warnings.report(
+      "face-semantics-unreadable",
+      `the 'face_semantics' of object '${id}' in '${columnName}' has ${unreadable} entr(y/ies) that are not usable surface indices, so those faces are unlabelled.`,
+      (more) =>
+        `${more} more geometr(y/ies) had unreadable 'face_semantics' entries.`,
+    );
+  } else if (usable === 0 && indices.length > 0) {
+    warnings.report(
+      "face-semantics-unlabelled",
+      `object '${id}' has a 'face_semantics' list in '${columnName}' with no usable index, so its faces are unlabelled.`,
+      (more) =>
+        `${more} more geometr(y/ies) had no usable 'face_semantics' index.`,
+    );
+  }
+  return indices;
 }
 
 /** The semantic type of a surface definition, per core's allow-list. */
@@ -401,8 +484,8 @@ function resolveSurfaceType(
 function resolveSurfaceAttributes(
   def: SurfaceDefinition | undefined,
 ): JsonObject {
-  if (def === undefined) return {};
-  const attributes: JsonObject = {};
+  if (def === undefined) return bareMap<unknown>();
+  const attributes = bareMap<unknown>();
   for (const [key, value] of Object.entries(def)) {
     if (key === "type" || key === "parent" || key === "children") continue;
     attributes[key] = value;
@@ -499,7 +582,12 @@ function readRowGeometry(
       column.name,
       warnings,
     );
-    const faceSemantics = readFaceSemantics(props);
+    const faceSemantics = readFaceSemantics(
+      props,
+      id,
+      column.name,
+      warnings,
+    );
 
     // `faces` is flat across every shell and every solid member, and so is
     // `face_semantics` — one index pairs them (the `shells` field exists to
@@ -546,7 +634,7 @@ function readRowGeometry(
 export function decodeTableObjects(
   table: CityParquetTableData,
 ): Record<string, CityObject> {
-  const objects: Record<string, CityObject> = {};
+  const objects = bareMap<CityObject>();
   const warnings = new DecodeWarnings();
 
   for (const row of table.rows) {
@@ -571,7 +659,7 @@ export function decodeTableObjects(
 
     const geometry = readRowGeometry(row, table.geometryColumns, id, warnings);
 
-    if (id in objects) {
+    if (hasOwn(objects, id)) {
       warnings.report(
         "duplicate-id",
         `object '${id}' appears more than once in this table; the later row wins.`,
