@@ -49,6 +49,7 @@ export type {
   CityJSONGeometryTemplates,
 } from "./citymodel/cityjson/types";
 export {
+  IDENTITY_TRANSFORM,
   dequantizeAll,
   mergeBBox,
   parseCityObject,
@@ -63,6 +64,7 @@ export {
   NonMetricCrsError,
   assertMetricCrs,
   ensureProjDef,
+  ensureProjDefAsync,
   isMetricCrs,
   parseEpsgCode,
 } from "./citymodel/crsProjDefs";

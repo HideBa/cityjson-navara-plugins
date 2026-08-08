@@ -16,6 +16,7 @@ import {
   buildRuleColorsFromArrays,
   dequantizeAll,
   ensureProjDef,
+  IDENTITY_TRANSFORM,
   makeEnuFrame,
   mapMetadata,
   mergeBBox,
@@ -241,7 +242,9 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           ) as unknown as CityJSONFeature;
           const realVertices = dequantizeAll(
             cjFeature.vertices,
-            cjHeader.transform,
+            // FlatCityBuf always carries a transform; the fallback exists
+            // because `CityJSONRoot.transform` is optional for v1.0 files.
+            cjHeader.transform ?? IDENTITY_TRANSFORM,
           );
           const objects: Record<string, CityObject> = {};
           let modelBBox: BBox3 | null = null;

@@ -39,6 +39,19 @@ function dequantizeVertex(
   ];
 }
 
+/**
+ * The transform to use when a file declares none.
+ *
+ * CityJSON made `transform` mandatory only in v1.1: a v1.0 file may omit it
+ * entirely, in which case its vertices are already real (floating point)
+ * coordinates. Scaling by 1 and translating by 0 is exactly that case, so the
+ * quantized and unquantized paths share one code path instead of branching.
+ */
+export const IDENTITY_TRANSFORM: CityJSONTransform = {
+  scale: [1, 1, 1],
+  translate: [0, 0, 0],
+};
+
 export function dequantizeAll(
   vertices: ReadonlyArray<CityJSONVertex>,
   transform: CityJSONTransform,
@@ -347,7 +360,11 @@ export function parseCityObject(
 
   for (const geom of raw.geometry ?? []) {
     if (geom.type === "GeometryInstance") continue;
-    const geomLod = geom.lod ?? null;
+    // Normalised to STRING here, at the boundary: v1.0 wrote `"lod": 2` (a
+    // number), and passing it through as one makes the first render work —
+    // `2 !== 2` keeps every surface — while the first LoD-dropdown pick
+    // compares `2 !== "2"` and silently blanks the layer.
+    const geomLod = geom.lod === undefined ? null : String(geom.lod);
     // Track highest LoD for display purposes
     if (
       geomLod !== null &&

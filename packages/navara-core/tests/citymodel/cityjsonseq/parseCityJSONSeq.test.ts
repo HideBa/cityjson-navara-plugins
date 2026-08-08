@@ -118,9 +118,39 @@ describe("parseCityJSONSeq", () => {
   it("throws on unsupported version", () => {
     expect(() =>
       parseCityJSONSeq(
-        '{"type":"CityJSON","version":"1.0","transform":{"scale":[1,1,1],"translate":[0,0,0]},"CityObjects":{},"vertices":[]}',
+        '{"type":"CityJSON","version":"3.0","transform":{"scale":[1,1,1],"translate":[0,0,0]},"CityObjects":{},"vertices":[]}',
       ),
-    ).toThrow(/Unsupported CityJSON version "1\.0"/);
+    ).toThrow(/Unsupported CityJSON version "3\.0"/);
+    expect(() =>
+      parseCityJSONSeq(
+        '{"type":"CityJSON","version":"0.9","transform":{"scale":[1,1,1],"translate":[0,0,0]},"CityObjects":{},"vertices":[]}',
+      ),
+    ).toThrow(/Only v1\.x and v2\.x are supported/);
+  });
+
+  it("accepts a v1.1 header", () => {
+    const text = [
+      '{"type":"CityJSON","version":"1.1","transform":{"scale":[1,1,1],"translate":[0,0,0]},"CityObjects":{},"vertices":[],"metadata":{"referenceSystem":"urn:ogc:def:crs:EPSG::3414"}}',
+      '{"type":"CityJSONFeature","id":"b1","CityObjects":{"b1":{"type":"Building","attributes":{},"geometry":[]}},"vertices":[]}',
+    ].join("\n");
+    const result = parseCityJSONSeq(text);
+    expect(Object.keys(result.objects)).toEqual(["b1"]);
+    expect(result.metadata.referenceSystem).toBe("urn:ogc:def:crs:EPSG::3414");
+  });
+
+  it("accepts a v1.0 header with no transform and passes vertices through", () => {
+    const text = [
+      '{"type":"CityJSON","version":"1.0","CityObjects":{},"vertices":[]}',
+      // `"lod":1` — a NUMBER, which is what v1.0 actually wrote (the X.Y
+      // string arrived in 1.1). The parser normalises it to "1".
+      '{"type":"CityJSONFeature","id":"b1","CityObjects":{"b1":{"type":"Building","geometry":[{"type":"MultiSurface","lod":1,"boundaries":[[[0,1,2]]]}]}},"vertices":[[103.8,1.36,12.5],[104.8,1.36,12.5],[104.8,2.36,12.5]]}',
+    ].join("\n");
+    const result = parseCityJSONSeq(text);
+    expect(result.vertexCount).toBe(3);
+    // No transform means real coordinates: the bbox is the raw floats.
+    expect(result.bbox![0]).toBeCloseTo(103.8, 6);
+    expect(result.bbox![2]).toBeCloseTo(12.5, 6);
+    expect(result.objects["b1"]!.surfaces[0]!.lod).toBe("1");
   });
 
   it("skips non-CityJSONFeature lines", () => {

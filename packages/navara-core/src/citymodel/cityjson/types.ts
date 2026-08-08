@@ -1,5 +1,5 @@
 /**
- * TypeScript types for the CityJSON v2.0 specification.
+ * TypeScript types for the CityJSON specification (v1.x and v2.x).
  *
  * These model the raw JSON structure of a .city.json file.
  * They are NOT the normalized domain model — see ../types.ts for that.
@@ -14,7 +14,8 @@
 export interface CityJSONRoot {
   readonly type: "CityJSON";
   readonly version: string;
-  readonly transform: CityJSONTransform;
+  /** Mandatory since v1.1; a v1.0 file may omit it and carry real vertices. */
+  readonly transform?: CityJSONTransform;
   readonly CityObjects: Readonly<Record<string, CityJSONObject>>;
   readonly vertices: ReadonlyArray<CityJSONVertex>;
   readonly metadata?: CityJSONMetadata;
@@ -110,7 +111,11 @@ export type CityJSONGeometryType =
 
 export interface CityJSONGeometryBase {
   readonly type: CityJSONGeometryType;
-  readonly lod: string;
+  /** An `X.Y` string since v1.1; v1.0 wrote a bare NUMBER (the same release
+   *  that made `transform` mandatory changed both). Parsers normalise to
+   *  string at the boundary — every downstream comparison (LoD filtering,
+   *  the ladder, the dropdown) is string-typed. */
+  readonly lod: string | number;
   readonly semantics?: CityJSONSemantics;
   readonly material?: unknown;
   readonly texture?: unknown;

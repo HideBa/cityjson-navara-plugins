@@ -309,14 +309,23 @@ describe("parseCityJSON", () => {
   });
 
   describe("version validation", () => {
-    it("rejects CityJSON v1.x files", () => {
-      const v1: CityJSONRoot = {
-        ...EMPTY_CITYJSON,
-        version: "1.1",
-      };
-      expect(() => parseCityJSON(v1)).toThrow(
-        /Unsupported CityJSON version "1.1"/,
+    it("rejects versions below v1", () => {
+      const v09: CityJSONRoot = { ...EMPTY_CITYJSON, version: "0.9" };
+      expect(() => parseCityJSON(v09)).toThrow(
+        /Unsupported CityJSON version "0\.9"\. Only v1\.x and v2\.x are supported\./,
       );
+    });
+
+    it("rejects versions above v2", () => {
+      const v3: CityJSONRoot = { ...EMPTY_CITYJSON, version: "3.0" };
+      expect(() => parseCityJSON(v3)).toThrow(
+        /Unsupported CityJSON version "3\.0"/,
+      );
+    });
+
+    it("accepts CityJSON v1.1", () => {
+      const v11: CityJSONRoot = { ...EMPTY_CITYJSON, version: "1.1" };
+      expect(() => parseCityJSON(v11)).not.toThrow();
     });
 
     it("accepts CityJSON v2.0", () => {
@@ -329,6 +338,77 @@ describe("parseCityJSON", () => {
         version: "2.1",
       };
       expect(() => parseCityJSON(v21)).not.toThrow();
+    });
+  });
+
+  // CityJSON 1.0 made `transform` optional: a file without it carries real
+  // (float) coordinates. Singapore's published hdb.json is exactly this shape.
+  describe("CityJSON v1.0 without a transform", () => {
+    const V1_NO_TRANSFORM: CityJSONRoot = {
+      type: "CityJSON",
+      version: "1.0",
+      metadata: {
+        referenceSystem: "urn:ogc:def:crs:EPSG::3414",
+        title: "Transform-less v1.0",
+      },
+      CityObjects: {
+        "block-1": {
+          type: "Building",
+          attributes: { measuredHeight: 12.5 },
+          geometry: [
+            {
+              type: "MultiSurface",
+              // A NUMBER, deliberately: v1.0 wrote numeric LoDs (the X.Y
+              // string arrived in 1.1, the same release that made
+              // `transform` mandatory). A string here would make this
+              // fixture a v1.1 file in disguise.
+              lod: 1,
+              boundaries: [[[0, 1, 2, 3]]],
+            },
+          ],
+        },
+      },
+      vertices: [
+        [28001.5, 38744.25, 0],
+        [28011.5, 38744.25, 0],
+        [28011.5, 38754.25, 0],
+        [28001.5, 38754.25, 12.5],
+      ],
+    };
+
+    it("parses without throwing", () => {
+      expect(() => parseCityJSON(V1_NO_TRANSFORM)).not.toThrow();
+    });
+
+    it("normalises the v1.0 numeric lod to the string every consumer compares", () => {
+      const model = parseCityJSON(V1_NO_TRANSFORM);
+      const obj = model.objects["block-1"]!;
+      // `String`-typed all the way down, or the first LoD-dropdown pick
+      // (`"1"` from a <select>) filters against the number and blanks the
+      // layer with no error.
+      expect(obj.surfaces[0]!.lod).toBe("1");
+      expect(obj.lod).toBe("1");
+    });
+
+    it("passes vertices through unscaled and untranslated", () => {
+      const model = parseCityJSON(V1_NO_TRANSFORM);
+      const surface = model.objects["block-1"]!.surfaces[0]!;
+      expect(surface.rings[0]).toEqual([
+        [28001.5, 38744.25, 0],
+        [28011.5, 38744.25, 0],
+        [28011.5, 38754.25, 0],
+        [28001.5, 38754.25, 12.5],
+      ]);
+      expect(model.objects["block-1"]!.bbox).toEqual([
+        28001.5, 38744.25, 0, 28011.5, 38754.25, 12.5,
+      ]);
+    });
+
+    it("keeps metadata, including a URN referenceSystem", () => {
+      const model = parseCityJSON(V1_NO_TRANSFORM);
+      expect(model.metadata.referenceSystem).toBe("urn:ogc:def:crs:EPSG::3414");
+      expect(model.metadata.title).toBe("Transform-less v1.0");
+      expect(model.vertexCount).toBe(4);
     });
   });
 });

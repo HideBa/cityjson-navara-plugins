@@ -8,20 +8,34 @@
 import type { BBox3, CityModel, CityObject } from "../types";
 import type { CityJSONObject, CityJSONRoot } from "./types";
 import {
+  IDENTITY_TRANSFORM,
   dequantizeAll,
   mapMetadata,
   mergeBBox,
   parseCityObject,
 } from "./parseHelpers";
 
+/**
+ * v1.x and v2.x only. The two differ in vocabulary (object types, semantic
+ * surfaces, the LoD spelling) rather than in the parts this parser reads, so
+ * refusing 1.x would only lock out real catalog data — much of the published
+ * corpus predates v1.1 — for no structural reason.
+ */
+const SUPPORTED_VERSION = /^[12]\./;
+
 export function parseCityJSON(root: CityJSONRoot): CityModel {
-  if (!root.version.startsWith("2.")) {
+  if (!SUPPORTED_VERSION.test(root.version)) {
     throw new Error(
-      `Unsupported CityJSON version "${root.version}". Only v2.x is supported.`,
+      `Unsupported CityJSON version "${root.version}". Only v1.x and v2.x are supported.`,
     );
   }
 
-  const realVertices = dequantizeAll(root.vertices, root.transform);
+  // `transform` is optional in v1.0 — absent means the vertices are already
+  // real coordinates, which the identity transform expresses exactly.
+  const realVertices = dequantizeAll(
+    root.vertices,
+    root.transform ?? IDENTITY_TRANSFORM,
+  );
 
   const objects: Record<string, CityObject> = {};
   let modelBBox: BBox3 | null = null;

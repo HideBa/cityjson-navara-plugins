@@ -97,14 +97,118 @@ export function isMetricCrs(epsg: number): boolean {
 }
 
 /**
- * Parse EPSG code from an OGC URI like
- * "https://www.opengis.net/def/crs/EPSG/0/7415" → 7415.
+ * Parse an EPSG code out of the spellings CityJSON files use in the wild.
+ *
+ * The spec recommends the OGC URI ("https://www.opengis.net/def/crs/EPSG/0/7415"),
+ * but published data is not that tidy: URNs ("urn:ogc:def:crs:EPSG::3414", and
+ * the versioned "urn:ogc:def:crs:EPSG:6.9:3414" that older tools emit) and the
+ * bare "EPSG:3414" are both common. All of them put the code last, separated by
+ * "/" or ":", so one pass over each separator covers the lot — and anything that
+ * does not end in a positive number is still rejected.
+ *
+ * COMPOUND URNs are the one form where "last" is WRONG: in
+ * "urn:ogc:def:crs,crs:EPSG::28992,crs:EPSG::5709" the second code is the
+ * VERTICAL CRS (NAP heights), and taking the tail would georeference the layer
+ * on a height system. The horizontal component comes first, so the URN regex
+ * runs before the tail heuristics and takes the FIRST code — the same rule
+ * `xmlHelpers.ts`'s CityGML srsName parser already applies.
  */
+const URN_EPSG = /urn:ogc:def:crs(?:,crs)?:EPSG:[\d.]*:(\d+)/;
+
 export function parseEpsgCode(uri: string | undefined): number | null {
   if (!uri) return null;
-  const segments = uri.split("/");
-  const last = segments[segments.length - 1];
+
+  const urnMatch = URN_EPSG.exec(uri);
+  if (urnMatch) {
+    const urnCode = Number(urnMatch[1]);
+    return Number.isFinite(urnCode) && urnCode > 0 ? urnCode : null;
+  }
+
+  const bySlash = uri.split("/");
+  const last = bySlash[bySlash.length - 1];
   if (!last) return null;
+
   const code = Number(last);
-  return Number.isFinite(code) && code > 0 ? code : null;
+  if (Number.isFinite(code) && code > 0) return code;
+
+  // Not a number — a URN or a bare "EPSG:3414" ends in a ":"-separated code.
+  // A URN's empty version field ("EPSG::3414") leaves an empty segment, so the
+  // last NON-EMPTY one is the code.
+  if (!last.includes(":")) return null;
+  const byColon = last.split(":").filter((s) => s.length > 0);
+  const tail = byColon[byColon.length - 1];
+  if (!tail) return null;
+
+  const urnCode = Number(tail);
+  return Number.isFinite(urnCode) && urnCode > 0 ? urnCode : null;
+}
+
+/**
+ * Remote proj4 definitions, fetched from epsg.io on demand.
+ *
+ * {@link KNOWN_PROJ4_DEFS} above only covers Dutch RD, because that is what the
+ * project started on — but the STAC catalog is worldwide (Singapore's SVY21 /
+ * EPSG:3414, every national grid a city publishes in), and a fixed list can
+ * never keep up. epsg.io serves a plain-text proj4 string per code, so a CRS the
+ * fixed list does not know can still be admitted.
+ *
+ * This does NOT loosen the units gate: {@link assertMetricCrs} still runs
+ * afterwards and still refuses anything whose definition is not explicitly
+ * `+units=m`, so a degree-based def fetched remotely is rejected exactly like a
+ * degree-based one we shipped ourselves. What the fetch buys is coverage, not
+ * permission.
+ *
+ * Failure is never fatal and never cached: the network is allowed to be down,
+ * and a later load of the same layer should try again.
+ */
+const REMOTE_DEF_TIMEOUT_MS = 10_000;
+
+/** In-flight fetches per code, so N concurrent layers share ONE request. */
+const inFlightDefs = new Map<number, Promise<boolean>>();
+
+/**
+ * Resolve a proj4 def for `epsg`, fetching `https://epsg.io/{code}.proj4` when
+ * the fixed list does not know it. Registers with proj4 on success. Never throws.
+ *
+ * Successes need no cache of their own — proj4's registry IS the cache, and the
+ * synchronous {@link ensureProjDef} short-circuits every later call.
+ */
+export async function ensureProjDefAsync(epsg: number): Promise<boolean> {
+  if (ensureProjDef(epsg)) return true;
+
+  const pending = inFlightDefs.get(epsg);
+  if (pending) return pending;
+
+  const request = fetchAndRegisterDef(epsg).finally(() => {
+    inFlightDefs.delete(epsg);
+  });
+  inFlightDefs.set(epsg, request);
+  return request;
+}
+
+async function fetchAndRegisterDef(epsg: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REMOTE_DEF_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`https://epsg.io/${epsg}.proj4`, {
+      signal: controller.signal,
+    });
+    if (!res.ok) return false;
+
+    const def = (await res.text()).trim();
+    // epsg.io answers an unknown code with an error page, not a 404 body we can
+    // trust, so the body itself has to look like a proj4 string.
+    if (!def || !def.includes("+proj=")) return false;
+
+    proj4.defs(`EPSG:${epsg}`, def);
+    // proj4 accepts the string silently even when it cannot parse it into a
+    // usable projection, so confirm the registry actually gained something.
+    return Boolean(proj4.defs(`EPSG:${epsg}`));
+  } catch {
+    // Offline, CORS, abort, or a def string proj4 rejects — all "not resolved".
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }

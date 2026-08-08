@@ -13,11 +13,15 @@ import type { BBox3, CityModel, CityObject } from "../types";
 import type { CityJSONObject, CityJSONRoot } from "../cityjson/types";
 import type { CityJSONFeature } from "./types";
 import {
+  IDENTITY_TRANSFORM,
   dequantizeAll,
   mapMetadata,
   mergeBBox,
   parseCityObject,
 } from "../cityjson/parseHelpers";
+
+/** Same gate as parseCityJSON — see the note there for why 1.x is admitted. */
+const SUPPORTED_VERSION = /^[12]\./;
 
 export function parseCityJSONSeq(text: string): CityModel {
   const lines = text.split("\n").filter((line) => line.trim().length > 0);
@@ -34,11 +38,15 @@ export function parseCityJSONSeq(text: string): CityModel {
       `Invalid CityJSONSeq header: expected "type": "CityJSON", got "${String(header.type)}".`,
     );
   }
-  if (!header.version.startsWith("2.")) {
+  if (!SUPPORTED_VERSION.test(header.version)) {
     throw new Error(
-      `Unsupported CityJSON version "${header.version}". Only v2.x is supported.`,
+      `Unsupported CityJSON version "${header.version}". Only v1.x and v2.x are supported.`,
     );
   }
+
+  // A v1.0 header may omit `transform`; its features then carry real
+  // coordinates, which the identity transform passes through unchanged.
+  const transform = header.transform ?? IDENTITY_TRANSFORM;
 
   const objects: Record<string, CityObject> = {};
   let modelBBox: BBox3 | null = null;
@@ -50,7 +58,7 @@ export function parseCityJSONSeq(text: string): CityModel {
     if (feature.type !== "CityJSONFeature") continue;
 
     // Each feature carries its own local vertex array, dequantized with the header's transform
-    const realVertices = dequantizeAll(feature.vertices, header.transform);
+    const realVertices = dequantizeAll(feature.vertices, transform);
     totalVertexCount += feature.vertices.length;
 
     for (const [id, rawObj] of Object.entries(feature.CityObjects) as [
