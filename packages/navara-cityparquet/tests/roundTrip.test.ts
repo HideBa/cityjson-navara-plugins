@@ -25,7 +25,12 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { CityJSONRoot, Surface, Vec3 } from "@cityjson/navara-core";
+import type {
+  CityJSONRoot,
+  CityModel,
+  Surface,
+  Vec3,
+} from "@cityjson/navara-core";
 import { parseCityJSON } from "@cityjson/navara-core";
 import { readCityParquetTable } from "../src/tableReader";
 import { assembleCityParquetModel } from "../src/packageAssembly";
@@ -39,6 +44,13 @@ const PARQUET = fileURLToPath(
 /** Committed copy — no absolute parent-repo paths in the standalone submodule. */
 const SOURCE = fileURLToPath(
   new URL("./fixtures/two-buildings.city.json", import.meta.url),
+);
+
+const HOLES_PARQUET = fileURLToPath(
+  new URL("./fixtures/holes-cityparquet/building.parquet", import.meta.url),
+);
+const HOLES_SOURCE = fileURLToPath(
+  new URL("./fixtures/holes.city.json", import.meta.url),
 );
 
 /**
@@ -104,6 +116,78 @@ function vertexKeys(surfaces: ReadonlyArray<Surface>): Set<string> {
   return new Set(surfaces.flatMap((s) => s.rings.flat()).map(coordKey));
 }
 
+/**
+ * The oracle itself: assert the two models describe the same city.
+ *
+ * Factored out so a second fixture gets this comparison at FULL strength
+ * rather than a weaker bespoke one — the strongest statement about a hole is
+ * that the whole model still matches with the hole in it, not a hand-picked
+ * assertion about one ring.
+ */
+function expectSameCity(cj: CityModel, cp: CityModel): void {
+  expect(Object.keys(cp.objects).sort()).toEqual(
+    Object.keys(cj.objects).sort(),
+  );
+
+  // Guards the shared-LoD filter below from passing vacuously: if it ever
+  // intersected to nothing, every comparison would be `[] === []`.
+  let comparedSurfaces = 0;
+  let comparedVertices = 0;
+
+  for (const [id, a] of Object.entries(cj.objects)) {
+    const b = cp.objects[id];
+    expect(b, `cityparquet object '${id}'`).toBeDefined();
+    if (b === undefined) continue;
+
+    expect(b.objectType, id).toBe(a.objectType);
+    expect([...b.parents].sort(), id).toEqual([...a.parents].sort());
+    expect([...b.children].sort(), id).toEqual([...a.children].sort());
+
+    // Attributes survive the column round-trip byte for byte on these fixtures
+    // — no normalisation needed. `toEqual` ignores key order (the parquet
+    // yields them in footer-column order, the CityJSON in file order) and
+    // ignores the prototype (the CityParquet map is null-prototype on
+    // purpose; see packageAssembly's bareMap).
+    expect(b.attributes, id).toEqual(a.attributes);
+
+    // The parquet adds a synthesized LoD0 footprint the source may not have;
+    // compare only the LoDs present in BOTH.
+    const sharedLods = new Set(
+      [...new Set(a.surfaces.map((s) => s.lod))].filter((lod) =>
+        b.surfaces.some((s) => s.lod === lod),
+      ),
+    );
+    const aShared = a.surfaces.filter((s) => sharedLods.has(s.lod));
+    const bShared = b.surfaces.filter((s) => sharedLods.has(s.lod));
+
+    expect(bShared.map(surfaceSignature).sort(), id).toEqual(
+      aShared.map(surfaceSignature).sort(),
+    );
+
+    // Cardinality AND placement: the multiset of per-surface, per-ring
+    // vertex sets, keyed by `lod:type`. Equality here is what a subset check
+    // cannot give — a lost hole, a short ring, a duplicated vertex or a ring
+    // filed under the wrong semantic type all break it.
+    expect(bShared.map(surfaceShape).sort(), id).toEqual(
+      aShared.map(surfaceShape).sort(),
+    );
+    comparedSurfaces += bShared.length;
+
+    // Coordinate agreement, BOTH ways: the two models' ring-vertex sets at
+    // the shared LoDs are the same set. One-way (`cp ⊆ cj`) would still pass
+    // with geometry missing from the CityParquet side.
+    const aVerts = vertexKeys(aShared);
+    const bVerts = vertexKeys(bShared);
+    expect([...bVerts].sort(), `${id}: cityparquet vertices`).toEqual(
+      [...aVerts].sort(),
+    );
+    comparedVertices += bVerts.size;
+  }
+
+  expect(comparedSurfaces).toBeGreaterThan(0);
+  expect(comparedVertices).toBeGreaterThan(0);
+}
+
 describe("cityparquet round-trip vs the CityJSON parser", () => {
   it("agrees on objects, hierarchy, surfaces and coordinates", async () => {
     const root = JSON.parse(await readFile(SOURCE, "utf8")) as CityJSONRoot;
@@ -112,67 +196,7 @@ describe("cityparquet round-trip vs the CityJSON parser", () => {
       { name: "building.parquet", bytes: await readFile(PARQUET) },
     ]);
 
-    expect(Object.keys(cp.objects).sort()).toEqual(
-      Object.keys(cj.objects).sort(),
-    );
-
-    // Guards the shared-LoD filter below from passing vacuously: if it ever
-    // intersected to nothing, every comparison would be `[] === []`.
-    let comparedSurfaces = 0;
-    let comparedVertices = 0;
-
-    for (const [id, a] of Object.entries(cj.objects)) {
-      const b = cp.objects[id];
-      expect(b, `cityparquet object '${id}'`).toBeDefined();
-      if (b === undefined) continue;
-
-      expect(b.objectType, id).toBe(a.objectType);
-      expect([...b.parents].sort(), id).toEqual([...a.parents].sort());
-      expect([...b.children].sort(), id).toEqual([...a.children].sort());
-
-      // Attributes survive the column round-trip byte for byte on this fixture
-      // — no normalisation needed. `toEqual` ignores key order (the parquet
-      // yields them in footer-column order, the CityJSON in file order) and
-      // ignores the prototype (the CityParquet map is null-prototype on
-      // purpose; see packageAssembly's bareMap).
-      expect(b.attributes, id).toEqual(a.attributes);
-
-      // The parquet adds a synthesized LoD0 footprint the source may not have;
-      // compare only the LoDs present in BOTH.
-      const sharedLods = new Set(
-        [...new Set(a.surfaces.map((s) => s.lod))].filter((lod) =>
-          b.surfaces.some((s) => s.lod === lod),
-        ),
-      );
-      const aShared = a.surfaces.filter((s) => sharedLods.has(s.lod));
-      const bShared = b.surfaces.filter((s) => sharedLods.has(s.lod));
-
-      expect(bShared.map(surfaceSignature).sort(), id).toEqual(
-        aShared.map(surfaceSignature).sort(),
-      );
-
-      // Cardinality AND placement: the multiset of per-surface, per-ring
-      // vertex sets, keyed by `lod:type`. Equality here is what a subset check
-      // cannot give — a lost hole, a short ring, a duplicated vertex or a ring
-      // filed under the wrong semantic type all break it.
-      expect(bShared.map(surfaceShape).sort(), id).toEqual(
-        aShared.map(surfaceShape).sort(),
-      );
-      comparedSurfaces += bShared.length;
-
-      // Coordinate agreement, BOTH ways: the two models' ring-vertex sets at
-      // the shared LoDs are the same set. One-way (`cp ⊆ cj`) would still pass
-      // with geometry missing from the CityParquet side.
-      const aVerts = vertexKeys(aShared);
-      const bVerts = vertexKeys(bShared);
-      expect([...bVerts].sort(), `${id}: cityparquet vertices`).toEqual(
-        [...aVerts].sort(),
-      );
-      comparedVertices += bVerts.size;
-    }
-
-    expect(comparedSurfaces).toBeGreaterThan(0);
-    expect(comparedVertices).toBeGreaterThan(0);
+    expectSameCity(cj, cp);
   });
 
   /**
@@ -236,6 +260,49 @@ describe("cityparquet round-trip vs the CityJSON parser", () => {
     expect(
       replace(0, { ...first, rings: [[shifted, ...firstRing.slice(1)]] }),
     ).not.toEqual(baseline);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Interior rings
+// ---------------------------------------------------------------------------
+
+/**
+ * The hole case needs its OWN fixture, because `two-buildings` cannot fail it.
+ *
+ * Every polygon in that fixture is simply connected, so a reader that stopped
+ * after ring 0 of each WKB polygon — the single most plausible bug in this
+ * decode path, since the ring loop is a bare index loop — would round-trip it
+ * perfectly. `holes.city.json` is the same shape of file (same 1e-3 transform,
+ * so {@link coordKey} stays exact; same EPSG:7415) with one RoofSurface written
+ * in CityJSON's `[[outer], [inner]]` form: a flat roof with a rectangular
+ * opening strictly inside it, coplanar at z = 6 m.
+ *
+ * The real assertion is {@link expectSameCity} — the hole is pinned by the same
+ * per-ring `surfaceShape` multiset as everything else. The two `rings.length`
+ * checks around it exist only to prove the fixture still HAS a hole on both
+ * sides: without them, someone editing the fixture down to a plain box would
+ * leave a green test that no longer tests anything.
+ */
+describe("cityparquet round-trip with an interior ring", () => {
+  it("keeps a roof hole as a second ring on both sides", async () => {
+    const root = JSON.parse(
+      await readFile(HOLES_SOURCE, "utf8"),
+    ) as CityJSONRoot;
+    const cj = parseCityJSON(root);
+    const cp = await assembleCityParquetModel([
+      { name: "building.parquet", bytes: await readFile(HOLES_PARQUET) },
+    ]);
+
+    const twoRinged = (model: CityModel): ReadonlyArray<Surface> =>
+      Object.values(model.objects)
+        .flatMap((o) => o.surfaces)
+        .filter((s) => s.lod === "2.2" && s.rings.length === 2);
+
+    expect(twoRinged(cj).map(surfaceSignature)).toEqual(["2.2:RoofSurface"]);
+    expect(twoRinged(cp).map(surfaceSignature)).toEqual(["2.2:RoofSurface"]);
+
+    expectSameCity(cj, cp);
   });
 });
 
