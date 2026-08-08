@@ -261,9 +261,23 @@ const TEXT_DECODER = new TextDecoder();
  * The Rust decoder renders a Date32 as `YYYY-MM-DD` and a timestamp as RFC3339;
  * both arrive here as an indistinguishable `Date`, so both become the RFC3339
  * spelling.
+ *
+ * AN INT64 PAST 2^53 BECOMES A STRING, NOT A ROUNDED NUMBER. `Number()` is
+ * exact only up to `Number.MAX_SAFE_INTEGER`; beyond it the nearest double is
+ * a value that was never in the file (`Number(2n ** 63n - 1n)` is
+ * 9223372036854775808), and nothing downstream can tell that it drifted.
+ * Columns at that magnitude are identifiers, so a wrong NUMBER is traded for a
+ * right STRING: it displays, filters, compares and shares as the id that was
+ * written, at the cost of a type a rule cannot do arithmetic on — which is not
+ * a thing anyone does to a key.
  */
 function attributeValue(value: unknown): unknown {
-  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "bigint") {
+    return value > BigInt(Number.MAX_SAFE_INTEGER) ||
+      value < BigInt(Number.MIN_SAFE_INTEGER)
+      ? value.toString()
+      : Number(value);
+  }
   if (value instanceof Date) return value.toISOString();
   if (value instanceof Uint8Array) return TEXT_DECODER.decode(value);
   if (Array.isArray(value)) return value.map(attributeValue);
@@ -582,12 +596,7 @@ function readRowGeometry(
       column.name,
       warnings,
     );
-    const faceSemantics = readFaceSemantics(
-      props,
-      id,
-      column.name,
-      warnings,
-    );
+    const faceSemantics = readFaceSemantics(props, id, column.name, warnings);
 
     // `faces` is flat across every shell and every solid member, and so is
     // `face_semantics` — one index pairs them (the `shells` field exists to

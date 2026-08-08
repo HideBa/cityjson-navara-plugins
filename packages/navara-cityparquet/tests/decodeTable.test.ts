@@ -206,9 +206,9 @@ describe("decodeTableObjects (fixture)", () => {
     expect(types.has("RoofSurface")).toBe(true);
     expect(types.has("WallSurface")).toBe(true);
     expect(types.has("GroundSurface")).toBe(true);
-    expect(
-      Object.keys(solidBearer?.attributes ?? {}).length,
-    ).toBeGreaterThan(0);
+    expect(Object.keys(solidBearer?.attributes ?? {}).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("carries the semantic surface's extra attributes and the source bbox", async () => {
@@ -335,6 +335,42 @@ describe("decodeTableObjects (synthetic rows)", () => {
       list: ["x", "y"],
       bigList: [1, 2],
       struct: { nested: true },
+    });
+  });
+
+  /**
+   * The conversion above is lossy exactly once: past 2^53 a double can no
+   * longer name every integer, so `Number(2n ** 63n - 1n)` is
+   * 9223372036854775808 — a value that was never in the file, differing from
+   * the stored one with no warning. INT64 columns at that magnitude are
+   * identifiers (BAG keys, snowflake ids), and an identifier that is silently
+   * off by one is worse than an identifier of the wrong TYPE: a string still
+   * displays, filters and shares correctly, and equality against another copy
+   * of the same id still holds.
+   */
+  it("keeps an out-of-range INT64 as a string rather than rounding it", () => {
+    const objects = decodeTableObjects(
+      tableOf(
+        [
+          {
+            id: "a",
+            object_type: "Building",
+            huge: 2n ** 63n - 1n,
+            veryNegative: -(2n ** 63n),
+            // Still exactly representable: these stay numbers, so the escape
+            // hatch cannot creep over ordinary counts and years.
+            safe: BigInt(Number.MAX_SAFE_INTEGER),
+            hugeList: [2n ** 53n + 1n, 7n],
+          },
+        ],
+        { attributes: ["huge", "veryNegative", "safe", "hugeList"] },
+      ),
+    );
+    expect(at(objects, "a").attributes).toEqual({
+      huge: "9223372036854775807",
+      veryNegative: "-9223372036854775808",
+      safe: Number.MAX_SAFE_INTEGER,
+      hugeList: ["9007199254740993", 7],
     });
   });
 
