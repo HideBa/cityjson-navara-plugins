@@ -21,14 +21,14 @@ import {
 // Fixture CRS: EPSG:7415 (RD New + NAP), the two-buildings fixture's CRS.
 const RD = "https://www.opengis.net/def/crs/EPSG/0/7415";
 
-// RD New puts its origin (155000, 463000) at Amersfoort, 5.38764E / 52.15616N.
-// (85000, 446000) is therefore 70 km west and 17 km south of it: at latitude 52
-// that is 70 / (111.32 * cos 52) = 1.02 degrees of longitude and 17 / 111.13 =
-// 0.15 degrees of latitude, i.e. ~4.37E / ~52.00N. The plan brief's 4.348 for
-// this point was an arithmetic slip; these are the reprojected values, checked
-// against that hand computation.
-const ORIGIN_LNG = 4.36895;
-const ORIGIN_LAT = 51.99816;
+// RD New puts its origin (155000, 463000) at Amersfoort; (85000, 446000) is
+// 70 km west and 17 km south of it. Ground truth from PROJ (cs2cs EPSG:28992
+// → EPSG:4326) is 4.367888E / 51.997962N. The values first pinned here
+// (4.36895 / 51.99816) came out of a towgs84 def with half-negated rotation
+// signs — ~76 m ENE of truth, far below what the km-scale hand computation in
+// this comment's earlier version could catch.
+const ORIGIN_LNG = 4.367888;
+const ORIGIN_LAT = 51.997962;
 
 describe("resolveEpsg", () => {
   it("parses an OGC CRS URI", () => {

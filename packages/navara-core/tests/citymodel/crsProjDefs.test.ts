@@ -53,8 +53,13 @@ describe("ensureProjDef", () => {
   it("reprojects an RD New coordinate into WGS84 near Delft", () => {
     ensureProjDef(28992);
     const [lon, lat] = proj4("EPSG:28992", "EPSG:4326", [85530, 446100]);
-    expect(lon).toBeCloseTo(4.36, 1);
-    expect(lat).toBeCloseTo(52.01, 1);
+    // Ground truth from PROJ (cs2cs EPSG:28992 → EPSG:4326), pinned to ~5 m:
+    // proj4's +towgs84 wants position-vector rotations, EPSG publishes
+    // coordinate-frame ones, and a half-negated conversion (the def this test
+    // shipped with) put every Dutch layer ~76 m ENE of truth — a regression
+    // this tolerance catches while decimetre-level datum residue passes.
+    expect(lon).toBeCloseTo(4.375584, 4);
+    expect(lat).toBeCloseTo(51.998927, 4);
   });
 });
 

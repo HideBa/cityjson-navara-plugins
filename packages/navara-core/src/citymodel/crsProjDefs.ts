@@ -21,8 +21,13 @@
  */
 import proj4 from "proj4";
 
+// proj4's +towgs84 takes POSITION-VECTOR rotations; EPSG publishes the
+// Amersfoort→WGS84 rotations in the COORDINATE-FRAME convention, so all three
+// must be negated. An earlier version negated only rx, which shifted every
+// Dutch layer ~76 m ENE (rigidly — origin and vertices project through the
+// same def). The corrected signs reproduce PROJ's cs2cs to ~5 mm.
 const RD_NEW_DEF =
-  "+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +towgs84=565.2369,50.0087,465.658,-0.40685733032239757,-0.3507326765425626,1.8703473836067956,4.0812 +units=m +no_defs";
+  "+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +towgs84=565.2369,50.0087,465.658,-0.40685733032239757,0.3507326765425626,-1.8703473836067956,4.0812 +units=m +no_defs";
 
 const KNOWN_PROJ4_DEFS: Record<number, string> = {
   28992: RD_NEW_DEF, // EPSG:28992 — RD New (Netherlands) horizontal
