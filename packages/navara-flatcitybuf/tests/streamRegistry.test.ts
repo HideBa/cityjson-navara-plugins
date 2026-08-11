@@ -16,6 +16,7 @@
  * pair `attachSettleController` binds to.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import proj4 from "proj4";
 import { ensureProjDef, makeEnuFrame, enuToEcef } from "@cityjson/navara-core";
 import { StreamLayerRegistry } from "../src/streamRegistry";
@@ -24,7 +25,6 @@ import type { CellMeshFactory } from "../src/cellMeshes";
 import type { PickRaySource } from "../src/navaraRays";
 import type { WorkerClient } from "../src/workerClient";
 import type { WorkerResponse } from "../src/workerProtocol";
-import type { Ray } from "../src/viewportFootprint";
 import {
   FLYTO_QUIET_MS,
   GEOID_TIMEOUT_MS,
@@ -72,16 +72,20 @@ class FakeView extends FakeEmitter {
   }
 }
 
-/** A layer stub: the three members the driver touches. */
+/** A layer stub: the three members the driver touches.
+ *
+ *  Each mock names its signature: vitest 4's bare `vi.fn()` infers
+ *  `Mock<Procedure | Constructable>`, which is not callable as `() => void`
+ *  and so does not satisfy the `StreamLayerLike & {...}` intersection. */
 function fakeLayer(): StreamLayerLike & {
-  commit: ReturnType<typeof vi.fn>;
-  abortInFlight: ReturnType<typeof vi.fn>;
-  delete: ReturnType<typeof vi.fn>;
+  commit: Mock<StreamLayerLike["commit"]>;
+  abortInFlight: Mock<() => void>;
+  delete: Mock<() => void>;
 } {
   return {
-    commit: vi.fn(async () => {}),
-    abortInFlight: vi.fn(),
-    delete: vi.fn(),
+    commit: vi.fn<StreamLayerLike["commit"]>(async () => {}),
+    abortInFlight: vi.fn<() => void>(),
+    delete: vi.fn<() => void>(),
   };
 }
 
@@ -169,7 +173,9 @@ describe("StreamLayerRegistry — camera driver", () => {
     expect(b.commit).toHaveBeenCalledTimes(1);
     // Every layer commits against ONE ray set.
     expect(a.commit.mock.calls[0]![0]).toEqual(b.commit.mock.calls[0]![0]);
-    expect(a.commit.mock.calls[0]![0] as Ray[]).toHaveLength(4);
+    // No cast: `commit`'s mock is typed from StreamLayerLike, so this is
+    // already the `readonly [Ray, Ray, Ray, Ray]` tuple.
+    expect(a.commit.mock.calls[0]![0]).toHaveLength(4);
   });
 
   it("does not commit while there is no view to take rays from", () => {

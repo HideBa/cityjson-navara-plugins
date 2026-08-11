@@ -17,6 +17,15 @@
     "declarationMap": true,
     "emitDeclarationOnly": true,
     "sourceMap": true,
+    // The tests read fixtures through `node:fs` / `node:path` and
+    // `import.meta.dirname`. Those types used to reach the program only by
+    // accident — via the `/// <reference types="node" />` inside the `vite`
+    // d.ts that vitest 3 pulled in — and vitest 4 no longer drags it along.
+    // Automatic @types inclusion is not what was supplying them (verified with
+    // --explainFiles: no implicit type library is included here at all), so
+    // name the dependency explicitly. Resolved from the workspace root's
+    // @types/node through the default typeRoots walk-up.
+    "types": ["node"],
     // No `baseUrl`: TypeScript 6 deprecates it, and since TS 4.4 `paths`
     // entries resolve relative to this file's directory on their own — which
     // is the same workspace root `baseUrl: "."` used to name. The app's
