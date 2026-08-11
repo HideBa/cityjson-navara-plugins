@@ -24,10 +24,10 @@
     "hyparquet-compressors": "1.1.1"
   },
   "devDependencies": {
-    "proj4": "2.20.8",
+    "proj4": "2.21.0",
     "three": "0.183.2",
-    "tsup": "8.5.0",
+    "tsup": "8.5.1",
     "typescript": "5.9.3",
-    "vitest": "3.2.4"
+    "vitest": "3.2.7"
   }
 }
