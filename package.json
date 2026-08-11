@@ -16,7 +16,7 @@
     "clean": "rm -rf packages/*/dist packages/*/dist-types packages/*/*.tsbuildinfo"
   },
   "devDependencies": {
-    "@types/node": "24.13.3",
+    "@types/node": "26.2.0",
     "@types/three": "0.183.1",
     "proj4": "2.21.0",
     "three": "0.183.2",
