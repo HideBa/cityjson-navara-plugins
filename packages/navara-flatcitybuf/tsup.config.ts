@@ -21,7 +21,18 @@ export default defineConfig({
     // makes that same non-project program demand an explicit file list, which
     // fails with TS6307 as soon as the package has more than one module. The
     // dts pass only ever needs a plain program rooted at the entry.
-    compilerOptions: { paths: {}, composite: false, incremental: false },
+    //
+    // tsup 8.5.1 hardcodes `baseUrl: compilerOptions.baseUrl || "."` for its
+    // dts program, AFTER spreading ours, so it cannot be unset from here and
+    // TS 6 errors TS5101 on the deprecated option. `ignoreDeprecations`
+    // excuses tsup's injected `baseUrl` only — our own tsconfigs carry none,
+    // and `tsc -b` stays strict about it.
+    compilerOptions: {
+      paths: {},
+      composite: false,
+      incremental: false,
+      ignoreDeprecations: "6.0",
+    },
   },
   sourcemap: true,
   clean: true,

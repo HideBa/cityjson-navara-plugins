@@ -17,18 +17,21 @@
     "declarationMap": true,
     "emitDeclarationOnly": true,
     "sourceMap": true,
-    "baseUrl": ".",
+    // No `baseUrl`: TypeScript 6 deprecates it, and since TS 4.4 `paths`
+    // entries resolve relative to this file's directory on their own — which
+    // is the same workspace root `baseUrl: "."` used to name. The app's
+    // tsconfig.app.json carries the identical note for the identical reason.
     "paths": {
-      "@cityjson/navara-core": ["packages/navara-core/src/index.ts"],
-      "@cityjson/navara-cityjson": ["packages/navara-cityjson/src/index.ts"],
+      "@cityjson/navara-core": ["./packages/navara-core/src/index.ts"],
+      "@cityjson/navara-cityjson": ["./packages/navara-cityjson/src/index.ts"],
       "@cityjson/navara-cityjson/plugin": [
-        "packages/navara-cityjson/src/plugin.ts"
+        "./packages/navara-cityjson/src/plugin.ts"
       ],
       "@cityjson/navara-flatcitybuf": [
-        "packages/navara-flatcitybuf/src/index.ts"
+        "./packages/navara-flatcitybuf/src/index.ts"
       ],
       "@cityjson/navara-cityparquet": [
-        "packages/navara-cityparquet/src/index.ts"
+        "./packages/navara-cityparquet/src/index.ts"
       ]
     }
   }

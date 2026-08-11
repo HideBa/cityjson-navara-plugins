@@ -18,7 +18,18 @@ export default defineConfig({
     // fails with TS6307 as soon as the barrel re-exports a second module —
     // which it now does. The dts pass only ever needs a plain program rooted
     // at the entry. Same fix, same reason, as navara-cityjson's.
-    compilerOptions: { paths: {}, composite: false, incremental: false },
+    //
+    // tsup 8.5.1 hardcodes `baseUrl: compilerOptions.baseUrl || "."` for its
+    // dts program, AFTER spreading ours, so it cannot be unset from here and
+    // TS 6 errors TS5101 on the deprecated option. `ignoreDeprecations`
+    // excuses tsup's injected `baseUrl` only — our own tsconfigs carry none,
+    // and `tsc -b` stays strict about it.
+    compilerOptions: {
+      paths: {},
+      composite: false,
+      incremental: false,
+      ignoreDeprecations: "6.0",
+    },
   },
   sourcemap: true,
   clean: true,
