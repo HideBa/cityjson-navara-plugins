@@ -81,13 +81,23 @@ export interface TextureCacheEntry {
   readonly texture: Texture | null;
 }
 
+export type TextureChangeListener = (
+  textureIndex: number,
+  entry: TextureCacheEntry,
+) => void;
+
 export interface TextureCacheOptions {
-  readonly textures: ReadonlyArray<CityTexture>;
+  /** The definitions, by model texture index — an array for a static model,
+   *  or a lookup for a streaming layer whose table grows cell by cell. */
+  readonly textures:
+    | ReadonlyArray<CityTexture>
+    | ((textureIndex: number) => CityTexture | undefined);
   readonly baseUrl: string | null | undefined;
   readonly source: TextureSource;
   /** An image became ready (or failed): the owner re-applies materials and
-   *  repaints. Called only for indices previously requested. */
-  readonly onChange: (textureIndex: number, entry: TextureCacheEntry) => void;
+   *  repaints. Called only for indices previously requested. Streaming
+   *  layers use {@link TextureCache.subscribe} instead. */
+  readonly onChange?: TextureChangeListener;
   /** Where to send the one-per-cache "could not resolve" warning. */
   readonly warn?: (message: string) => void;
 }
@@ -99,20 +109,47 @@ export interface TextureCacheOptions {
  */
 export class TextureCache {
   private readonly entries = new Map<number, TextureCacheEntry>();
+  private readonly listeners = new Set<TextureChangeListener>();
   private disposed = false;
   private unresolvable = 0;
 
-  constructor(private readonly options: TextureCacheOptions) {}
+  constructor(private readonly options: TextureCacheOptions) {
+    if (options.onChange) this.listeners.add(options.onChange);
+  }
 
   get(textureIndex: number): TextureCacheEntry | undefined {
     return this.entries.get(textureIndex);
+  }
+
+  /** True when the image for `textureIndex` is on the GPU-ready side. */
+  isReady(textureIndex: number): boolean {
+    return this.entries.get(textureIndex)?.status === "ready";
+  }
+
+  /** Listen for readiness/failure; returns the unsubscribe. */
+  subscribe(listener: TextureChangeListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private definition(textureIndex: number): CityTexture | undefined {
+    const textures = this.options.textures;
+    return typeof textures === "function"
+      ? textures(textureIndex)
+      : textures[textureIndex];
+  }
+
+  private notify(textureIndex: number, entry: TextureCacheEntry): void {
+    for (const listener of [...this.listeners]) listener(textureIndex, entry);
   }
 
   /** Start loading `textureIndex` unless it is already known. */
   request(textureIndex: number): TextureCacheEntry {
     const known = this.entries.get(textureIndex);
     if (known) return known;
-    const definition = this.options.textures[textureIndex];
+    const definition = this.definition(textureIndex);
     const url = definition
       ? resolveTextureUrl(definition.image, this.options.baseUrl)
       : null;
@@ -143,22 +180,24 @@ export class TextureCache {
         applyTextureSettings(texture, definition);
         const ready: TextureCacheEntry = { status: "ready", texture };
         this.entries.set(textureIndex, ready);
-        this.options.onChange(textureIndex, ready);
+        this.notify(textureIndex, ready);
       },
       () => {
         if (this.disposed) return;
         const failed: TextureCacheEntry = { status: "failed", texture: null };
         this.entries.set(textureIndex, failed);
-        this.options.onChange(textureIndex, failed);
+        this.notify(textureIndex, failed);
       },
     );
-    return loading;
+    // A source that answers synchronously has already replaced `loading`.
+    return this.entries.get(textureIndex) ?? loading;
   }
 
   dispose(): void {
     this.disposed = true;
     for (const entry of this.entries.values()) entry.texture?.dispose();
     this.entries.clear();
+    this.listeners.clear();
   }
 }
 

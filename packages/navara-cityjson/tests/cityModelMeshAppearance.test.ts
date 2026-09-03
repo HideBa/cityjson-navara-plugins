@@ -92,6 +92,9 @@ const base = {
   textureBaseUrl: "https://host/data/rotterdam.jsonl",
 };
 
+/** Texture changes are coalesced onto a microtask; let it run. */
+const settle = () => new Promise<void>((r) => queueMicrotask(r));
+
 function materialsOf(m: CityModelMesh): MeshBasicMaterial[] {
   const mat = m.object3d.material;
   return (Array.isArray(mat) ? mat : [mat]) as MeshBasicMaterial[];
@@ -121,7 +124,7 @@ describe("CityModelMesh with a texture theme", () => {
     m.dispose();
   });
 
-  it("keeps semantic colours until an image lands, then whites that group out", () => {
+  it("keeps semantic colours until an image lands, then whites that group out", async () => {
     const { source, pending } = fakeSource();
     const m = new CityModelMesh({
       ...base,
@@ -134,6 +137,7 @@ describe("CityModelMesh with a texture theme", () => {
     expect(before).not.toEqual([1, 1, 1]);
     const texture = new Texture();
     pending[0]!.onLoad(texture);
+    await settle();
     expect(materialsOf(m)[1]!.map).toBe(texture);
     expect(colorAt(m, roofGroup.start)).toEqual([1, 1, 1]);
     // The wall's image is still loading: its colour is untouched.
@@ -143,7 +147,7 @@ describe("CityModelMesh with a texture theme", () => {
     m.dispose();
   });
 
-  it("falls back to colours for an image that fails", () => {
+  it("falls back to colours for an image that fails", async () => {
     const { source, pending } = fakeSource();
     const m = new CityModelMesh({
       ...base,
@@ -151,6 +155,7 @@ describe("CityModelMesh with a texture theme", () => {
       textureSource: source,
     });
     pending[1]!.onError(new Error("404"));
+    await settle();
     const wallGroup = m.object3d.geometry.groups.find(
       (g) => g.materialIndex === 2,
     )!;
@@ -159,7 +164,7 @@ describe("CityModelMesh with a texture theme", () => {
     m.dispose();
   });
 
-  it("paints highlights over the white mask so a selected textured face still tints", () => {
+  it("paints highlights over the white mask so a selected textured face still tints", async () => {
     const { source, pending } = fakeSource();
     const m = new CityModelMesh({
       ...base,
@@ -167,6 +172,7 @@ describe("CityModelMesh with a texture theme", () => {
       textureSource: source,
     });
     pending[0]!.onLoad(new Texture());
+    await settle();
     const roofGroup = m.object3d.geometry.groups.find(
       (g) => g.materialIndex === 1,
     )!;
@@ -179,7 +185,7 @@ describe("CityModelMesh with a texture theme", () => {
     m.dispose();
   });
 
-  it("keeps loaded images across a LoD rebuild and drops them on a theme change", () => {
+  it("keeps loaded images across a LoD rebuild and drops them on a theme change", async () => {
     const { source, pending } = fakeSource();
     const m = new CityModelMesh({
       ...base,
@@ -188,6 +194,7 @@ describe("CityModelMesh with a texture theme", () => {
     });
     const texture = new Texture();
     pending[0]!.onLoad(texture);
+    await settle();
     m.setLod("2");
     m.setLod(null);
     expect(pending).toHaveLength(2); // no re-request
@@ -275,6 +282,26 @@ describe("CityModelMesh with a texture theme", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     for (const material of materialsOf(m)) expect(material.map).toBeNull();
     warn.mockRestore();
+    m.dispose();
+  });
+});
+
+describe("CityModelMesh with a synchronous texture source", () => {
+  it("attaches an image that is ready before the materials exist", async () => {
+    const source: TextureSource = {
+      load: (_url, onLoad) => onLoad(new Texture()),
+    };
+    const m = new CityModelMesh({
+      ...base,
+      appearance: { kind: "texture", name: "rgb" },
+      textureSource: source,
+    });
+    await settle();
+    expect(materialsOf(m)[1]!.map).not.toBeNull();
+    const roofGroup = m.object3d.geometry.groups.find(
+      (g) => g.materialIndex === 1,
+    )!;
+    expect(colorAt(m, roofGroup.start)).toEqual([1, 1, 1]);
     m.dispose();
   });
 });

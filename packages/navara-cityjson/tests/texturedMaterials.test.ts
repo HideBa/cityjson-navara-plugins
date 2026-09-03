@@ -126,6 +126,22 @@ describe("TextureCache", () => {
   });
 });
 
+describe("TextureCache with a synchronous source", () => {
+  it("returns the ready entry when onLoad fires inside load()", () => {
+    const source: TextureSource = {
+      load: (_url, onLoad) => onLoad(new Texture()),
+    };
+    const cache = new TextureCache({
+      textures,
+      baseUrl: "https://host/x.json",
+      source,
+      onChange: () => {},
+    });
+    expect(cache.request(1).status).toBe("ready");
+    expect(cache.isReady(1)).toBe(true);
+  });
+});
+
 describe("applyTextureSettings", () => {
   it("maps wrap modes and marks the texture sRGB", () => {
     const t = new Texture();

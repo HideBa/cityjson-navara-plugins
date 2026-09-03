@@ -19,6 +19,7 @@ import {
   type BufferGeometry,
 } from "three";
 import {
+  appearanceThemesEqual,
   buildCityMeshArrays,
   computeOriginOffset,
   projectPositionsToEnu,
@@ -83,14 +84,6 @@ export interface CityModelMeshOptions {
   readonly makePlacementMatrix?: (lle: Lle) => Matrix4;
 }
 
-function sameTheme(
-  a: AppearanceTheme | null,
-  b: AppearanceTheme | null,
-): boolean {
-  if (a === null || b === null) return a === b;
-  return a.kind === b.kind && a.name === b.name;
-}
-
 /** Set equality: the app replaces the hidden-type array wholesale on every
  *  edit, so identity says nothing, and order is not meaningful. */
 function sameTypes(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
@@ -125,6 +118,14 @@ export class CityModelMesh {
   private readonly textureSource: TextureSource;
   /** Images for the active texture theme; null under any other theme. */
   private textures: TextureCache | null = null;
+  /** Texture indices whose readiness changed since the last repaint — one
+   *  repaint per burst of loads, not one per image (148 on Rotterdam). */
+  private pendingTextureChanges = new Set<number>();
+  private textureFlushQueued = false;
+  /** The style-or-base colours with the ready-image mask applied, reused by
+   *  every hover/selection repaint until the style, the mask or the
+   *  geometry changes. */
+  private maskedSource: Float32Array | null = null;
 
   constructor(options: CityModelMeshOptions) {
     this.id = options.id;
@@ -300,19 +301,32 @@ export class CityModelMesh {
   }
 
   /** An image landed (or failed): give its group the map, then repaint so
-   *  the mask whites out exactly the groups that now show an image. */
+   *  the mask whites out exactly the groups that now show an image. Loads
+   *  arrive in bursts, so the repaint is coalesced onto a microtask. */
   private textureChanged(textureIndex: number): void {
+    this.pendingTextureChanges.add(textureIndex);
+    if (this.textureFlushQueued) return;
+    this.textureFlushQueued = true;
+    queueMicrotask(() => this.flushTextureChanges());
+  }
+
+  private flushTextureChanges(): void {
+    this.textureFlushQueued = false;
+    const changed = this.pendingTextureChanges;
+    this.pendingTextureChanges = new Set();
+    if (changed.size === 0) return;
     const groups = this.arrays.textureGroups;
     const materials = this.object3d.material;
     if (!groups || !Array.isArray(materials)) return;
-    const entry = this.textures?.get(textureIndex);
     groups.forEach((group, i) => {
-      if (group.textureIndex !== textureIndex) return;
+      if (!changed.has(group.textureIndex)) return;
       const material = materials[i] as MeshBasicMaterial | undefined;
       if (!material) return;
+      const entry = this.textures?.get(group.textureIndex);
       material.map = entry?.status === "ready" ? entry.texture : null;
       material.needsUpdate = true;
     });
+    this.maskedSource = null;
     this.repaint();
   }
 
@@ -327,8 +341,14 @@ export class CityModelMesh {
     );
   }
 
+  /** Test seam: apply any coalesced texture changes now. */
+  flushTexturesForTest(): void {
+    this.flushTextureChanges();
+  }
+
   /** Recompute style colors, then repaint the live color attribute. */
   private repaint(): void {
+    const previousStyle = this.styleColors;
     this.styleColors = this.evaluator
       ? computeStyleColors(
           this.evaluator,
@@ -339,12 +359,19 @@ export class CityModelMesh {
           this.baseColors,
         )
       : null;
+    // `computeStyleColors` allocates fresh on every call, so the identity
+    // check only holds for the null case; a live evaluator always refreshes.
+    if (this.styleColors !== previousStyle) this.maskedSource = null;
 
     const attr = this.geometry.getAttribute("color");
     // Mask BEFORE the highlight pass: a selected textured face still tints.
+    // Cached: hover repaints must not copy the whole colour array each time.
+    this.maskedSource ??= this.maskTextured(
+      this.styleColors ?? this.baseColors,
+    );
     paintLayers(
       attr.array as Float32Array,
-      this.maskTextured(this.styleColors ?? this.baseColors),
+      this.maskedSource,
       this.arrays.objectIndices,
       this.arrays.surfaceIndices,
       this.arrays.objectKeys,
@@ -422,6 +449,7 @@ export class CityModelMesh {
     this.object3d.geometry = geometryFromMeshArrays(this.arrays);
     old.dispose();
     this.applyMaterials();
+    this.maskedSource = null;
     this.repaint();
     // The theme's edge lines were extracted from the geometry just disposed —
     // an outline of surfaces this LoD (or hidden-type list, or placement) no
@@ -449,7 +477,7 @@ export class CityModelMesh {
    * of one theme mean nothing in the other; a LoD change keeps it.
    */
   setAppearance(theme: AppearanceTheme | null): void {
-    if (sameTheme(theme, this.appearance)) return;
+    if (appearanceThemesEqual(theme, this.appearance)) return;
     const textureThemeChanged =
       this.appearance?.kind === "texture" &&
       !(theme?.kind === "texture" && theme.name === this.appearance.name);

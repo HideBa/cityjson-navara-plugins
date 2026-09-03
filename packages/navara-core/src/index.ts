@@ -71,6 +71,7 @@ export type {
 } from "./citymodel/cityjson/appearance";
 export {
   AppearanceMerger,
+  appearanceThemesEqual,
   EMPTY_APPEARANCE_CONTEXT,
   readLocalAppearance,
   resolveSurfaceMaterial,

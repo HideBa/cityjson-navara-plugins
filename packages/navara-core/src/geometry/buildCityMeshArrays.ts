@@ -109,8 +109,11 @@ interface PendingSurface {
  *    first, file order within a bucket) so each image is one contiguous
  *    vertex range (`textureGroups`), and emits per-vertex `uvs`. Colours stay
  *    semantic: a renderer whites them out only where an image has actually
- *    loaded, so a missing image degrades to the plain look.
- * With no theme (the default) the output is byte-identical to before.
+ *    loaded, so a missing image degrades to the plain look. A texture theme
+ *    that covers no visible surface emits neither (`uvs`/`textureGroups`
+ *    null), so a model without images costs nothing extra.
+ * With no theme (the default) `uvs`/`textureGroups` are null and the
+ * vertex order is the file's.
  */
 export function buildCityMeshArrays(
   model: CityModel,
@@ -184,6 +187,9 @@ export function buildCityMeshArrays(
   }
 
   const vertexCount = totalTriangles * 3;
+  // A texture theme no drawn surface uses is the plain build.
+  const anyTextured =
+    textureTheme !== null && pending.some((p) => p.textureIndex >= 0);
 
   // Pre-allocate typed arrays (avoids dynamic array growth and copy)
   const posArray = new Float32Array(vertexCount * 3);
@@ -191,8 +197,8 @@ export function buildCityMeshArrays(
   const colorArray = new Float32Array(vertexCount * 3);
   const objIdxArray = new Uint32Array(vertexCount);
   const surfIdxArray = new Uint32Array(vertexCount);
-  const uvArray = textureTheme !== null ? new Float32Array(vertexCount * 2) : null;
-  const textureGroups: TextureGroup[] | null = textureTheme !== null ? [] : null;
+  const uvArray = anyTextured ? new Float32Array(vertexCount * 2) : null;
+  const textureGroups: TextureGroup[] | null = anyTextured ? [] : null;
 
   // Pass 2: write directly into typed arrays
   let writeIdx = 0;
@@ -425,9 +431,12 @@ function triangulateSurface(
     const projectedHole = projectRingTo2D(ring, basis);
     const holeClockwise = ShapeUtils.isClockWise([...projectedHole]);
     if (holeClockwise !== contourClockwise) return projectedHole;
-    // The hole is rewound for the triangulator: reverse its UVs alongside.
-    // (Only the 2D projection is reversed for `triangulateShape`; the 3D
-    // vertex list keeps the original order — see below.)
+    // The hole is rewound for the triangulator, and `triangulateShape`
+    // returns indices into the concatenated contour + holes it was GIVEN —
+    // so the 3D ring and its UVs are reversed alongside the 2D projection,
+    // or every triangle touching the hole would read vertex n-1-k for k.
+    // (Before 2026-09-03 only the projection was reversed; courtyard
+    // buildings rendered with triangles spanning the hole.)
     if (holeUvs) holeUvs[h] = [...holeUvs[h]!].reverse();
     holeRings[h] = [...ring].reverse();
     return [...projectedHole].reverse();

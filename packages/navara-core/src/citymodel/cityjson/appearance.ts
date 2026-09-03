@@ -19,6 +19,7 @@
  */
 
 import type {
+  AppearanceTheme,
   CityAppearance,
   CityMaterial,
   CityTexture,
@@ -28,6 +29,19 @@ import type {
   UV,
   Vec3,
 } from "../types";
+
+// ---------------------------------------------------------------------------
+// Theme selection
+// ---------------------------------------------------------------------------
+
+/** Value equality for two theme selections (`null`/`undefined` = none). */
+export function appearanceThemesEqual(
+  a: AppearanceTheme | null | undefined,
+  b: AppearanceTheme | null | undefined,
+): boolean {
+  if (!a || !b) return (a ?? null) === (b ?? null);
+  return a.kind === b.kind && a.name === b.name;
+}
 
 // ---------------------------------------------------------------------------
 // Wire object -> typed tables

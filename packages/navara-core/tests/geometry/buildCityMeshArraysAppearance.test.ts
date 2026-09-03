@@ -126,6 +126,74 @@ describe("buildCityMeshArrays without a theme", () => {
   });
 });
 
+describe("buildCityMeshArrays hole handling (no theme)", () => {
+  it("triangulates a same-winding hole to outer minus hole area", () => {
+    const outer: Vec3[] = [
+      [0, 0, 0],
+      [4, 0, 0],
+      [4, 4, 0],
+      [0, 4, 0],
+    ];
+    const hole: Vec3[] = [
+      [1, 1, 0],
+      [2, 1, 0],
+      [2, 2, 0],
+      [1, 2, 0],
+    ];
+    const surface: Surface = {
+      type: "RoofSurface",
+      rings: [outer, hole],
+      attributes: {},
+      lod: "2",
+    };
+    for (const bbox of [
+      [0, 0, -10, 4, 4, 0],
+      [0, 0, 0, 4, 4, 10],
+    ] as const) {
+      const arrays = buildCityMeshArrays(
+        model({ a: object("a", [surface], bbox) }),
+        "L",
+      );
+      let area = 0;
+      for (let t = 0; t < arrays.triangleCount; t++) {
+        const b = t * 9;
+        const p = arrays.positions;
+        const ax = p[b + 3]! - p[b]!;
+        const ay = p[b + 4]! - p[b + 1]!;
+        const bx = p[b + 6]! - p[b]!;
+        const by = p[b + 7]! - p[b + 1]!;
+        area += Math.abs(ax * by - ay * bx) / 2;
+      }
+      expect(area).toBeCloseTo(15, 6);
+      // No vertex of any triangle lies strictly inside the hole.
+      for (let v = 0; v < arrays.positions.length / 3; v++) {
+        const x = arrays.positions[v * 3]!;
+        const y = arrays.positions[v * 3 + 1]!;
+        expect(x > 1 && x < 2 && y > 1 && y < 2).toBe(false);
+      }
+    }
+  });
+
+  it("emits no uvs or groups for a texture theme no surface uses", () => {
+    const plain: Surface = {
+      type: "RoofSurface",
+      rings: [square],
+      attributes: {},
+      lod: "2",
+    };
+    const arrays = buildCityMeshArrays(
+      model({ a: object("a", [plain]) }, appearance),
+      "L",
+      [0, 0, 0],
+      null,
+      null,
+      { kind: "texture", name: "rgb" },
+    );
+    expect(arrays.uvs).toBeNull();
+    expect(arrays.textureGroups).toBeNull();
+  });
+});
+
 describe("buildCityMeshArrays with a texture theme", () => {
   it("pairs UVs with vertices when the exterior ring is reversed", () => {
     // bbox centre is far ABOVE the face, so its +z Newell normal points at
@@ -271,7 +339,7 @@ describe("buildCityMeshArrays with a texture theme", () => {
     expect(arrays.colors[0]).toBeCloseTo(SURFACE_COLORS_LINEAR.WallSurface.r);
   });
 
-  it("treats a surface without that theme, or with bad UV lengths, as untextured", () => {
+  it("treats a surface without that theme, or with bad UV lengths, as untextured (alongside a textured one)", () => {
     const bad: Surface = {
       type: "RoofSurface",
       rings: [square],
@@ -286,8 +354,15 @@ describe("buildCityMeshArrays with a texture theme", () => {
       lod: "2",
       texture: { night: { textureIndex: 0, uvs: [squareUv] } },
     };
+    const good: Surface = {
+      type: "WallSurface",
+      rings: [square],
+      attributes: {},
+      lod: "2",
+      texture: { rgb: { textureIndex: 1, uvs: [squareUv] } },
+    };
     const arrays = buildCityMeshArrays(
-      model({ a: object("a", [bad, other]) }, appearance),
+      model({ a: object("a", [bad, other, good]) }, appearance),
       "L",
       [0, 0, 0],
       null,
@@ -296,6 +371,7 @@ describe("buildCityMeshArrays with a texture theme", () => {
     );
     expect(arrays.textureGroups).toEqual([
       { start: 0, count: 12, textureIndex: -1 },
+      { start: 12, count: 6, textureIndex: 1 },
     ]);
   });
 
