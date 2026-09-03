@@ -32,9 +32,13 @@ import type {
   BuildingSurfaceType,
   CityObject,
   Surface,
+  SurfaceTexture,
+  UV,
+  Vec3,
 } from "@cityjson/navara-core";
 import type { CityFooter } from "./footer";
 import { CityParquetError } from "./footer";
+import type { PackageAppearance } from "./sidecars";
 import type { CityParquetTableData, GeometryColumnRef } from "./tableReader";
 import type { DecodedWkb } from "./wkb";
 import { WkbError, decodeWkb } from "./wkb";
@@ -561,11 +565,107 @@ function higherLod(
   return parseFloat(candidate) > parseFloat(current) ? candidate : current;
 }
 
+/**
+ * A geometry column's appearance cells, parsed once per row: the
+ * `material_*` cell is `{ theme: { values: [id|null per face] } | { value } }`,
+ * the `texture_*` cell `{ theme: { values: [ per face: [ per ring:
+ * [textureId, [u, v], …] | [null] ] ] } }` with sidecar ids and inline UVs.
+ */
+interface FaceAppearanceSource {
+  readonly material: Record<string, unknown> | null;
+  readonly texture: Record<string, unknown> | null;
+}
+
+function parseAppearanceCell(cell: unknown): Record<string, unknown> | null {
+  if (isEmptyCell(cell)) return null;
+  const parsed: unknown = typeof cell === "string" ? tryParseJson(cell) : cell;
+  return isPlainObject(parsed) ? parsed : null;
+}
+
+/** The surface-level appearance of face `faceIndex`, or nothing. */
+function faceAppearance(
+  source: FaceAppearanceSource,
+  faceIndex: number,
+  rings: ReadonlyArray<ReadonlyArray<Vec3>>,
+  appearance: PackageAppearance,
+): { material?: Record<string, number>; texture?: Record<string, SurfaceTexture> } {
+  const out: {
+    material?: Record<string, number>;
+    texture?: Record<string, SurfaceTexture>;
+  } = {};
+  for (const [theme, ref] of Object.entries(source.material ?? {})) {
+    if (!isPlainObject(ref)) continue;
+    const raw =
+      ref.value !== undefined
+        ? ref.value
+        : Array.isArray(ref.values)
+          ? ref.values[faceIndex]
+          : undefined;
+    const sidecarId = semanticIndex(raw);
+    if (sidecarId === null) continue;
+    const local = appearance.materialLocalById.get(sidecarId);
+    const index = local === undefined ? undefined : appearance.ctx.materialRemap[local];
+    if (index === undefined || index < 0) continue;
+    (out.material ??= {})[theme] = index;
+    appearance.ctx.materialThemes.add(theme);
+  }
+  for (const [theme, ref] of Object.entries(source.texture ?? {})) {
+    if (!isPlainObject(ref) || !Array.isArray(ref.values)) continue;
+    const face = ref.values[faceIndex];
+    if (!Array.isArray(face) || face.length === 0) continue;
+    const exterior = face[0];
+    if (!Array.isArray(exterior)) continue;
+    const sidecarId = semanticIndex(exterior[0]);
+    if (sidecarId === null) continue;
+    const local = appearance.textureLocalById.get(sidecarId);
+    const textureIndex =
+      local === undefined ? undefined : appearance.ctx.textureRemap[local];
+    if (textureIndex === undefined || textureIndex < 0) continue;
+    const uvs: UV[][] = [];
+    let ok = true;
+    for (let r = 0; r < rings.length; r++) {
+      const ringValues = face[r];
+      if (!Array.isArray(ringValues)) {
+        ok = false;
+        break;
+      }
+      const pairs = ringValues.slice(1);
+      // WKB rings come back with the closing vertex stripped; a writer that
+      // wrote one UV per WKB point (closing included) is one pair long.
+      const n = rings[r]!.length;
+      if (pairs.length !== n && pairs.length !== n + 1) {
+        ok = false;
+        break;
+      }
+      const ringUvs: UV[] = [];
+      for (let k = 0; k < n; k++) {
+        const pair = pairs[k];
+        if (
+          !Array.isArray(pair) ||
+          typeof pair[0] !== "number" ||
+          typeof pair[1] !== "number"
+        ) {
+          ok = false;
+          break;
+        }
+        ringUvs.push([pair[0], pair[1]]);
+      }
+      if (!ok) break;
+      uvs.push(ringUvs);
+    }
+    if (!ok) continue;
+    (out.texture ??= {})[theme] = { textureIndex, uvs };
+    appearance.ctx.textureThemes.add(theme);
+  }
+  return out;
+}
+
 function readRowGeometry(
   row: Record<string, unknown>,
   geometryColumns: ReadonlyArray<GeometryColumnRef>,
   id: string,
   warnings: DecodeWarnings,
+  appearance: PackageAppearance | null,
 ): RowGeometry {
   const surfaces: Surface[] = [];
   let lod: string | null = null;
@@ -597,6 +697,17 @@ function readRowGeometry(
       warnings,
     );
     const faceSemantics = readFaceSemantics(props, id, column.name, warnings);
+    const appearanceSource: FaceAppearanceSource | null =
+      appearance && (column.materialName || column.textureName)
+        ? {
+            material: column.materialName
+              ? parseAppearanceCell(row[column.materialName])
+              : null,
+            texture: column.textureName
+              ? parseAppearanceCell(row[column.textureName])
+              : null,
+          }
+        : null;
 
     // `faces` is flat across every shell and every solid member, and so is
     // `face_semantics` — one index pairs them (the `shells` field exists to
@@ -607,6 +718,10 @@ function readRowGeometry(
         semanticIndex !== undefined && semanticIndex !== null && definitions
           ? definitions[semanticIndex]
           : undefined;
+      const extra =
+        appearanceSource && appearance
+          ? faceAppearance(appearanceSource, index, face, appearance)
+          : {};
       surfaces.push({
         type: resolveSurfaceType(definition),
         // Already unclosed rings of absolute source-CRS coordinates — exactly
@@ -614,6 +729,7 @@ function readRowGeometry(
         rings: face,
         attributes: resolveSurfaceAttributes(definition),
         lod: column.lod,
+        ...extra,
       });
     }
   }
@@ -642,6 +758,7 @@ function readRowGeometry(
  */
 export function decodeTableObjects(
   table: CityParquetTableData,
+  appearance: PackageAppearance | null = null,
 ): Record<string, CityObject> {
   const objects = bareMap<CityObject>();
   const warnings = new DecodeWarnings();
@@ -666,7 +783,13 @@ export function decodeTableObjects(
       continue;
     }
 
-    const geometry = readRowGeometry(row, table.geometryColumns, id, warnings);
+    const geometry = readRowGeometry(
+      row,
+      table.geometryColumns,
+      id,
+      warnings,
+      appearance,
+    );
 
     if (hasOwn(objects, id)) {
       warnings.report(

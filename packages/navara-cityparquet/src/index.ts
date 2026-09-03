@@ -21,6 +21,7 @@ export { readCityParquetTable } from "./tableReader";
 export { decodeTableObjects } from "./decodeTable";
 
 export type {
+  AssembleOptions,
   CityParquetManifest,
   CityParquetPackageFile,
 } from "./packageAssembly";
@@ -28,4 +29,8 @@ export {
   CITYPARQUET_SIDECAR_NAMES,
   assembleCityParquetModel,
   parseCityParquetManifest,
+  sidecarKindOf,
 } from "./packageAssembly";
+
+export type { CityParquetSidecars, PackageAppearance } from "./sidecars";
+export { readPackageAppearance } from "./sidecars";

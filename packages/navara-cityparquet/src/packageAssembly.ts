@@ -33,6 +33,11 @@ import { mergeBBox } from "@cityjson/navara-core";
 import { CityParquetError } from "./footer";
 import { decodeTableObjects } from "./decodeTable";
 import { readCityParquetTable } from "./tableReader";
+import {
+  buildPackageAppearance,
+  readPackageAppearance,
+  type CityParquetSidecars,
+} from "./sidecars";
 
 /** STAC asset role identifying an object table (spec §5). */
 const ROLE_OBJECT_TABLE = "cityparquet-objects";
@@ -66,6 +71,17 @@ export interface CityParquetManifest {
    * relative name and an absolute one identically.
    */
   objectTables: string[];
+  /** The appearance sidecars the manifest declares (hrefs, like
+   *  `objectTables`), by kind — absent when not shipped. */
+  sidecars: { textures?: string; materials?: string };
+}
+
+/** Which sidecar a file name denotes, by its base name. */
+export function sidecarKindOf(href: string): "textures" | "materials" | null {
+  const name = baseName(href);
+  if (name === "textures.parquet") return "textures";
+  if (name === "materials.parquet") return "materials";
+  return null;
 }
 
 /** One already-fetched file of a package. */
@@ -199,7 +215,18 @@ export function parseCityParquetManifest(
       "This CityParquet package declares no object tables, so there is nothing to load.",
     );
   }
-  return { objectTables };
+  const sidecars: { textures?: string; materials?: string } = {};
+  for (const asset of assets) {
+    const kind = sidecarKindOf(asset.href);
+    if (kind === null) continue;
+    if (
+      asset.roles.includes(ROLE_SIDECAR) ||
+      !asset.roles.includes(ROLE_OBJECT_TABLE)
+    ) {
+      sidecars[kind] ??= asset.href;
+    }
+  }
+  return { objectTables, sidecars };
 }
 
 // ---------------------------------------------------------------------------
@@ -305,8 +332,14 @@ function countRingVertices(object: CityObject): number {
  * diagnostic ("total vertex count before normalization") and nothing computes
  * on it, so counting what the format actually stores beats reporting 0.
  */
+export interface AssembleOptions {
+  /** The package's appearance sidecars, when the loader found any. */
+  readonly sidecars?: CityParquetSidecars;
+}
+
 export async function assembleCityParquetModel(
   files: ReadonlyArray<CityParquetPackageFile>,
+  options: AssembleOptions = {},
 ): Promise<CityModel> {
   if (files.length === 0) {
     throw new CityParquetError(
@@ -314,13 +347,21 @@ export async function assembleCityParquetModel(
     );
   }
 
+  // Sidecar ids are package-global, so ONE appearance context serves every
+  // table; the first table's footer supplies the default themes.
+  const first = await readCityParquetTable(files[0]!.bytes);
+  const appearance = await readPackageAppearance(
+    options.sidecars,
+    first.footer.appearanceDefaults,
+  );
+
   const tables: DecodedTable[] = [];
-  for (const file of files) {
-    const table = await readCityParquetTable(file.bytes);
+  for (const [i, file] of files.entries()) {
+    const table = i === 0 ? first : await readCityParquetTable(file.bytes);
     tables.push({
       name: file.name,
       epsg: table.footer.epsg,
-      objects: decodeTableObjects(table),
+      objects: decodeTableObjects(table, appearance),
     });
   }
 
@@ -350,6 +391,7 @@ export async function assembleCityParquetModel(
     vertexCount += countRingVertices(object);
   }
 
+  const builtAppearance = buildPackageAppearance(appearance);
   return {
     sourceEncoding: "cityparquet",
     metadata: {
@@ -358,5 +400,6 @@ export async function assembleCityParquetModel(
     bbox,
     objects,
     vertexCount,
+    ...(builtAppearance ? { appearance: builtAppearance } : {}),
   };
 }

@@ -42,6 +42,12 @@ export interface CityFooter {
   /** `city.attributes`, or `[]` when the file declares none. */
   attributes: string[];
   sourceFormat: string | null;
+  /** The source's default appearance themes (`appearance_defaults`), when
+   *  the writer carried them over; both null otherwise. */
+  appearanceDefaults?: {
+    textureTheme: string | null;
+    materialTheme: string | null;
+  };
 }
 
 /**
@@ -118,6 +124,28 @@ export function parseCityFooter(
     geometryColumns: readColumns(parsed.columns),
     attributes: readAttributes(parsed.attributes),
     sourceFormat: readOptionalString(parsed.source_format),
+    appearanceDefaults: readAppearanceDefaults(parsed.appearance_defaults),
+  };
+}
+
+/** `appearance_defaults` is a free-form pass-through of CityJSON's
+ *  `default-theme-texture` / `default-theme-material`; both spellings of
+ *  each key are accepted. */
+function readAppearanceDefaults(value: unknown): {
+  textureTheme: string | null;
+  materialTheme: string | null;
+} {
+  if (!isJsonObject(value)) return { textureTheme: null, materialTheme: null };
+  const pick = (...keys: string[]): string | null => {
+    for (const key of keys) {
+      const v = value[key];
+      if (typeof v === "string" && v !== "") return v;
+    }
+    return null;
+  };
+  return {
+    textureTheme: pick("default-theme-texture", "texture", "default_theme_texture"),
+    materialTheme: pick("default-theme-material", "material", "default_theme_material"),
   };
 }
 
@@ -243,6 +271,16 @@ export function lodFromColumnName(name: string): { lod: string | null } | null {
  * geometry column — the same name with the reserved prefix swapped, so the LoD
  * suffix is carried across unchanged (`geometry_column_name` in `types.rs`).
  */
+/** The appearance columns paired with a geometry column by suffix:
+ *  `geometry_lod2_0` -> `material_lod2_0` / `texture_lod2_0`. */
+export function appearanceColumnsFor(geometryColumn: string): {
+  material: string;
+  texture: string;
+} {
+  const suffix = geometryColumn.slice(GEOMETRY_PREFIX.length);
+  return { material: `material${suffix}`, texture: `texture${suffix}` };
+}
+
 export function propsColumnFor(geometryColumn: string): string {
   if (lodFromColumnName(geometryColumn) === null) {
     throw new CityParquetError(

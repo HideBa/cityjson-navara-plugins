@@ -22,6 +22,7 @@ import { compressors } from "hyparquet-compressors";
 import type { CityFooter } from "./footer";
 import {
   CityParquetError,
+  appearanceColumnsFor,
   lodFromColumnName,
   parseCityFooter,
   propsColumnFor,
@@ -41,6 +42,9 @@ export interface GeometryColumnRef {
   lod: string | null;
   /** The `geometry_properties*` sibling, when the file actually carries it. */
   propsName: string | null;
+  /** The paired `material_*` / `texture_*` JSON columns, when present. */
+  materialName?: string | null;
+  textureName?: string | null;
 }
 
 /** Everything one CityParquet file yields before any geometry is decoded. */
@@ -193,10 +197,15 @@ function discoverGeometryColumns(
     const parsed = lodFromColumnName(name);
     if (parsed === null) continue;
     const propsName = propsColumnFor(name);
+    const appearance = appearanceColumnsFor(name);
     found.push({
       name,
       lod: parsed.lod,
       propsName: present.has(propsName) ? propsName : null,
+      materialName: present.has(appearance.material)
+        ? appearance.material
+        : null,
+      textureName: present.has(appearance.texture) ? appearance.texture : null,
     });
   }
   return found;
@@ -238,6 +247,10 @@ function buildProjection(
     ...geometryColumns.map((g) => g.name),
     ...geometryColumns
       .map((g) => g.propsName)
+      .filter((n): n is string => n !== null),
+    // Appearance columns are JSON text; read only when the table has them.
+    ...geometryColumns
+      .flatMap((g) => [g.materialName, g.textureName])
       .filter((n): n is string => n !== null),
     ...footer.attributes,
     OTHER_ATTRIBUTES_COLUMN,

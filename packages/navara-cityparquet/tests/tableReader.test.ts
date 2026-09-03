@@ -72,7 +72,7 @@ describe("readCityParquetTable", () => {
     expect(lods.get("geometry_lod2_2")).toBe("2.2");
   });
 
-  it("projects the identity, attribute and geometry columns and nothing else", async () => {
+  it("projects the identity, attribute, geometry and appearance columns and nothing else", async () => {
     const t = await readCityParquetTable(await readFile(FIXTURE));
     const first = t.rows[0];
     expect(first).toBeDefined();
@@ -102,13 +102,22 @@ describe("readCityParquetTable", () => {
       "template",
       "other",
       "children_roles",
+    ]) {
+      expect(keys).not.toContain(skipped);
+    }
+    // Appearance columns are read now (as JSON text), paired with their
+    // geometry column by suffix.
+    for (const wanted of [
       "material_lod0_0",
       "material_lod2_2",
       "texture_lod0_0",
       "texture_lod2_2",
     ]) {
-      expect(keys).not.toContain(skipped);
+      expect(keys).toContain(wanted);
     }
+    const lod22 = t.geometryColumns.find((g) => g.name === "geometry_lod2_2");
+    expect(lod22?.materialName).toBe("material_lod2_2");
+    expect(lod22?.textureName).toBe("texture_lod2_2");
   });
 
   it("slices the caller's own buffer when the view spans it", async () => {

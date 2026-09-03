@@ -1,0 +1,117 @@
+{
+  "type": "Feature",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://cityjson.github.io/stac-city3d/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
+    "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+  ],
+  "id": "rotterdam5_pkg",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          4.449911006046757,
+          51.90599621458111
+        ],
+        [
+          4.4568737662584,
+          51.90599621458111
+        ],
+        [
+          4.4568737662584,
+          51.909729990150616
+        ],
+        [
+          4.449911006046757,
+          51.909729990150616
+        ],
+        [
+          4.449911006046757,
+          51.90599621458111
+        ]
+      ]
+    ]
+  },
+  "bbox": [
+    4.449911006046757,
+    51.90599621458111,
+    -0.0,
+    4.4568737662584,
+    51.909729990150616,
+    15.421000000000001
+  ],
+  "properties": {
+    "datetime": "2026-09-03T16:20:43Z",
+    "city3d:version": "2.0",
+    "city3d:city_objects": 5,
+    "city3d:lods": [
+      "0.0",
+      "2.0"
+    ],
+    "city3d:co_types": [
+      "Building"
+    ],
+    "city3d:attributes": [
+      {
+        "name": "TerrainHeight",
+        "type": "Number"
+      },
+      {
+        "name": "bron_geo",
+        "type": "String"
+      },
+      {
+        "name": "bron_tex",
+        "type": "String"
+      },
+      {
+        "name": "status",
+        "type": "String"
+      },
+      {
+        "name": "voll_tex",
+        "type": "String"
+      }
+    ],
+    "city3d:semantic_surfaces": true,
+    "city3d:textures": true,
+    "city3d:materials": false,
+    "cityparquet:version": "0.1.0-draft",
+    "proj:code": "EPSG:28992"
+  },
+  "links": [],
+  "assets": {
+    "data": {
+      "href": "./building.parquet",
+      "title": "3D city model data",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data"
+      ],
+      "file:size": 31886,
+      "file:checksum": "122065858a4fe95acb54c059af13ad69d188efe9b4ba97f3569adcdfa2675601199d"
+    },
+    "building.parquet": {
+      "href": "./building.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data",
+        "cityparquet-objects"
+      ],
+      "file:size": 31886,
+      "file:checksum": "122065858a4fe95acb54c059af13ad69d188efe9b4ba97f3569adcdfa2675601199d"
+    },
+    "textures.parquet": {
+      "href": "./textures.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data",
+        "cityparquet-sidecar"
+      ],
+      "file:size": 2930,
+      "file:checksum": "122009fec21ebeb62c31dad9c8a7b8a2fc8a7ebad64712a76eff195f6a7f783f9c16"
+    }
+  }
+}
