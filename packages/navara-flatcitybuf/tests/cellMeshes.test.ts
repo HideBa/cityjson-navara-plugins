@@ -72,6 +72,8 @@ function factory() {
         setColors: vi.fn(),
         setVisible: vi.fn(),
         setThemeStyle: vi.fn(),
+        maskTextured: (c: Float32Array) => c,
+        textureChanged: () => {},
         triangleCount: () => 1,
         batchIdMap: () => [{ objectIndex: 0, surfaceIndex: 0 }],
         resolveRaycast: () => null,

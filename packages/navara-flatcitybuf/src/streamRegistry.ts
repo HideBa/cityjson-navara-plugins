@@ -31,6 +31,7 @@ import {
   ensureProjDef,
   geoidHeightAt,
   makeEnuFrame,
+  type AppearanceTheme,
   type Rule,
 } from "@cityjson/navara-core";
 import { CellCache } from "./cellCache";
@@ -53,6 +54,8 @@ import {
   type TimerApi,
 } from "./settleController";
 import { FcbStreamLayerHandle, type CellEntry } from "./streamLayer";
+import { createLayerTextures } from "./layerTextures";
+import type { TextureCache, TextureSource } from "@cityjson/navara-cityjson";
 import { makeGrid } from "./tileGrid";
 import type { Ray } from "./viewportFootprint";
 import type { WorkerClient } from "./workerClient";
@@ -88,7 +91,14 @@ export interface StreamLayerRegistryDeps {
    *  DOM `Worker` constructor, which Node does not have. */
   readonly createClient: () => WorkerClient;
   /** Engine seam: builds one mesh per resident cell of the named layer. */
-  readonly createMeshFactory: (layerId: string) => CellMeshFactory;
+  /** `textures` is the layer's shared image cache, for cells built under a
+   *  texture theme. */
+  readonly createMeshFactory: (
+    layerId: string,
+    textures: TextureCache,
+  ) => CellMeshFactory;
+  /** Image-loading seam for texture themes; defaults to three's loader. */
+  readonly createTextureSource?: () => TextureSource;
   /** Engine seam: the viewport's pick-ray source, or `null` before the plugin
    *  has a view. Read per use (never captured), so a layer opened before
    *  `init()` still picks correctly afterwards. */
@@ -117,6 +127,9 @@ export interface OpenStreamOptions {
    *  also hides its BuildingParts. Seeded before the first commit, so a
    *  restored layer's very first fetch is already filtered. */
   readonly hiddenTypes?: ReadonlyArray<string>;
+  /** Appearance theme to bake from the first commit; `null`/omitted draws
+   *  the plain colours. Changed afterwards through `setAppearance`. */
+  readonly appearance?: AppearanceTheme | null;
   /** Vertical-datum correction in metres. Supplied wins outright; omitted
    *  means `await geoidHeightAt(centreLng, centreLat)`. Either way it is known
    *  before the worker's placement is established, so every cell bakes in the
@@ -397,9 +410,17 @@ export class StreamLayerRegistry {
         await this.openWorker(client, opts, heightOffsetM);
       }
 
+      // Relative texture paths resolve against the `.fcb`'s own URL; a Blob
+      // has none, so its relative images cannot load (the cache warns once).
+      const textures = createLayerTextures({
+        baseUrl: "url" in opts.source ? opts.source.url : null,
+        source: this.deps.createTextureSource?.(),
+        warn: (message) => console.warn(`[stream:${opts.id}] ${message}`),
+      });
       const handle: FcbStreamLayerHandle = new FcbStreamLayerHandle({
         id: opts.id,
         client,
+        textures,
         grid: makeGrid(header.extent),
         header,
         cache: new CellCache<CellEntry>({
@@ -413,7 +434,7 @@ export class StreamLayerRegistry {
         toSourceXY,
         toLngLat,
         heightOffsetM,
-        meshFactory: this.deps.createMeshFactory(opts.id),
+        meshFactory: this.deps.createMeshFactory(opts.id, textures.cache),
         // Delegating rather than captured: `getPickRays()` is null until the
         // plugin has a view, and a layer opened in between must still pick.
         pickRays: this.pickRays,
@@ -435,6 +456,7 @@ export class StreamLayerRegistry {
       // hidden types' geometry and only drop it on the refetch a later toggle
       // forces — a visible flash of everything the user had hidden.
       handle.setHiddenTypes(opts.hiddenTypes ?? []);
+      handle.setAppearance(opts.appearance ?? null);
 
       this.register(opts.id, handle);
       this.commitLayer(handle);

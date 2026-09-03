@@ -42,6 +42,7 @@ export * from "./settleController";
 export * from "./cellMeshes";
 export * from "./cellMeshFactory";
 export * from "./entryToArrays";
+export * from "./layerTextures";
 // The ray *adapter* is engine-free and belongs here; the binding that supplies
 // Navara's real `getPickRay` (`./engineRays`) does NOT, and is re-exported from
 // the `./plugin` entry point instead (Task C11).

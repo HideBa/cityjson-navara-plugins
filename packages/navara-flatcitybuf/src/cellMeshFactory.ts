@@ -24,6 +24,7 @@ import {
   type CityMeshArraysViewLike,
   type CityMeshHandle,
   type PickStrategy,
+  type TextureCache,
 } from "@cityjson/navara-cityjson";
 import type { CellMeshFactory } from "./cellMeshes";
 import { entryToArrays } from "./entryToArrays";
@@ -38,6 +39,9 @@ export interface CellMeshFactoryDeps {
    */
   readonly getView: () => CityMeshArraysViewLike | null;
   readonly pickStrategy?: PickStrategy;
+  /** The layer's shared image cache (`layerTextures.ts`); a cell built under
+   *  a texture theme draws its groups through it. */
+  readonly textures?: TextureCache;
 }
 
 export function createCellMeshFactory(
@@ -61,6 +65,7 @@ export function createCellMeshFactory(
         layerId: deps.layerId,
         cellKey: key,
         pickStrategy: deps.pickStrategy,
+        textures: deps.textures,
       });
     },
   };

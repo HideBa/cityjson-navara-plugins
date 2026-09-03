@@ -12,6 +12,7 @@
 import proj4 from "proj4";
 import { FcbReader, toCityJSONMetadata } from "@cityjson/flatcitybuf";
 import {
+  AppearanceMerger,
   buildCityMeshArrays,
   buildRuleColorsFromArrays,
   dequantizeAll,
@@ -22,7 +23,9 @@ import {
   mergeBBox,
   parseCityObject,
   projectPositionsToEnu,
+  type AppearanceTheme,
   type BBox3,
+  type CityAppearance,
   type CityJSONFeature,
   type CityJSONObject,
   type CityJSONRoot,
@@ -35,6 +38,7 @@ import { toObjectRecords } from "./objectRecords";
 import { makeGrid, cellCentre, type CellKey, type Grid } from "./tileGrid";
 import type {
   CellGeometry,
+  CellTexture,
   WorkerRequest,
   WorkerResponse,
 } from "./workerProtocol";
@@ -95,6 +99,43 @@ let controller: AbortController | null = null;
  *  releases entries here (see the `evict`/`close` handlers below). Without
  *  it, this map would grow without bound as the viewport pans. */
 const cells = new Map<CellKey, CachedCell>();
+/**
+ * The open file's appearance tables, merged across every feature decoded so
+ * far. A FlatCityBuf feature carries its OWN appearance (local indices, like
+ * a CityJSONSeq feature), so the merger rewrites them to LAYER-wide indices
+ * that stay stable for the life of the open — which is what lets the main
+ * thread share one image cache across cells and across commits.
+ */
+let appearance = new AppearanceMerger();
+
+/** The themes seen so far, texture themes first, for the learned list. */
+function appearanceThemesSeen(built: CityAppearance | undefined): AppearanceTheme[] {
+  if (!built) return [];
+  return [
+    ...built.textureThemes.map(
+      (name): AppearanceTheme => ({ kind: "texture", name }),
+    ),
+    ...built.materialThemes.map(
+      (name): AppearanceTheme => ({ kind: "material", name }),
+    ),
+  ];
+}
+
+/** The definitions behind a cell's texture groups, by layer-wide index. */
+function cellTextures(
+  groups: ReadonlyArray<{ textureIndex: number }> | null | undefined,
+  built: CityAppearance | undefined,
+): CellTexture[] {
+  if (!groups || !built) return [];
+  const out: CellTexture[] = [];
+  for (const group of groups) {
+    const texture = built.textures[group.textureIndex];
+    if (group.textureIndex >= 0 && texture) {
+      out.push({ index: group.textureIndex, texture });
+    }
+  }
+  return out;
+}
 
 function post(msg: WorkerResponse, transfer: Transferable[] = []): void {
   ctx.postMessage(msg, transfer);
@@ -126,6 +167,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       reader = await openFcb(
         "url" in msg ? { url: msg.url } : { blob: msg.blob },
       );
+      appearance = new AppearanceMerger();
       const admission = checkAdmission(reader.header);
       const header = headerModel(reader.header);
       // checkAdmission returning null guarantees header.extent is set (its
@@ -246,13 +288,15 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
             // because `CityJSONRoot.transform` is optional for v1.0 files.
             cjHeader.transform ?? IDENTITY_TRANSFORM,
           );
+          // Feature-local appearance -> layer-wide indices (see `appearance`).
+          const appearanceCtx = appearance.register(cjFeature.appearance);
           const objects: Record<string, CityObject> = {};
           let modelBBox: BBox3 | null = null;
           for (const [id, rawObj] of Object.entries(cjFeature.CityObjects) as [
             string,
             CityJSONObject,
           ][]) {
-            const obj = parseCityObject(id, rawObj, realVertices);
+            const obj = parseCityObject(id, rawObj, realVertices, appearanceCtx);
             objects[id] = obj;
             modelBBox = mergeBBox(modelBBox, obj.bbox);
           }
@@ -276,7 +320,11 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         const hiddenTypes =
           msg.hiddenTypes.length > 0 ? new Set(msg.hiddenTypes) : null;
         const buckets = bucketFeatures(models, grid, msg.level, new Set());
-        for (const [key, cellModel] of buckets) {
+        // Built once per fetch: the tables a material theme reads its diffuse
+        // colours from, and the theme list the main thread learns from.
+        const builtAppearance = appearance.build();
+        const appearanceThemes = appearanceThemesSeen(builtAppearance);
+        for (const [key, cellModelBare] of buckets) {
           if (my.signal.aborted) {
             // A newer fetch/probe/cancel superseded this one mid-loop: any
             // cells already touched THIS call are for an incomplete result
@@ -296,6 +344,9 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
             return;
           }
           if (!resident.has(key)) continue; // outside the requested cover
+          const cellModel: CityModel = builtAppearance
+            ? { ...cellModelBare, appearance: builtAppearance }
+            : cellModelBare;
           const origin = cellCentre(grid, key, 0);
           const a = buildCityMeshArrays(
             cellModel,
@@ -303,6 +354,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
             origin,
             msg.lod,
             hiddenTypes,
+            msg.appearance ?? null,
           );
           // `a.positions` are source-CRS deltas from `origin`; the renderer
           // wants local ENU metres in the cell's OWN frame. Build that frame
@@ -342,6 +394,9 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
             surfaceIndices: a.surfaceIndices,
             objectKeys: a.objectKeys,
             triangleCount: a.triangleCount,
+            uvs: a.uvs ?? null,
+            textureGroups: a.textureGroups ?? null,
+            textures: cellTextures(a.textureGroups, builtAppearance),
           };
           const { records, surfaceAttrKeys } = toObjectRecords(cellModel);
 
@@ -378,6 +433,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
               // permanently selecting "all LoDs" (B1, 2026-07-28 final
               // review).
               lodsSeen: distinctLods(cellModel),
+              appearanceThemes,
             },
             [
               a.positions.buffer,
@@ -385,6 +441,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
               a.colors.buffer,
               a.objectIndices.buffer,
               a.surfaceIndices.buffer,
+              ...(a.uvs ? [a.uvs.buffer] : []),
             ],
           );
         }
@@ -466,6 +523,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       grid = undefined;
       placement = undefined;
       cells.clear();
+      appearance = new AppearanceMerger();
       return;
     }
   } catch (e) {

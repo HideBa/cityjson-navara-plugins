@@ -359,6 +359,8 @@ function recordingFactory() {
       const handle: CityMeshHandle = {
         ref: null,
         setColors: vi.fn(),
+        maskTextured: (c: Float32Array) => c,
+        textureChanged: () => {},
         setVisible: vi.fn(),
         setThemeStyle: (style: ThemeStyle) => {
           rec.style = style;
@@ -399,6 +401,8 @@ function realMeshFactory() {
         setColors: (c) => mesh.setColors(c),
         setVisible: (v) => mesh.setVisible(v),
         setThemeStyle: (s) => mesh.setThemeStyle(s),
+        maskTextured: (c: Float32Array) => c,
+        textureChanged: () => {},
         triangleCount: () => mesh.triangleCount(),
         batchIdMap: () => mesh.batchIdMap(),
         resolveRaycast: (r) => mesh.resolveRaycast(r),
@@ -453,6 +457,8 @@ function pickingFactory(hitDistances: Readonly<Record<string, number>> = {}) {
           rec.visible = v;
         },
         setThemeStyle: vi.fn(),
+        maskTextured: (c: Float32Array) => c,
+        textureChanged: () => {},
         triangleCount: () => 7,
         batchIdMap: () => [{ objectIndex: 0, surfaceIndex: 4 }],
         resolveRaycast: () =>

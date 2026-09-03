@@ -47,5 +47,8 @@ export function entryToArrays(entry: CellEntry): CityMeshArrays {
     surfaceIndices: g.surfaceIndices,
     objectKeys: g.objectKeys,
     triangleCount: g.triangleCount,
+    // Texture theme only; by reference like the geometry (never mutated).
+    uvs: g.uvs,
+    textureGroups: g.textureGroups,
   };
 }

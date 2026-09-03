@@ -68,11 +68,12 @@ export class FlatCityBufPlugin extends Plugin<ThreeView, ViewContext> {
       createClient: () => new WorkerClient(),
       // The stamping (layerId / cellKey / pickStrategy) lives in an
       // engine-free module so it is provable in Node — see `cellMeshFactory`.
-      createMeshFactory: (layerId) =>
+      createMeshFactory: (layerId, textures) =>
         createCellMeshFactory({
           layerId,
           getView: () => this.view,
           pickStrategy: this.options.pickStrategy,
+          textures,
         }),
       getPickRays: () => this.raySource,
       sampleGeoidHeight: this.options.sampleGeoidHeight,

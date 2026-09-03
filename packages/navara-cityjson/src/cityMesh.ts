@@ -24,6 +24,11 @@ import { CITY_MESH_ARRAYS_KEY } from "./descriptorKeys";
 import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import { ThemeStyleController, type ThemeStyle } from "./themeStyle";
+import {
+  buildGroupMaterials,
+  maskReadyTextures,
+  type TextureCache,
+} from "./texturedMaterials";
 
 export interface AddCityMeshArraysOptions {
   readonly id: string;
@@ -37,6 +42,14 @@ export interface AddCityMeshArraysOptions {
   readonly cellKey?: string;
   /** Task B1's PICK_PATH verdict; defaults to {@link DEFAULT_PICK_STRATEGY}. */
   readonly pickStrategy?: PickStrategy;
+  /**
+   * The owning layer's image cache, when `arrays` carries `textureGroups`:
+   * one material per group, with a `map` wherever the image is ready. Shared
+   * across a layer's cells (keyed by the layer-wide texture index), so an
+   * image two cells use loads once. The OWNER subscribes to the cache and
+   * calls `textureChanged`; the mesh never listens itself.
+   */
+  readonly textures?: TextureCache;
 }
 
 /**
@@ -48,8 +61,16 @@ export interface AddCityMeshArraysOptions {
 export interface CityMeshHandle {
   /** The descriptor instance the engine created for this mesh. */
   readonly ref: unknown;
-  /** Swap the vertex-color buffer (rule recolor of a resident cell). */
+  /** Swap the vertex-color buffer (rule recolor of a resident cell). Written
+   *  RAW — mask first with {@link maskTextured} so an image shows through. */
   setColors(colors: Float32Array): void;
+  /** `colors` with white over every vertex whose image is ready (the map
+   *  then shows unmodulated); `colors` itself when nothing is textured. Paint
+   *  highlights AFTER masking so a selected textured face still tints. */
+  maskTextured(colors: Float32Array): Float32Array;
+  /** The layer's image cache reported `textureIndex`: attach or drop the
+   *  group's map. The caller repaints afterwards. */
+  textureChanged(textureIndex: number): void;
   setVisible(visible: boolean): void;
   /** Scene-theme presentation (fill multiplier + structural edge lines).
    *  Independent of `setColors`: a theme never writes vertex colours. */
@@ -83,10 +104,15 @@ export class CityMeshArraysMesh {
 
   private readonly arrays: CityMeshArrays;
   private readonly theme: ThemeStyleController;
+  private readonly textures: TextureCache | null;
 
   constructor(options: AddCityMeshArraysOptions) {
     this.arrays = options.arrays;
     this.pickStrategy = options.pickStrategy ?? DEFAULT_PICK_STRATEGY;
+    this.textures =
+      options.textures && (options.arrays.textureGroups?.length ?? 0) > 0
+        ? options.textures
+        : null;
     // Matrix4.elements and EnuFrame.matrix are both column-major, and
     // `fromArray` copies element-wise, so the Matrix4 does not alias the frame.
     this.matrixWorld = new Matrix4().fromArray(options.frame.matrix);
@@ -153,6 +179,40 @@ export class CityMeshArraysMesh {
     // matrixWorld when it is created, and a cell's frame never changes
     // afterwards.
     this.theme = new ThemeStyleController(this.object3d);
+    if (this.textures) {
+      // One material per texture group (`buildGroupMaterials`), same
+      // calibration as the single one above; images the cache already holds
+      // attach at once, the rest as the owner reports them.
+      (this.object3d.material as MeshBasicMaterial).dispose();
+      this.object3d.material = buildGroupMaterials(
+        options.arrays.textureGroups ?? [],
+        this.textures,
+      );
+      this.theme.materialsReplaced();
+      this.setColors(this.maskTextured(options.arrays.colors));
+    }
+  }
+
+  maskTextured(colors: Float32Array): Float32Array {
+    const textures = this.textures;
+    if (!textures) return colors;
+    return maskReadyTextures(colors, this.arrays.textureGroups, (index) =>
+      textures.isReady(index),
+    );
+  }
+
+  textureChanged(textureIndex: number): void {
+    const groups = this.arrays.textureGroups;
+    const materials = this.object3d.material;
+    if (!this.textures || !groups || !Array.isArray(materials)) return;
+    const entry = this.textures.get(textureIndex);
+    groups.forEach((group, i) => {
+      if (group.textureIndex !== textureIndex) return;
+      const material = materials[i] as MeshBasicMaterial | undefined;
+      if (!material) return;
+      material.map = entry?.status === "ready" ? entry.texture : null;
+      material.needsUpdate = true;
+    });
   }
 
   /**
@@ -264,6 +324,8 @@ export function addCityMeshArrays(
   return {
     ref: meshHandle.ref,
     setColors: (colors) => mesh.setColors(colors),
+    maskTextured: (colors) => mesh.maskTextured(colors),
+    textureChanged: (index) => mesh.textureChanged(index),
     setVisible: (visible) => {
       mesh.setVisible(visible);
       meshHandle.visible = visible;

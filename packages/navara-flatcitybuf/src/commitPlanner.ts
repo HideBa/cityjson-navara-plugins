@@ -8,6 +8,10 @@
  * (`tests/commitPlanner.test.ts`) rather than being exercised only through the
  * driver hook that calls it.
  */
+import {
+  appearanceThemesEqual,
+  type AppearanceTheme,
+} from "@cityjson/navara-core";
 import { CellCache, type CellStats } from "./cellCache";
 import {
   chooseLevel,
@@ -102,7 +106,8 @@ export function cellStatsFromGeometry(g: CellGeometry): CellStats {
       g.baseColors.byteLength +
       (g.ruleColors?.byteLength ?? 0) +
       g.objectIndices.byteLength +
-      g.surfaceIndices.byteLength,
+      g.surfaceIndices.byteLength +
+      (g.uvs?.byteLength ?? 0),
   };
 }
 
@@ -117,12 +122,21 @@ export interface PlanCommitInput {
   /** The hidden-type list the RESIDENT cells were fetched under, or `null`
    *  before this layer's first commit. */
   readonly prevHiddenTypes: ReadonlyArray<string> | null;
+  /** The theme the RESIDENT cells were baked under; `undefined` before this
+   *  layer's first commit (`null` is a real value — plain colours). */
+  readonly prevAppearance?: AppearanceTheme | null;
   readonly ladder: ReadonlyArray<string>;
   readonly lodMode: "auto" | "manual";
   readonly selectedLod: string | null;
   /** The hidden-type list the NEXT fetch will carry. */
   readonly hiddenTypes: ReadonlyArray<string>;
+  /** The theme the NEXT fetch will bake. Omitted reads as `null`. */
+  readonly appearance?: AppearanceTheme | null;
 }
+
+/** Value equality for two appearance selections (core's helper, re-exported
+ *  under the name the planner's callers use). */
+export const appearanceEquals = appearanceThemesEqual;
 
 export type CommitPlan =
   | { readonly kind: "too-far"; readonly reason: string }
@@ -181,7 +195,14 @@ export function planCommit(input: PlanCommitInput): CommitPlan {
   const hiddenTypesChanged =
     input.prevHiddenTypes !== null &&
     !hiddenTypesEqual(input.hiddenTypes, input.prevHiddenTypes);
-  const isSwap = levelChanged || lodChanged || hiddenTypesChanged;
+  // An appearance change is a swap for the same reason a hidden-type change
+  // is: the worker BAKES it (vertex order, UVs, base colours), so a resident
+  // cell built under the old theme cannot be patched, only refetched.
+  const appearanceChanged =
+    input.prevAppearance !== undefined &&
+    !appearanceEquals(input.appearance ?? null, input.prevAppearance);
+  const isSwap =
+    levelChanged || lodChanged || hiddenTypesChanged || appearanceChanged;
 
   const commitView: CommitView = {
     centre: footprint.centre,

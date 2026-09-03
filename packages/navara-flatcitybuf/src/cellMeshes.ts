@@ -183,7 +183,10 @@ export function syncCellMeshes(ctx: SyncCtx): CellKey[] {
     );
     handle.setVisible(ctx.visible);
     if (ctx.themeStyle) handle.setThemeStyle(ctx.themeStyle);
-    if (entry.geometry.ruleColors) handle.setColors(entry.geometry.ruleColors);
+    // Masked: where an image is already ready, the map shows instead.
+    if (entry.geometry.ruleColors) {
+      handle.setColors(handle.maskTextured(entry.geometry.ruleColors));
+    }
     ctx.cells.set(key, {
       handle,
       pickingIndex: {

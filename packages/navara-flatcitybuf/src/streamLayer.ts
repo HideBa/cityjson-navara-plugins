@@ -14,6 +14,7 @@
  */
 import {
   toplevelCityObjectType,
+  type AppearanceTheme,
   type EnuFrame,
   type Rule,
   type Surface,
@@ -56,6 +57,7 @@ import { createResidentModelMemo, type ResidentModel } from "./residentModel";
 import { buildLadder, type LodSelection } from "./levelPolicy";
 import { COMMIT_FETCH_TIMEOUT_MS } from "./constants";
 import {
+  appearanceEquals,
   cellStatsFromGeometry,
   commitNormal,
   commitSwap,
@@ -65,6 +67,7 @@ import {
   planCommit,
   type FetchedCell,
 } from "./commitPlanner";
+import type { LayerTextures } from "./layerTextures";
 import {
   syncCellMeshes,
   type CellMesh,
@@ -134,6 +137,11 @@ export interface StreamLayerEvents {
    * and would otherwise never learn.
    */
   onTypes(cb: (types: ReadonlyArray<string>) => void): () => void;
+  /** The appearance themes seen so far, learned cell by cell like the LoD
+   *  ladder — texture themes first, then material themes. */
+  onAppearanceThemes(
+    cb: (themes: ReadonlyArray<AppearanceTheme>) => void,
+  ): () => void;
   /**
    * Fires with the region a commit is about to FETCH, and with `null` when the
    * layer is deleted. Returns its own unsubscribe.
@@ -173,6 +181,10 @@ export interface FcbStreamLayerHandleOptions {
   /** Injected: builds one mesh per resident cell. Keeps this module free of
    *  @navaramap/* — Task C11's plugin supplies the real implementation. */
   readonly meshFactory: CellMeshFactory;
+  /** The layer's image cache + definitions (`layerTextures.ts`). The handle
+   *  fills the definitions from cell messages, repaints cells as images land,
+   *  and disposes the cache on delete. The mesh factory shares the cache. */
+  readonly textures?: LayerTextures;
   /** Injected: screen point -> ECEF ray, for `resolvePick` (Tasks C4/C10b). */
   readonly pickRays: PickRaySource | null;
   /**
@@ -267,6 +279,12 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    *  reason: a change invalidates cells that are still resident under their
    *  old keys. */
   private _lastHiddenTypes: ReadonlyArray<string> | null = null;
+  /** The theme the resident cells were baked under; `undefined` until the
+   *  first commit lands (`null` is a real value — see `PlanCommitInput`). */
+  private _lastAppearance: AppearanceTheme | null | undefined = undefined;
+  private _appearance: AppearanceTheme | null = null;
+  private _appearanceThemes: ReadonlyArray<AppearanceTheme> = [];
+  private readonly unsubscribeTextures: (() => void) | null;
 
   private _visible = true;
   /** Whether this layer follows the camera at all — see
@@ -311,6 +329,9 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   private readonly typesListeners = new Set<
     Listener<[ReadonlyArray<string>]>
   >();
+  private readonly appearanceListeners = new Set<
+    Listener<[ReadonlyArray<AppearanceTheme>]>
+  >();
   private readonly queryRegionListeners = new Set<
     Listener<[QueryRegion | null]>
   >();
@@ -322,6 +343,25 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
     this.header = options.header;
     this.frame = options.frame;
     this.cache = options.cache;
+    this.unsubscribeTextures =
+      options.textures?.cache.subscribe((index) =>
+        this.textureChanged(index),
+      ) ?? null;
+  }
+
+  /** An image landed (or failed): every resident cell drawing it swaps its
+   *  map and is repainted, so the white mask covers exactly the faces that
+   *  now show an image. */
+  private textureChanged(textureIndex: number): void {
+    if (this._deleted) return;
+    for (const cell of this.cells.values()) {
+      const uses = (cell.sourceEntry.geometry.textures ?? []).some(
+        (t) => t.index === textureIndex,
+      );
+      if (!uses) continue;
+      cell.handle.textureChanged(textureIndex);
+      this.paintCell(cell);
+    }
   }
 
   get level(): number | null {
@@ -373,6 +413,14 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   }
   onTypes(cb: (types: ReadonlyArray<string>) => void): () => void {
     return subscribe(this.typesListeners, cb);
+  }
+  onAppearanceThemes(
+    cb: (themes: ReadonlyArray<AppearanceTheme>) => void,
+  ): () => void {
+    return subscribe(this.appearanceListeners, cb);
+  }
+  get appearanceThemes(): ReadonlyArray<AppearanceTheme> {
+    return this._appearanceThemes;
   }
   onQueryRegion(cb: (region: QueryRegion | null) => void): () => void {
     return subscribe(this.queryRegionListeners, cb);
@@ -460,6 +508,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       // swap) and the fetch below, so the two can never disagree about what
       // this commit's cells were baked without.
       const hiddenTypes = this._hiddenTypes;
+      const appearanceTheme = this._appearance;
 
       const plan = planCommit({
         footprint,
@@ -470,10 +519,12 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
         prevCommit: this._lastCommit,
         prevLod: this._lastLod,
         prevHiddenTypes: this._lastHiddenTypes,
+        prevAppearance: this._lastAppearance,
         ladder: this._ladder,
         lodMode: this._lodMode,
         selectedLod: this._selectedLod,
         hiddenTypes,
+        appearance: appearanceTheme,
       });
 
       if (plan.kind === "too-far") {
@@ -516,9 +567,11 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
             hiddenTypes,
             rules,
             rulesEnabled,
+            appearance: appearanceTheme,
           },
           (msg: WorkerResponse) => {
             if (msg.type === "cell") {
+              this.learnAppearance(msg.geometry, msg.appearanceThemes ?? []);
               fetched.set(msg.key, {
                 entry: {
                   geometry: msg.geometry,
@@ -691,6 +744,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
 
       this._lastLod = plan.lod;
       this._lastHiddenTypes = hiddenTypes;
+      this._lastAppearance = appearanceTheme;
       this._level = plan.level;
       this._lastCommit = plan.commitView;
       this.emitStatus("idle", null);
@@ -911,6 +965,22 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
     this.options.onCommitNeeded?.();
   }
 
+  /**
+   * Draw another appearance theme (or none). Like a hidden-type change, a
+   * forced commit: the worker bakes the theme into each cell (texture-sorted
+   * vertex order, UVs, material base colours), so every resident cell is
+   * refetched — `planCommit` treats it as a swap.
+   */
+  setAppearance(theme: AppearanceTheme | null): void {
+    if (appearanceEquals(theme, this._appearance)) return;
+    this._appearance = theme;
+    this.options.onCommitNeeded?.();
+  }
+
+  get appearance(): AppearanceTheme | null {
+    return this._appearance;
+  }
+
   get hiddenTypes(): ReadonlyArray<string> {
     return this._hiddenTypes;
   }
@@ -1042,6 +1112,8 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
     this.options.client.terminate();
     for (const cell of this.cells.values()) cell.handle.delete();
     this.cells.clear();
+    this.unsubscribeTextures?.();
+    this.options.textures?.cache.dispose();
     // The query region outlived nothing: its whole meaning is "this layer is
     // fetching here", and the layer is gone. Announced rather than merely
     // dropped, so a subscriber that draws it takes the outline out of the
@@ -1304,8 +1376,32 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    * those two ARE the restore baseline (`entryToArrays` copies both branches
    * for the same reason).
    */
+  /** Definitions and the learned theme list, from one cell message. Kept
+   *  even for a stale (superseded) fetch: the tables are layer-wide facts. */
+  private learnAppearance(
+    geometry: Pick<CellGeometry, "textures">,
+    themes: ReadonlyArray<AppearanceTheme>,
+  ): void {
+    const definitions = this.options.textures?.definitions;
+    if (definitions) {
+      for (const t of geometry.textures ?? []) {
+        definitions.set(t.index, t.texture);
+      }
+    }
+    if (
+      themes.length !== this._appearanceThemes.length ||
+      themes.some((t, i) => !appearanceEquals(t, this._appearanceThemes[i]))
+    ) {
+      this._appearanceThemes = themes.map((t) => ({ ...t }));
+      emit(this.appearanceListeners, this._appearanceThemes);
+    }
+  }
+
   private paintCell(cell: CellMesh): void {
-    const source = cell.ruleColors ?? cell.baseColors;
+    // Masked BEFORE the highlight pass: a selected textured face still tints.
+    const source = cell.handle.maskTextured(
+      cell.ruleColors ?? cell.baseColors,
+    );
     const painted = new Float32Array(source.length);
     paintLayers(
       painted,

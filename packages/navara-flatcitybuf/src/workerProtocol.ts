@@ -1,5 +1,19 @@
-import type { BBox3, RoofMetrics, Rule } from "@cityjson/navara-core";
+import type {
+  AppearanceTheme,
+  BBox3,
+  CityTexture,
+  RoofMetrics,
+  Rule,
+  TextureGroup,
+} from "@cityjson/navara-core";
 import type { CellKey } from "./tileGrid";
+
+/** One image a cell's groups reference, by the LAYER-wide texture index the
+ *  worker's appearance merger assigned (stable for the life of the open). */
+export interface CellTexture {
+  readonly index: number;
+  readonly texture: CityTexture;
+}
 
 export interface CellGeometry {
   readonly positions: Float32Array; // 3 per vertex
@@ -10,6 +24,13 @@ export interface CellGeometry {
   readonly surfaceIndices: Uint32Array; // 1 per vertex
   readonly objectKeys: string[];
   readonly triangleCount: number;
+  /** Under a texture theme only: 2 per vertex, and one vertex range per
+   *  image (`buildCityMeshArrays`); `null`/absent otherwise. */
+  readonly uvs?: Float32Array | null;
+  readonly textureGroups?: ReadonlyArray<TextureGroup> | null;
+  /** The definitions behind `textureGroups`' indices. Absent/empty when
+   *  untextured. */
+  readonly textures?: ReadonlyArray<CellTexture>;
 }
 
 /** A streaming layer's object payload. NOT a CityObject — CityObject.surfaces
@@ -58,6 +79,9 @@ export type WorkerRequest =
       hiddenTypes: ReadonlyArray<string>;
       rules: ReadonlyArray<Rule>;
       rulesEnabled: boolean;
+      /** Which appearance theme to bake (texture: UVs + groups; material:
+       *  diffuse base colours); `null`/omitted for the plain colours. */
+      appearance?: AppearanceTheme | null;
     }
   | {
       type: "recolor";
@@ -82,6 +106,9 @@ export type WorkerResponse =
       objects: ResidentObjectRecord[];
       surfaceAttrKeys: string[];
       lodsSeen: string[];
+      /** Every appearance theme the worker has seen so far across the open
+       *  file — learned like the LoD ladder, offered to the user as it grows. */
+      appearanceThemes?: AppearanceTheme[];
     }
   | { type: "recolored"; id: number; key: CellKey; ruleColors: Float32Array }
   | { type: "surfaceData"; id: number; objectId: string; surfaces: unknown[] }
@@ -115,6 +142,9 @@ export function emptyCellGeometry(): CellGeometry {
     surfaceIndices: new Uint32Array(0),
     objectKeys: [],
     triangleCount: 0,
+    uvs: null,
+    textureGroups: null,
+    textures: [],
   };
 }
 
@@ -132,4 +162,17 @@ export function assertCellGeometry(g: CellGeometry): void {
   check("objectIndices", g.objectIndices.length, v);
   check("surfaceIndices", g.surfaceIndices.length, v);
   if (g.ruleColors !== null) check("ruleColors", g.ruleColors.length, v * 3);
+  if (g.uvs) check("uvs", g.uvs.length, v * 2);
+  if (g.textureGroups) {
+    let covered = 0;
+    for (const group of g.textureGroups) {
+      if (group.start !== covered) {
+        throw new Error(
+          `cell geometry textureGroups: group starts at ${group.start}, expected ${covered}`,
+        );
+      }
+      covered += group.count;
+    }
+    check("textureGroups coverage", covered, v);
+  }
 }
