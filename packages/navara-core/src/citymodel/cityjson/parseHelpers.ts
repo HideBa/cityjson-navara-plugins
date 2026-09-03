@@ -13,8 +13,16 @@ import type {
   CityModelMetadata,
   CityObject,
   Surface,
+  SurfaceTexture,
   Vec3,
 } from "../types";
+import {
+  EMPTY_APPEARANCE_CONTEXT,
+  resolveSurfaceMaterial,
+  resolveSurfaceTexture,
+  type AppearanceContext,
+  type SurfacePath,
+} from "./appearance";
 import type {
   CityJSONObject,
   CityJSONRoot,
@@ -63,10 +71,7 @@ export function dequantizeAll(
 // Bounding box helpers
 // ---------------------------------------------------------------------------
 
-function expandBBox(
-  bbox: [number, number, number, number, number, number],
-  v: Vec3,
-): void {
+function expandBBox(bbox: MutableBBox, v: Vec3): void {
   if (v[0] < bbox[0]) bbox[0] = v[0];
   if (v[1] < bbox[1]) bbox[1] = v[1];
   if (v[2] < bbox[2]) bbox[2] = v[2];
@@ -127,228 +132,177 @@ function extractSemanticAttributes(
 }
 
 // ---------------------------------------------------------------------------
-// Surface extraction from MultiSurface / CompositeSurface boundaries
+// Surface extraction
 // ---------------------------------------------------------------------------
 
-function extractSurfacesFromMultiSurface(
+type MutableBBox = [number, number, number, number, number, number];
+
+/** A surface's boundary: rings of vertex indices. */
+type RawSurface = ReadonlyArray<ReadonlyArray<number>>;
+
+/**
+ * Resolve one surface: its rings to real coordinates, its semantic, and —
+ * when the geometry carries appearance members — its per-theme material and
+ * texture. Shared by every boundary depth (MultiSurface, Solid, MultiSolid);
+ * `path` is where this surface sits in the geometry's nesting, which is also
+ * where its material/texture entries sit.
+ *
+ * A vertex index the file never declared is skipped (the ring is shorter,
+ * the polygon still triangulates); the texture resolver skips the same
+ * vertex so UVs stay paired.
+ */
+function buildSurface(
   geom: CityJSONSurfaceGeometry,
+  rawSurface: RawSurface,
+  sem: CityJSONSemanticSurface | undefined,
+  path: SurfacePath,
   realVertices: Vec3[],
-  objectBBox: [number, number, number, number, number, number],
+  objectBBox: MutableBBox,
   lod: string | null,
-): Surface[] {
-  const boundaries = geom.boundaries as ReadonlyArray<
-    ReadonlyArray<ReadonlyArray<number>>
-  >;
-  const semanticSurfaces = geom.semantics?.surfaces;
-  const semanticValues = geom.semantics?.values as
-    | ReadonlyArray<number | null>
-    | undefined;
-
-  const surfaces: Surface[] = [];
-
-  for (let i = 0; i < boundaries.length; i++) {
-    const surfaceBoundary = boundaries[i]!;
-    const semanticIndex =
-      semanticValues !== undefined ? semanticValues[i] : undefined;
-    const sem =
-      semanticIndex !== undefined && semanticIndex !== null && semanticSurfaces
-        ? semanticSurfaces[semanticIndex]
-        : undefined;
-
-    const rings: Vec3[][] = [];
-    for (const ring of surfaceBoundary) {
-      const realRing: Vec3[] = [];
-      for (const idx of ring) {
-        const v = realVertices[idx];
-        if (v) {
-          realRing.push(v);
-          expandBBox(objectBBox, v);
-        }
+  ctx: AppearanceContext,
+): Surface {
+  const rings: Vec3[][] = [];
+  for (const ring of rawSurface) {
+    const realRing: Vec3[] = [];
+    for (const idx of ring) {
+      const v = realVertices[idx];
+      if (v) {
+        realRing.push(v);
+        expandBBox(objectBBox, v);
       }
-      rings.push(realRing);
     }
+    rings.push(realRing);
+  }
 
-    surfaces.push({
-      type: resolveSemanticType(sem),
+  const surface: {
+    type: BuildingSurfaceType;
+    rings: Vec3[][];
+    attributes: Record<string, unknown>;
+    lod: string | null;
+    material?: Readonly<Record<string, number>>;
+    texture?: Readonly<Record<string, SurfaceTexture>>;
+  } = {
+    type: resolveSemanticType(sem),
+    rings,
+    attributes: extractSemanticAttributes(sem),
+    lod,
+  };
+
+  if (geom.material !== undefined) {
+    const material = resolveSurfaceMaterial(geom.material, path, ctx);
+    if (material) surface.material = material;
+  }
+  if (geom.texture !== undefined) {
+    const texture = resolveSurfaceTexture(
+      geom.texture,
+      path,
+      rawSurface,
       rings,
-      attributes: extractSemanticAttributes(sem),
-      lod,
-    });
+      realVertices,
+      ctx,
+    );
+    if (texture) surface.texture = texture;
   }
-
-  return surfaces;
+  return surface;
 }
 
-// ---------------------------------------------------------------------------
-// Surface extraction from Solid boundaries
-// ---------------------------------------------------------------------------
-
-function extractSurfacesFromSolid(
+function semanticAt(
   geom: CityJSONSurfaceGeometry,
-  realVertices: Vec3[],
-  objectBBox: [number, number, number, number, number, number],
-  lod: string | null,
-): Surface[] {
-  const shells = geom.boundaries as ReadonlyArray<
-    ReadonlyArray<ReadonlyArray<ReadonlyArray<number>>>
-  >;
-  const semanticSurfaces = geom.semantics?.surfaces;
-  const shellValues = geom.semantics?.values as
-    | ReadonlyArray<ReadonlyArray<number | null>>
-    | undefined;
-
-  const surfaces: Surface[] = [];
-
-  for (let si = 0; si < shells.length; si++) {
-    const shell = shells[si]!;
-    const surfaceValues = shellValues?.[si];
-
-    for (let fi = 0; fi < shell.length; fi++) {
-      const surfaceBoundary = shell[fi]!;
-      const semanticIndex =
-        surfaceValues !== undefined ? surfaceValues[fi] : undefined;
-      const sem =
-        semanticIndex !== undefined &&
-        semanticIndex !== null &&
-        semanticSurfaces
-          ? semanticSurfaces[semanticIndex]
-          : undefined;
-
-      const rings: Vec3[][] = [];
-      for (const ring of surfaceBoundary) {
-        const realRing: Vec3[] = [];
-        for (const idx of ring) {
-          const v = realVertices[idx];
-          if (v) {
-            realRing.push(v);
-            expandBBox(objectBBox, v);
-          }
-        }
-        rings.push(realRing);
-      }
-
-      surfaces.push({
-        type: resolveSemanticType(sem),
-        rings,
-        attributes: extractSemanticAttributes(sem),
-        lod,
-      });
-    }
+  path: SurfacePath,
+): CityJSONSemanticSurface | undefined {
+  const surfacesList = geom.semantics?.surfaces;
+  if (!surfacesList) return undefined;
+  let node: unknown = geom.semantics?.values;
+  for (const p of path.outer) {
+    if (!Array.isArray(node)) return undefined;
+    node = node[p];
   }
-
-  return surfaces;
+  if (!Array.isArray(node)) return undefined;
+  const index = node[path.surfaceIndex];
+  return typeof index === "number" ? surfacesList[index] : undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Surface extraction from CompositeSolid / MultiSolid boundaries
-// ---------------------------------------------------------------------------
-
-function extractSurfacesFromCompositeSolid(
-  geom: CityJSONSurfaceGeometry,
-  realVertices: Vec3[],
-  objectBBox: [number, number, number, number, number, number],
-  lod: string | null,
-): Surface[] {
-  const solids = geom.boundaries as ReadonlyArray<
-    ReadonlyArray<ReadonlyArray<ReadonlyArray<ReadonlyArray<number>>>>
-  >;
-  const semanticSurfaces = geom.semantics?.surfaces;
-  const solidValues = geom.semantics?.values as
-    | ReadonlyArray<ReadonlyArray<ReadonlyArray<number | null>>>
-    | undefined;
-
-  const surfaces: Surface[] = [];
-
-  for (let soi = 0; soi < solids.length; soi++) {
-    const shells = solids[soi]!;
-    const shellValues = solidValues?.[soi];
-
-    for (let si = 0; si < shells.length; si++) {
-      const shell = shells[si]!;
-      const surfaceValues = shellValues?.[si];
-
-      for (let fi = 0; fi < shell.length; fi++) {
-        const surfaceBoundary = shell[fi]!;
-        const semanticIndex =
-          surfaceValues !== undefined ? surfaceValues[fi] : undefined;
-        const sem =
-          semanticIndex !== undefined &&
-          semanticIndex !== null &&
-          semanticSurfaces
-            ? semanticSurfaces[semanticIndex]
-            : undefined;
-
-        const rings: Vec3[][] = [];
-        for (const ring of surfaceBoundary) {
-          const realRing: Vec3[] = [];
-          for (const idx of ring) {
-            const v = realVertices[idx];
-            if (v) {
-              realRing.push(v);
-              expandBBox(objectBBox, v);
-            }
-          }
-          rings.push(realRing);
-        }
-
-        surfaces.push({
-          type: resolveSemanticType(sem),
-          rings,
-          attributes: extractSemanticAttributes(sem),
-          lod,
-        });
-      }
-    }
-  }
-
-  return surfaces;
-}
-
-// ---------------------------------------------------------------------------
-// Geometry dispatch
-// ---------------------------------------------------------------------------
-
+/**
+ * Walk a geometry's boundaries at its declared depth: MultiSurface /
+ * CompositeSurface = surfaces, Solid = shells of surfaces, MultiSolid /
+ * CompositeSolid = solids of shells of surfaces. The output order is the
+ * file's order, flattened.
+ */
 function extractSurfaces(
   geom: CityJSONSurfaceGeometry,
   realVertices: Vec3[],
-  objectBBox: [number, number, number, number, number, number],
+  objectBBox: MutableBBox,
   lod: string | null,
+  ctx: AppearanceContext,
 ): Surface[] {
+  const surfaces: Surface[] = [];
+  const visit = (rawSurface: unknown, path: SurfacePath): void => {
+    if (!Array.isArray(rawSurface)) return;
+    surfaces.push(
+      buildSurface(
+        geom,
+        rawSurface as RawSurface,
+        semanticAt(geom, path),
+        path,
+        realVertices,
+        objectBBox,
+        lod,
+        ctx,
+      ),
+    );
+  };
+  const boundaries = geom.boundaries;
+
   switch (geom.type) {
     case "MultiSurface":
     case "CompositeSurface":
-      return extractSurfacesFromMultiSurface(
-        geom,
-        realVertices,
-        objectBBox,
-        lod,
+      boundaries.forEach((surface, i) =>
+        visit(surface, { outer: [], surfaceIndex: i }),
       );
+      break;
     case "Solid":
-      return extractSurfacesFromSolid(geom, realVertices, objectBBox, lod);
+      boundaries.forEach((shell, si) => {
+        if (!Array.isArray(shell)) return;
+        shell.forEach((surface, fi) =>
+          visit(surface, { outer: [si], surfaceIndex: fi }),
+        );
+      });
+      break;
     case "MultiSolid":
     case "CompositeSolid":
-      return extractSurfacesFromCompositeSolid(
-        geom,
-        realVertices,
-        objectBBox,
-        lod,
-      );
+      boundaries.forEach((solid, soi) => {
+        if (!Array.isArray(solid)) return;
+        solid.forEach((shell, si) => {
+          if (!Array.isArray(shell)) return;
+          shell.forEach((surface, fi) =>
+            visit(surface, { outer: [soi, si], surfaceIndex: fi }),
+          );
+        });
+      });
+      break;
     default:
-      return [];
+      break;
   }
+  return surfaces;
 }
 
 // ---------------------------------------------------------------------------
 // Object parsing
 // ---------------------------------------------------------------------------
 
+/**
+ * `ctx` resolves the object's material/texture members against the unit's
+ * appearance tables (see `AppearanceMerger.register`); omitted, appearance
+ * members are ignored and surfaces come out exactly as before.
+ */
 export function parseCityObject(
   id: string,
   raw: CityJSONObject,
   realVertices: Vec3[],
+  ctx: AppearanceContext = EMPTY_APPEARANCE_CONTEXT,
 ): CityObject {
   const allSurfaces: Surface[] = [];
-  const objectBBox: [number, number, number, number, number, number] = [
+  const objectBBox: MutableBBox = [
     Infinity,
     Infinity,
     Infinity,
@@ -372,7 +326,13 @@ export function parseCityObject(
     ) {
       lod = geomLod;
     }
-    const surfaces = extractSurfaces(geom, realVertices, objectBBox, geomLod);
+    const surfaces = extractSurfaces(
+      geom,
+      realVertices,
+      objectBBox,
+      geomLod,
+      ctx,
+    );
     allSurfaces.push(...surfaces);
   }
 

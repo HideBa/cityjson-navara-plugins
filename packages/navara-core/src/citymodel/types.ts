@@ -18,6 +18,70 @@ export type Vec3 = readonly [number, number, number];
 /** Axis-aligned bounding box: [minX, minY, minZ, maxX, maxY, maxZ]. */
 export type BBox3 = readonly [number, number, number, number, number, number];
 
+/** A texture coordinate. Origin bottom-left, as three.js expects (`flipY`). */
+export type UV = readonly [number, number];
+
+// ---------------------------------------------------------------------------
+// Appearance (CityJSON §appearance — materials and textures)
+// ---------------------------------------------------------------------------
+
+/** An RGB triple in 0..1 sRGB, as written in the file. */
+export type ColorRGB = readonly [number, number, number];
+
+/** A CityJSON Material Object. Only `name` is mandatory in the spec. */
+export interface CityMaterial {
+  readonly name: string;
+  readonly diffuseColor?: ColorRGB;
+  readonly emissiveColor?: ColorRGB;
+  readonly specularColor?: ColorRGB;
+  readonly ambientIntensity?: number;
+  readonly shininess?: number;
+  /** 1 is fully transparent (the spec's convention, not alpha). */
+  readonly transparency?: number;
+  readonly isSmooth?: boolean;
+}
+
+export type TextureWrapMode = "none" | "wrap" | "mirror" | "clamp" | "border";
+
+/** A CityJSON Texture Object. `image` is kept verbatim: relative paths are
+ *  resolved against the DATASET's URL by whoever loads the image. */
+export interface CityTexture {
+  readonly image: string;
+  readonly type: "PNG" | "JPG";
+  readonly wrapMode?: TextureWrapMode;
+  readonly textureType?: "unknown" | "specific" | "typical";
+  readonly borderColor?: readonly [number, number, number, number];
+}
+
+/**
+ * The model-wide appearance tables. A CityJSONSeq/FlatCityBuf feature carries
+ * its own local tables; parsers merge them (deduplicated) into these and
+ * rewrite every surface's indices, so a `Surface` always indexes here.
+ */
+export interface CityAppearance {
+  readonly materials: ReadonlyArray<CityMaterial>;
+  readonly textures: ReadonlyArray<CityTexture>;
+  /** Theme names some surface actually references, sorted. */
+  readonly textureThemes: ReadonlyArray<string>;
+  readonly materialThemes: ReadonlyArray<string>;
+  readonly defaultTextureTheme: string | null;
+  readonly defaultMaterialTheme: string | null;
+}
+
+/** A surface's texture in one theme: which image, and one UV per ring vertex. */
+export interface SurfaceTexture {
+  /** Index into `CityAppearance.textures`. */
+  readonly textureIndex: number;
+  /** `uvs[i][k]` pairs with `Surface.rings[i][k]` — same lengths, same order. */
+  readonly uvs: ReadonlyArray<ReadonlyArray<UV>>;
+}
+
+/** What the user asked to draw: one theme of one kind, or nothing. */
+export interface AppearanceTheme {
+  readonly kind: "texture" | "material";
+  readonly name: string;
+}
+
 // ---------------------------------------------------------------------------
 // Surfaces
 // ---------------------------------------------------------------------------
@@ -47,6 +111,10 @@ export interface Surface {
   readonly attributes: Readonly<Record<string, unknown>>;
   /** LoD of the source geometry that produced this surface (e.g. "2", "2.2"). */
   readonly lod: string | null;
+  /** Theme name -> index into `CityAppearance.materials`. Absent: no material. */
+  readonly material?: Readonly<Record<string, number>>;
+  /** Theme name -> texture and UVs. Absent: untextured in every theme. */
+  readonly texture?: Readonly<Record<string, SurfaceTexture>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,4 +165,6 @@ export interface CityModel {
   readonly objects: Readonly<Record<string, CityObject>>;
   /** Total vertex count before normalization (for diagnostics). */
   readonly vertexCount: number;
+  /** Materials and textures, when the source carries any. */
+  readonly appearance?: CityAppearance;
 }

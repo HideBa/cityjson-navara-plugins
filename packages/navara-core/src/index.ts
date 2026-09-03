@@ -13,8 +13,16 @@ export const NAVARA_CORE_VERSION = "0.0.0";
 export type {
   Vec3,
   BBox3,
+  UV,
+  ColorRGB,
   BuildingSurfaceType,
   Surface,
+  SurfaceTexture,
+  CityMaterial,
+  CityTexture,
+  TextureWrapMode,
+  CityAppearance,
+  AppearanceTheme,
   CityObject,
   CityModelMetadata,
   CityModel,
@@ -56,6 +64,18 @@ export {
   mapMetadata,
 } from "./citymodel/cityjson/parseHelpers";
 export { parseCityJSON } from "./citymodel/cityjson/parseCityJSON";
+export type {
+  AppearanceContext,
+  LocalAppearance,
+  SurfacePath,
+} from "./citymodel/cityjson/appearance";
+export {
+  AppearanceMerger,
+  EMPTY_APPEARANCE_CONTEXT,
+  readLocalAppearance,
+  resolveSurfaceMaterial,
+  resolveSurfaceTexture,
+} from "./citymodel/cityjson/appearance";
 
 export type { CityJSONFeature } from "./citymodel/cityjsonseq/types";
 export { parseCityJSONSeq } from "./citymodel/cityjsonseq/parseCityJSONSeq";

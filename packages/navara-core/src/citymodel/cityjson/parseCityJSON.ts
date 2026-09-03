@@ -14,6 +14,7 @@ import {
   mergeBBox,
   parseCityObject,
 } from "./parseHelpers";
+import { AppearanceMerger } from "./appearance";
 
 /**
  * v1.x and v2.x only. The two differ in vocabulary (object types, semantic
@@ -39,12 +40,14 @@ export function parseCityJSON(root: CityJSONRoot): CityModel {
 
   const objects: Record<string, CityObject> = {};
   let modelBBox: BBox3 | null = null;
+  const appearance = new AppearanceMerger();
+  const ctx = appearance.register(root.appearance);
 
   for (const [id, rawObj] of Object.entries(root.CityObjects) as [
     string,
     CityJSONObject,
   ][]) {
-    const obj = parseCityObject(id, rawObj, realVertices);
+    const obj = parseCityObject(id, rawObj, realVertices, ctx);
     objects[id] = obj;
     modelBBox = mergeBBox(modelBBox, obj.bbox);
   }
@@ -55,5 +58,13 @@ export function parseCityJSON(root: CityJSONRoot): CityModel {
     bbox: modelBBox,
     objects,
     vertexCount: root.vertices.length,
+    ...withAppearance(appearance.build()),
   };
+}
+
+/** Spread helper: a model without appearance has NO `appearance` key at all. */
+function withAppearance(
+  appearance: ReturnType<AppearanceMerger["build"]>,
+): { appearance?: NonNullable<ReturnType<AppearanceMerger["build"]>> } {
+  return appearance === undefined ? {} : { appearance };
 }
