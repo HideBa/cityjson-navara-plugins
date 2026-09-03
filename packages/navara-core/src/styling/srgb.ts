@@ -14,6 +14,21 @@ function srgbChannelToLinear(c: number): number {
 }
 
 /**
+ * sRGB triple (0..1 per channel, as a CityJSON material's `diffuseColor` is
+ * written) → Linear-sRGB, the same transfer function as `srgbHexToLinear`.
+ * Channels are clamped to 0..1 first: a file that wrote 1.2 gets white, not
+ * a super-bright surface.
+ */
+export function srgbToLinear(rgb: RGB): RGB {
+  const clamp = (c: number): number => (c < 0 ? 0 : c > 1 ? 1 : c);
+  return [
+    srgbChannelToLinear(clamp(rgb[0])),
+    srgbChannelToLinear(clamp(rgb[1])),
+    srgbChannelToLinear(clamp(rgb[2])),
+  ];
+}
+
+/**
  * Expands a 3-digit CSS hex shorthand ("abc" -> "aabbcc") to 6 digits, or
  * passes a valid 6-digit hex through unchanged. Returns null for anything
  * else (wrong length, non-hex characters).

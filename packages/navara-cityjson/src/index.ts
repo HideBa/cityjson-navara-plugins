@@ -41,6 +41,21 @@ export {
 
 export { disposeGeometry, geometryFromMeshArrays } from "./cityMeshGeometry";
 
+export type {
+  TextureCacheEntry,
+  TextureCacheOptions,
+  TextureSource,
+  TextureStatus,
+} from "./texturedMaterials";
+export {
+  applyTextureSettings,
+  buildGroupMaterials,
+  defaultTextureSource,
+  maskReadyTextures,
+  resolveTextureUrl,
+  TextureCache,
+} from "./texturedMaterials";
+
 export type { CityModelMeshOptions } from "./cityModelMesh";
 export { CityModelMesh } from "./cityModelMesh";
 

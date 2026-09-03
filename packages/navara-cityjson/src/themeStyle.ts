@@ -119,11 +119,18 @@ export class ThemeStyleController {
     this.dropEdges();
   }
 
-  /** Both mesh classes build exactly ONE `MeshBasicMaterial` (see either
-   *  material comment for why it is unlit); an array would be a different mesh
-   *  entirely. */
-  private get material(): MeshBasicMaterial {
-    return this.mesh.material as MeshBasicMaterial;
+  /** Both mesh classes build `MeshBasicMaterial`s (see either material
+   *  comment for why they are unlit): one, or — under a texture theme — one
+   *  per texture group. The tint applies to all of them alike. */
+  private get materials(): MeshBasicMaterial[] {
+    const material = this.mesh.material;
+    return (Array.isArray(material) ? material : [material]) as MeshBasicMaterial[];
+  }
+
+  /** The mesh swapped its material array (a texture-theme rebuild): re-apply
+   *  the current fill to the new materials. */
+  materialsReplaced(): void {
+    this.applyFill();
   }
 
   private applyFill(): void {
@@ -133,8 +140,10 @@ export class ThemeStyleController {
     // `uniforms.diffuse` is a plain copy), so a tint component above 1 is a
     // genuine HDR value under the exposure-10 AgX pipeline — while `set` reads
     // its argument as sRGB and clamps it to 1.
-    if (tint) this.material.color.setRGB(tint[0], tint[1], tint[2]);
-    else this.material.color.setRGB(1, 1, 1);
+    for (const material of this.materials) {
+      if (tint) material.color.setRGB(tint[0], tint[1], tint[2]);
+      else material.color.setRGB(1, 1, 1);
+    }
   }
 
   private applyEdges(): void {

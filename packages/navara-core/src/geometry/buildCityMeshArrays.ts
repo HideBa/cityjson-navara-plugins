@@ -12,9 +12,29 @@
  */
 
 import { ShapeUtils, Vector2 } from "three";
-import type { BBox3, CityModel, Vec3 } from "../citymodel/types";
+import type {
+  AppearanceTheme,
+  BBox3,
+  CityModel,
+  Surface,
+  UV,
+  Vec3,
+} from "../citymodel/types";
 import { toplevelCityObjectType } from "../citymodel/toplevelType";
+import { srgbToLinear } from "../styling/srgb";
 import { SURFACE_COLORS_LINEAR } from "../styling/surfaceColors";
+
+/**
+ * A contiguous VERTEX range of the arrays drawn with one texture image
+ * (`textureIndex` into `CityModel.appearance.textures`), or with none
+ * (`textureIndex === -1`). Ranges tile the whole array in order; a renderer
+ * turns each into a `BufferGeometry` group with its own material.
+ */
+export interface TextureGroup {
+  readonly start: number;
+  readonly count: number;
+  readonly textureIndex: number;
+}
 
 export interface CityMeshArrays {
   readonly positions: Float32Array;
@@ -24,11 +44,29 @@ export interface CityMeshArrays {
   readonly surfaceIndices: Uint32Array;
   readonly objectKeys: string[];
   readonly triangleCount: number;
+  /** Per-vertex texture coordinates (2 per vertex). Only under a texture
+   *  theme; `null`/absent otherwise. Untextured vertices carry (0, 0). */
+  readonly uvs?: Float32Array | null;
+  /** Vertex ranges per texture, untextured first. Only under a texture
+   *  theme; `null`/absent otherwise. */
+  readonly textureGroups?: ReadonlyArray<TextureGroup> | null;
 }
 
 interface SurfaceTriangulation {
   readonly vertices: ReadonlyArray<Vec3>;
   readonly triangles: ReadonlyArray<readonly [number, number, number]>;
+  /** Paired with `vertices`, present when the surface was textured. */
+  readonly uvs: ReadonlyArray<UV> | null;
+}
+
+/** One drawable surface, resolved in pass 1 and written in pass 2. */
+interface PendingSurface {
+  readonly objectIdx: number;
+  readonly surfaceIdx: number;
+  readonly surface: Surface;
+  readonly triangulation: SurfaceTriangulation;
+  readonly textureIndex: number;
+  readonly color: { readonly r: number; readonly g: number; readonly b: number };
 }
 
 /**
@@ -61,6 +99,18 @@ interface SurfaceTriangulation {
  * that maps an index back through `objectKeys` (`computeStyleColors`,
  * `paintLayers`, `resolveVertexIndices`) shifts by the number of hidden
  * objects before it.
+ *
+ * `appearance` selects one of the model's appearance themes:
+ *  - a MATERIAL theme replaces the semantic colour of every surface that has
+ *    a material in that theme with the material's diffuse colour (sRGB →
+ *    linear); nothing else changes, so rule colours still override exactly
+ *    as they do over semantic colours;
+ *  - a TEXTURE theme writes surfaces SORTED by texture index (untextured
+ *    first, file order within a bucket) so each image is one contiguous
+ *    vertex range (`textureGroups`), and emits per-vertex `uvs`. Colours stay
+ *    semantic: a renderer whites them out only where an image has actually
+ *    loaded, so a missing image degrades to the plain look.
+ * With no theme (the default) the output is byte-identical to before.
  */
 export function buildCityMeshArrays(
   model: CityModel,
@@ -68,28 +118,69 @@ export function buildCityMeshArrays(
   originOffset: Vec3 = [0, 0, 0],
   selectedLod: string | null = null,
   hiddenTypes: ReadonlySet<string> | null = null,
+  appearance: AppearanceTheme | null = null,
 ): CityMeshArrays {
   const objectKeys: string[] = [];
-  const triangulationCache = new Map<
-    string,
-    Array<SurfaceTriangulation | null>
-  >();
+  const textureTheme =
+    appearance?.kind === "texture" ? appearance.name : null;
+  const materialTheme =
+    appearance?.kind === "material" ? appearance.name : null;
+  const materials = model.appearance?.materials;
 
-  // Pass 1: count total triangles and build object key list
+  // Pass 1: triangulate, resolve colour/texture, build the object key list.
   let totalTriangles = 0;
+  const pending: PendingSurface[] = [];
+  let objectIdx = 0;
   for (const [id, obj] of Object.entries(model.objects)) {
     if (!obj) continue;
-    // Pushed BEFORE the hidden check: the key list is never filtered.
+    // Pushed BEFORE the hidden check: the key list is never filtered, and a
+    // hidden object still consumes its index — see `hiddenTypes` above.
     objectKeys.push(id);
+    const thisObjectIdx = objectIdx++;
     if (isHidden(obj.objectType, hiddenTypes)) continue;
-    const surfaceTriangulations: Array<SurfaceTriangulation | null> = [];
-    for (const surface of obj.surfaces) {
+    for (let surfaceIdx = 0; surfaceIdx < obj.surfaces.length; surfaceIdx++) {
+      const surface = obj.surfaces[surfaceIdx]!;
       if (selectedLod !== null && surface.lod !== selectedLod) continue;
-      const triangulation = triangulateSurface(surface.rings, obj.bbox);
-      surfaceTriangulations.push(triangulation);
-      totalTriangles += triangulation?.triangles.length ?? 0;
+      const surfaceTexture =
+        textureTheme !== null ? surface.texture?.[textureTheme] : undefined;
+      const triangulation = triangulateSurface(
+        surface.rings,
+        obj.bbox,
+        surfaceTexture?.uvs ?? null,
+      );
+      if (!triangulation) continue;
+      // Textured only when the UVs made it through triangulation intact.
+      const textureIndex =
+        surfaceTexture && triangulation.uvs ? surfaceTexture.textureIndex : -1;
+      let color: PendingSurface["color"] = SURFACE_COLORS_LINEAR[surface.type];
+      if (materialTheme !== null) {
+        const materialIdx = surface.material?.[materialTheme];
+        const diffuse =
+          materialIdx === undefined
+            ? undefined
+            : materials?.[materialIdx]?.diffuseColor;
+        if (diffuse) {
+          const [r, g, b] = srgbToLinear(diffuse);
+          color = { r, g, b };
+        }
+      }
+      pending.push({
+        objectIdx: thisObjectIdx,
+        surfaceIdx,
+        surface,
+        triangulation,
+        textureIndex,
+        color,
+      });
+      totalTriangles += triangulation.triangles.length;
     }
-    triangulationCache.set(id, surfaceTriangulations);
+  }
+
+  // Under a texture theme, one contiguous range per image. A stable sort
+  // keeps file order inside each bucket; per-vertex object/surface indices
+  // carry identity, so the write order is free to change.
+  if (textureTheme !== null) {
+    pending.sort((a, b) => a.textureIndex - b.textureIndex);
   }
 
   const vertexCount = totalTriangles * 3;
@@ -100,32 +191,49 @@ export function buildCityMeshArrays(
   const colorArray = new Float32Array(vertexCount * 3);
   const objIdxArray = new Uint32Array(vertexCount);
   const surfIdxArray = new Uint32Array(vertexCount);
+  const uvArray = textureTheme !== null ? new Float32Array(vertexCount * 2) : null;
+  const textureGroups: TextureGroup[] | null = textureTheme !== null ? [] : null;
 
   // Pass 2: write directly into typed arrays
   let writeIdx = 0;
-  let objectIdx = 0;
-  for (const [id, obj] of Object.entries(model.objects)) {
-    if (!obj) continue;
-    if (isHidden(obj.objectType, hiddenTypes)) {
-      // Consumes its index anyway — see `hiddenTypes` above.
-      objectIdx++;
-      continue;
+  for (const entry of pending) {
+    const { objectIdx, surfaceIdx, triangulation, color, textureIndex } = entry;
+
+    if (textureGroups) {
+      const last = textureGroups[textureGroups.length - 1];
+      if (last && last.textureIndex === textureIndex) {
+        textureGroups[textureGroups.length - 1] = {
+          ...last,
+          count: last.count + triangulation.triangles.length * 3,
+        };
+      } else {
+        textureGroups.push({
+          start: writeIdx,
+          count: triangulation.triangles.length * 3,
+          textureIndex,
+        });
+      }
     }
-    const surfaceTriangulations = triangulationCache.get(id) ?? [];
-    let cachedSurfaceIdx = 0;
 
-    for (let surfaceIdx = 0; surfaceIdx < obj.surfaces.length; surfaceIdx++) {
-      const surface = obj.surfaces[surfaceIdx]!;
-      if (selectedLod !== null && surface.lod !== selectedLod) continue;
-      const color = SURFACE_COLORS_LINEAR[surface.type];
-      const triangulation = surfaceTriangulations[cachedSurfaceIdx++] ?? null;
-      if (!triangulation) continue;
-
+    {
       for (const triangle of triangulation.triangles) {
         const v0 = triangulation.vertices[triangle[0]]!;
         const v1 = triangulation.vertices[triangle[1]]!;
         const v2 = triangulation.vertices[triangle[2]]!;
         const base = writeIdx * 3;
+
+        if (uvArray && triangulation.uvs) {
+          const uv0 = triangulation.uvs[triangle[0]]!;
+          const uv1 = triangulation.uvs[triangle[1]]!;
+          const uv2 = triangulation.uvs[triangle[2]]!;
+          const uvBase = writeIdx * 2;
+          uvArray[uvBase] = uv0[0];
+          uvArray[uvBase + 1] = uv0[1];
+          uvArray[uvBase + 2] = uv1[0];
+          uvArray[uvBase + 3] = uv1[1];
+          uvArray[uvBase + 4] = uv2[0];
+          uvArray[uvBase + 5] = uv2[1];
+        }
 
         posArray[base] = v0[0] - originOffset[0];
         posArray[base + 1] = v0[1] - originOffset[1];
@@ -194,8 +302,6 @@ export function buildCityMeshArrays(
         writeIdx += 3;
       }
     }
-
-    objectIdx++;
   }
 
   return {
@@ -206,6 +312,8 @@ export function buildCityMeshArrays(
     surfaceIndices: surfIdxArray,
     objectKeys,
     triangleCount: totalTriangles,
+    uvs: uvArray,
+    textureGroups,
   };
 }
 
@@ -259,14 +367,37 @@ function computeFaceNormal(
   return [nx / length, ny / length, nz / length];
 }
 
+/**
+ * `uvRings`, when given, pairs with `rings` one UV per vertex; the returned
+ * `uvs` pair with `vertices` the same way. Every ring reversal below —
+ * the exterior's orientation flip and a hole's winding fix — is applied to
+ * the UV ring by the SAME decision, so a texture never mirrors on a face
+ * whose vertices were reordered. A UV ring that does not match its vertex
+ * ring in length is dropped (the surface renders untextured).
+ */
 function triangulateSurface(
   rings: ReadonlyArray<ReadonlyArray<Vec3>>,
   objectBBox: BBox3 | null,
+  uvRings: ReadonlyArray<ReadonlyArray<UV>> | null = null,
 ): SurfaceTriangulation | null {
   if (rings.length === 0) return null;
 
-  const exteriorRing = orientExteriorRing(rings[0], objectBBox);
+  let uvs: ReadonlyArray<ReadonlyArray<UV>> | null =
+    uvRings !== null &&
+    uvRings.length === rings.length &&
+    uvRings.every((uvRing, i) => uvRing.length === rings[i]!.length)
+      ? uvRings
+      : null;
+
+  const exteriorRaw = rings[0];
+  const exteriorRing = orientExteriorRing(exteriorRaw, objectBBox);
   if (!exteriorRing || exteriorRing.length < 3) return null;
+  const exteriorReversed = exteriorRing !== exteriorRaw;
+  const exteriorUvs = uvs
+    ? exteriorReversed
+      ? [...uvs[0]!].reverse()
+      : uvs[0]!
+    : null;
 
   const normal = computeNewellNormal(exteriorRing);
   const normalLength = Math.hypot(normal[0], normal[1], normal[2]);
@@ -282,19 +413,32 @@ function triangulateSurface(
   const projectedContour = projectRingTo2D(exteriorRing, basis);
   const contourClockwise = ShapeUtils.isClockWise([...projectedContour]);
 
-  const holeRings = rings
-    .slice(1)
-    .filter((ring) => ring.length >= 3)
-    .map((ring) => [...ring]);
-  const projectedHoles = holeRings.map((ring) => {
+  const holeIndices: number[] = [];
+  for (let i = 1; i < rings.length; i++) {
+    if (rings[i]!.length >= 3) holeIndices.push(i);
+  }
+  const holeRings = holeIndices.map((i) => [...rings[i]!]);
+  const holeUvs: UV[][] | null = uvs
+    ? holeIndices.map((i) => [...uvs![i]!])
+    : null;
+  const projectedHoles = holeRings.map((ring, h) => {
     const projectedHole = projectRingTo2D(ring, basis);
     const holeClockwise = ShapeUtils.isClockWise([...projectedHole]);
-    return holeClockwise === contourClockwise
-      ? [...projectedHole].reverse()
-      : projectedHole;
+    if (holeClockwise !== contourClockwise) return projectedHole;
+    // The hole is rewound for the triangulator: reverse its UVs alongside.
+    // (Only the 2D projection is reversed for `triangulateShape`; the 3D
+    // vertex list keeps the original order — see below.)
+    if (holeUvs) holeUvs[h] = [...holeUvs[h]!].reverse();
+    holeRings[h] = [...ring].reverse();
+    return [...projectedHole].reverse();
   });
 
   const vertices = [exteriorRing, ...holeRings].flat();
+  if (exteriorUvs && holeUvs) {
+    uvs = [exteriorUvs, ...holeUvs];
+  } else {
+    uvs = null;
+  }
   const triangles = ShapeUtils.triangulateShape(
     [...projectedContour],
     projectedHoles.map((hole) => [...hole]),
@@ -307,7 +451,7 @@ function triangulateSurface(
       ],
   );
 
-  return { vertices, triangles };
+  return { vertices, triangles, uvs: uvs ? uvs.flat() : null };
 }
 
 function orientExteriorRing(

@@ -23,9 +23,10 @@ import {
 // `ThreeView` is @navaramap/three's DEFAULT export, not a named one.
 import type ThreeView from "@navaramap/three";
 import type { Mesh } from "three";
-import type { CityModel } from "@cityjson/navara-core";
+import type { AppearanceTheme, CityModel } from "@cityjson/navara-core";
 import { CityModelMesh } from "./cityModelMesh";
 import type { PickStrategy } from "./pickStrategy";
+import type { TextureSource } from "./texturedMaterials";
 
 /** The nested config the registry passes under `CITY_MODEL_MESH_KEY`. */
 export interface CityModelDescOptions {
@@ -41,6 +42,10 @@ export interface CityModelDescOptions {
    *  resolves (Global Constraints -> Vertical datum). */
   readonly heightOffset?: number;
   readonly pickStrategy?: PickStrategy;
+  /** See `AddCityModelOptions` for all three. */
+  readonly appearance?: AppearanceTheme | null;
+  readonly textureBaseUrl?: string | null;
+  readonly textureSource?: TextureSource;
 }
 
 export type CityModelDescConfig = MeshConfig & {
@@ -70,6 +75,9 @@ export class CityModelMeshDesc extends MeshDesc<CityModelDescConfig> {
       hiddenTypes: options.hiddenTypes,
       heightOffset: options.heightOffset,
       pickStrategy: options.pickStrategy,
+      appearance: options.appearance,
+      textureBaseUrl: options.textureBaseUrl,
+      textureSource: options.textureSource,
       // No `makePlacementMatrix` override: the default is core's
       // `makeEnuFrame` via `buildPlacement`.
     });

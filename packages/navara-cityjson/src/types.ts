@@ -3,8 +3,12 @@
  * Interface Contract). Types only — no runtime code, and nothing engine-shaped,
  * so both the engine-free registry and the thin plugin binding can import it.
  */
-import type { SurfaceStyleEvaluator } from "@cityjson/navara-core";
+import type {
+  AppearanceTheme,
+  SurfaceStyleEvaluator,
+} from "@cityjson/navara-core";
 import type { GeodeticBounds } from "./enuPlacement";
+import type { TextureSource } from "./texturedMaterials";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import type { PickedFeatureLike, ScreenPoint, Selection } from "./selection";
 import type { ThemeStyle } from "./themeStyle";
@@ -38,6 +42,21 @@ export interface AddCityModelOptions {
    * datum). An explicit value — including `0` — skips sampling entirely.
    */
   readonly heightOffset?: number;
+  /**
+   * Which of the model's appearance themes to draw — a texture theme (images
+   * + UVs) or a material theme (diffuse colours); `null`/omitted draws the
+   * semantic colours. Changed afterwards through `setAppearance`.
+   */
+  readonly appearance?: AppearanceTheme | null;
+  /**
+   * The DATASET's URL, which relative texture image paths resolve against
+   * (`appearances/x.jpg` next to `rotterdam.jsonl`). `null` for a layer that
+   * came from a local file: its relative images cannot be fetched and those
+   * surfaces render untextured; absolute image URLs still load.
+   */
+  readonly textureBaseUrl?: string | null;
+  /** Image-loading seam; defaults to three's `TextureLoader`. */
+  readonly textureSource?: TextureSource;
 }
 
 /**
@@ -70,6 +89,10 @@ export interface CityModelHandle {
    * during load.
    */
   setThemeStyle(style: ThemeStyle): void;
+  /** Rebuilds geometry drawn with `theme` (or plain colours for `null`) —
+   *  the same seam as `setLod`. Textures load progressively: a surface keeps
+   *  its colour until its image is ready. */
+  setAppearance(theme: AppearanceTheme | null): void;
   setHighlight(sel: readonly Selection[], hovered?: Selection): void;
   /** Always returns a `SurfaceSelection`; the app narrows it per `PickMode`. */
   resolvePick(pick: PickedFeatureLike | ScreenPoint): Selection | null;

@@ -22,6 +22,7 @@ import {
   buildCityMeshArrays,
   computeOriginOffset,
   projectPositionsToEnu,
+  type AppearanceTheme,
   type CityMeshArrays,
   type CityModel,
   type SurfaceStyleEvaluator,
@@ -42,6 +43,13 @@ import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import { computeStyleColors, paintLayers } from "./surfaceColorLayers";
 import type { Selection, SurfaceSelection } from "./selection";
 import { ThemeStyleController, type ThemeStyle } from "./themeStyle";
+import {
+  buildGroupMaterials,
+  defaultTextureSource,
+  maskReadyTextures,
+  TextureCache,
+  type TextureSource,
+} from "./texturedMaterials";
 
 export interface CityModelMeshOptions {
   readonly id: string;
@@ -59,6 +67,12 @@ export interface CityModelMeshOptions {
   readonly heightOffset?: number;
   /** Task B1's PICK_PATH verdict. Defaults to DEFAULT_PICK_STRATEGY. */
   readonly pickStrategy?: PickStrategy;
+  /** Appearance theme to draw (see `AddCityModelOptions.appearance`). */
+  readonly appearance?: AppearanceTheme | null;
+  /** Dataset URL for relative texture paths; `null` = local file. */
+  readonly textureBaseUrl?: string | null;
+  /** Image-loading seam (tests inject a fake; the default needs a DOM). */
+  readonly textureSource?: TextureSource;
   /**
    * Test seam: replaces ONLY the ENU->ECEF matrix (so matrix assertions can
    * read `makeTranslation(1, 2, 3)` instead of ECEF megametres). The frame the
@@ -67,6 +81,14 @@ export interface CityModelMeshOptions {
    * world placement fictional, which is exactly what a unit test wants.
    */
   readonly makePlacementMatrix?: (lle: Lle) => Matrix4;
+}
+
+function sameTheme(
+  a: AppearanceTheme | null,
+  b: AppearanceTheme | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  return a.kind === b.kind && a.name === b.name;
 }
 
 /** Set equality: the app replaces the hidden-type array wholesale on every
@@ -98,6 +120,11 @@ export class CityModelMesh {
   private selections: readonly Selection[] = [];
   private hovered: Selection | null = null;
   private readonly theme: ThemeStyleController;
+  private appearance: AppearanceTheme | null;
+  private readonly textureBaseUrl: string | null;
+  private readonly textureSource: TextureSource;
+  /** Images for the active texture theme; null under any other theme. */
+  private textures: TextureCache | null = null;
 
   constructor(options: CityModelMeshOptions) {
     this.id = options.id;
@@ -114,6 +141,9 @@ export class CityModelMesh {
     this.originOffset = computeOriginOffset(options.model);
     this.makePlacementMatrix = options.makePlacementMatrix;
     this.placement = this.computePlacement(options.heightOffset ?? 0);
+    this.appearance = options.appearance ?? null;
+    this.textureBaseUrl = options.textureBaseUrl ?? null;
+    this.textureSource = options.textureSource ?? defaultTextureSource();
 
     this.arrays = this.buildArrays();
     this.baseColors = Float32Array.from(this.arrays.colors);
@@ -172,6 +202,9 @@ export class CityModelMesh {
     // matrixWorld when it builds, and every later placement change runs
     // through `rebuildGeometry` -> `theme.geometryReplaced()`.
     this.theme = new ThemeStyleController(this.object3d);
+    // A texture theme swaps the single material for one per image group.
+    this.applyMaterials();
+    this.repaint();
   }
 
   private buildArrays(): CityMeshArrays {
@@ -181,6 +214,7 @@ export class CityModelMesh {
       this.originOffset,
       this.lod,
       this.hiddenTypes.size > 0 ? this.hiddenTypes : null,
+      this.appearance,
     );
     // buildCityMeshArrays emits *source-CRS deltas* from originOffset. Those
     // are NOT ENU metres: a projected CRS carries scale factor and grid
@@ -228,6 +262,71 @@ export class CityModelMesh {
     return this.object3d.geometry;
   }
 
+  /**
+   * Under a texture theme, the mesh draws one material per texture group
+   * (`buildGroupMaterials`), with a `map` wherever the image is ready; under
+   * any other theme, the one plain material. Called after every geometry
+   * build, because the groups belong to the build. The image cache outlives
+   * the geometry: a LoD change re-requests the same images and gets them
+   * back at once.
+   */
+  private applyMaterials(): void {
+    const groups = this.arrays.textureGroups;
+    if (!groups || groups.length === 0) {
+      this.textures?.dispose();
+      this.textures = null;
+      if (Array.isArray(this.object3d.material)) {
+        for (const m of this.object3d.material) m.dispose();
+        this.object3d.material = new MeshBasicMaterial({
+          vertexColors: true,
+          side: DoubleSide,
+        });
+        this.theme.materialsReplaced();
+      }
+      return;
+    }
+    this.textures ??= new TextureCache({
+      textures: this.model.appearance?.textures ?? [],
+      baseUrl: this.textureBaseUrl,
+      source: this.textureSource,
+      onChange: (textureIndex) => this.textureChanged(textureIndex),
+      warn: (message) => console.warn(`[cityModel:${this.id}] ${message}`),
+    });
+    const previous = this.object3d.material;
+    this.object3d.material = buildGroupMaterials(groups, this.textures);
+    if (Array.isArray(previous)) for (const m of previous) m.dispose();
+    else previous.dispose();
+    this.theme.materialsReplaced();
+  }
+
+  /** An image landed (or failed): give its group the map, then repaint so
+   *  the mask whites out exactly the groups that now show an image. */
+  private textureChanged(textureIndex: number): void {
+    const groups = this.arrays.textureGroups;
+    const materials = this.object3d.material;
+    if (!groups || !Array.isArray(materials)) return;
+    const entry = this.textures?.get(textureIndex);
+    groups.forEach((group, i) => {
+      if (group.textureIndex !== textureIndex) return;
+      const material = materials[i] as MeshBasicMaterial | undefined;
+      if (!material) return;
+      material.map = entry?.status === "ready" ? entry.texture : null;
+      material.needsUpdate = true;
+    });
+    this.repaint();
+  }
+
+  /** `source` with white over every vertex whose image is on screen. */
+  private maskTextured(source: Float32Array): Float32Array {
+    const textures = this.textures;
+    if (!textures) return source;
+    return maskReadyTextures(
+      source,
+      this.arrays.textureGroups,
+      (textureIndex) => textures.get(textureIndex)?.status === "ready",
+    );
+  }
+
   /** Recompute style colors, then repaint the live color attribute. */
   private repaint(): void {
     this.styleColors = this.evaluator
@@ -242,9 +341,10 @@ export class CityModelMesh {
       : null;
 
     const attr = this.geometry.getAttribute("color");
+    // Mask BEFORE the highlight pass: a selected textured face still tints.
     paintLayers(
       attr.array as Float32Array,
-      this.styleColors ?? this.baseColors,
+      this.maskTextured(this.styleColors ?? this.baseColors),
       this.arrays.objectIndices,
       this.arrays.surfaceIndices,
       this.arrays.objectKeys,
@@ -321,6 +421,7 @@ export class CityModelMesh {
     this.baseColors = Float32Array.from(this.arrays.colors);
     this.object3d.geometry = geometryFromMeshArrays(this.arrays);
     old.dispose();
+    this.applyMaterials();
     this.repaint();
     // The theme's edge lines were extracted from the geometry just disposed —
     // an outline of surfaces this LoD (or hidden-type list, or placement) no
@@ -338,6 +439,31 @@ export class CityModelMesh {
   setStyle(evaluator: SurfaceStyleEvaluator | null): void {
     this.evaluator = evaluator;
     this.repaint();
+  }
+
+  /**
+   * Draw another appearance theme (or none). A rebuild on the `setLod` seam:
+   * a texture theme changes the vertex ORDER (surfaces are grouped by image)
+   * and adds UVs, a material theme changes the base colours. Switching
+   * between two TEXTURE themes drops the image cache, because the indices
+   * of one theme mean nothing in the other; a LoD change keeps it.
+   */
+  setAppearance(theme: AppearanceTheme | null): void {
+    if (sameTheme(theme, this.appearance)) return;
+    const textureThemeChanged =
+      this.appearance?.kind === "texture" &&
+      !(theme?.kind === "texture" && theme.name === this.appearance.name);
+    if (textureThemeChanged) {
+      this.textures?.dispose();
+      this.textures = null;
+    }
+    this.appearance = theme;
+    this.rebuildGeometry();
+  }
+
+  /** The theme currently drawn. */
+  getAppearance(): AppearanceTheme | null {
+    return this.appearance;
   }
 
   /**
@@ -462,6 +588,8 @@ export class CityModelMesh {
   dispose(): void {
     this.theme.dispose();
     this.geometry.dispose();
+    this.textures?.dispose();
+    this.textures = null;
     const material = this.object3d.material;
     if (Array.isArray(material)) {
       for (const m of material) m.dispose();

@@ -117,7 +117,10 @@ export {
   SURFACE_COLORS_LINEAR,
 } from "./styling/surfaceColors";
 
-export type { CityMeshArrays } from "./geometry/buildCityMeshArrays";
+export type {
+  CityMeshArrays,
+  TextureGroup,
+} from "./geometry/buildCityMeshArrays";
 export {
   buildCityMeshArrays,
   computeOriginOffset,
@@ -147,7 +150,7 @@ export type {
 export { evaluateCondition, evaluateRule, matchRule } from "./rules/evaluate";
 
 export type { RGB } from "./styling/srgb";
-export { srgbHexToLinear } from "./styling/srgb";
+export { srgbHexToLinear, srgbToLinear } from "./styling/srgb";
 export type {
   CityObjectInfo,
   SurfaceInfo,

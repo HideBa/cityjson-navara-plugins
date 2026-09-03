@@ -15,6 +15,7 @@
 import type { Matrix4 } from "three";
 import {
   geoidHeightAt,
+  type AppearanceTheme,
   type CityModel,
   type SurfaceStyleEvaluator,
 } from "@cityjson/navara-core";
@@ -138,6 +139,9 @@ export class CityModelRegistry {
         hiddenTypes: opts.hiddenTypes,
         heightOffset: opts.heightOffset,
         pickStrategy: this.pickStrategy,
+        appearance: opts.appearance ?? null,
+        textureBaseUrl: opts.textureBaseUrl ?? null,
+        textureSource: opts.textureSource,
       },
     });
 
@@ -158,6 +162,8 @@ export class CityModelRegistry {
       setStyle: (evaluator: SurfaceStyleEvaluator | null) =>
         mesh.setStyle(evaluator),
       setThemeStyle: (style: ThemeStyle) => mesh.setThemeStyle(style),
+      setAppearance: (theme: AppearanceTheme | null) =>
+        mesh.setAppearance(theme),
       setHighlight: (sel: readonly Selection[], hovered?: Selection) =>
         mesh.setHighlight(sel, hovered ?? null),
       resolvePick: (pick: PickedFeatureLike | ScreenPoint) => {

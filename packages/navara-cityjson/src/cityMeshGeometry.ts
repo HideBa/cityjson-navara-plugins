@@ -52,6 +52,17 @@ export function geometryFromMeshArrays(arrays: CityMeshArrays): BufferGeometry {
     "surfaceIndex",
     new BufferAttribute(arrays.surfaceIndices, 1),
   );
+  // Under a texture theme the build also carries per-vertex UVs and one
+  // vertex range per image; each range becomes a draw group whose material
+  // index is its position, matching `buildGroupMaterials`.
+  if (arrays.uvs) {
+    geometry.setAttribute("uv", new BufferAttribute(arrays.uvs, 2));
+  }
+  if (arrays.textureGroups) {
+    arrays.textureGroups.forEach((group, i) =>
+      geometry.addGroup(group.start, group.count, i),
+    );
+  }
   geometry.computeBoundingSphere();
   return geometry;
 }
