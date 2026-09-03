@@ -65,6 +65,11 @@ export {
 } from "./citymodel/cityjson/parseHelpers";
 export { parseCityJSON } from "./citymodel/cityjson/parseCityJSON";
 export type {
+  AppearanceUnit,
+  MergedAppearance,
+} from "./citymodel/mergeAppearance";
+export { mergeModelAppearances } from "./citymodel/mergeAppearance";
+export type {
   AppearanceContext,
   LocalAppearance,
   SurfacePath,
