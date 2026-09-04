@@ -37,11 +37,11 @@ importers:
         version: link:../navara-core
     devDependencies:
       '@navaramap/three':
-        specifier: 0.0.5
-        version: 0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
+        specifier: 0.1.1
+        version: 0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       '@navaramap/three-default-plugin':
-        specifier: 0.0.5
-        version: 0.0.5(@navaramap/three@0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
+        specifier: 0.1.1
+        version: 0.1.1(@navaramap/three@0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       '@types/three':
         specifier: 0.183.1
         version: 0.183.1
@@ -117,11 +117,11 @@ importers:
         version: link:../navara-core
     devDependencies:
       '@navaramap/three':
-        specifier: 0.0.5
-        version: 0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
+        specifier: 0.1.1
+        version: 0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       '@navaramap/three-default-plugin':
-        specifier: 0.0.5
-        version: 0.0.5(@navaramap/three@0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
+        specifier: 0.1.1
+        version: 0.1.1(@navaramap/three@0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       '@types/three':
         specifier: 0.183.1
         version: 0.183.1
@@ -484,55 +484,56 @@ packages:
     engines: {node: ^22.20 || ^24.12 || >=25}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
-  '@navaramap/core@0.0.5':
-    resolution: {integrity: sha512-xXqZvPvb3VWHTSn1zde/vMcSmCxsMMYm/Cs+UVivNIeemiqhOLjKmHn0QCQNQiDJJ8wvoXU9z/YgHR2pXIMUVA==}
+  '@navaramap/core@0.1.1':
+    resolution: {integrity: sha512-cVXwvJ3nBbZSa1ck+cYE/JUAJqzA2817pngg7y91m6UH2PCX59IHZ2NHZ1qPBOEMZoWvJua7MV3UfW3zrvQgXg==}
 
-  '@navaramap/engine-api@0.0.5':
-    resolution: {integrity: sha512-vYEg8NWhYYZLZjjFFze5GbLI45NHmG1Tp62qJSaop2hJHx580l93OftdKo6CA1BmbJS7AGFsfmOjliiUJ/Mmcw==}
+  '@navaramap/engine-api@0.1.1':
+    resolution: {integrity: sha512-1EBBYi8mZMiulNtl/tZuLBqnOMgMi/W0O+fLW/Q/IOfJeXFboC2+O2tFSNdMTJ3vuRi78Br1QvplvXYqvzFe7A==}
 
-  '@navaramap/engine-font-worker@0.0.5':
-    resolution: {integrity: sha512-2NPNAjfRqa+TKmwNYWa5zSELpiRX5RtCslM/RUEE5aD3f6PL/bvnqQXU3Ha0lXo7OTlMgZNajIroKdCdzljmuw==}
+  '@navaramap/engine-font-worker@0.1.1':
+    resolution: {integrity: sha512-2ZObeydT5GYm8MspNJpEamKXLX8zuEaFmE4hAfGxW9DZELo0LPtRhD6RikjtbI+Wd5p38sYSmrcLkO9dU9cyig==}
 
-  '@navaramap/engine-worker@0.0.5':
-    resolution: {integrity: sha512-YqXW5sUBIMAtYNqLKeRuRyvjr8ZAJjWAxqcQZCF25GTVhSrG3r5G94By047WmOGz0YPkq9tj9ZGJYg/1PQuelg==}
+  '@navaramap/engine-worker@0.1.1':
+    resolution: {integrity: sha512-gg9Jm1ArEC5Cl+aaWdnS9phq6fi3im25wCNTwVeVs+Mdw//+Vm2m2C0CsUmH/aR3lcxvecxDnWxAtesibmu9cg==}
 
-  '@navaramap/engine@0.0.5':
-    resolution: {integrity: sha512-/tIG+epsgCiZ8wCcjkgoHlpLDBN05cQlXC3kHVsI/bpaLpBrpB5xO7d8iF4fZNjy1VM7TK3xCmeXR6cOieE5GA==}
+  '@navaramap/engine@0.1.1':
+    resolution: {integrity: sha512-Ik4ul+BB73IOU3+8VoPjM2SLLoI6vHrJDwa/Rp8t09PzVUq9Sk3gmPAYbDK6LDJ39iy1tnvkhpkaHnQIyhJeXw==}
 
-  '@navaramap/font@0.0.5':
-    resolution: {integrity: sha512-5aJdZP+rgb2nWWVaKHIPYHx4XW2juPgdQ7pRAcSGig4GLCyLyB93n9+iMK5FPnBRlyZHC915Csyco7Zd0+p96g==}
+  '@navaramap/font@0.1.1':
+    resolution: {integrity: sha512-2MC/UfSH9DETEvsl0JKb6ObfDQJJXNzsvlsZzJSlivvGzRHainXlUf3q83lbQ28m0pmVhgnaXsO5FFFUF46L3w==}
 
-  '@navaramap/three-api@0.0.5':
-    resolution: {integrity: sha512-cIHhYvPczUX1gECotYUaYmB14B3UsIRnYpdRCQCE2BcfacG5wrDcLYrrD8PXITStJSCrVhZW9ZXZhwKXzmD5ew==}
+  '@navaramap/three-api@0.1.1':
+    resolution: {integrity: sha512-vb4j+rFPpEg0UxI9V5u51KU1OL8ryzdcQKGP0FFiqyYPvvIdZfDYewWLevPHlknaFCUZ8n/1IS/nSYkEOpvfsA==}
     peerDependencies:
       three: '>=0.183.0'
 
-  '@navaramap/three-csm@0.0.5':
-    resolution: {integrity: sha512-njWk2f1jC/pMKdSke46N1OmTtEfdXSeLAxWQ0WFnTo9ZqK7IF66aHzAYF8BBx2zpcFrIQVVb02ibrwfAOP1Dxg==}
+  '@navaramap/three-csm@0.1.1':
+    resolution: {integrity: sha512-UGtoI/YRbjMU+wGMX2P51o1pioha1yAhot7lUDN1aiVVqFTfP+0/K/ZKqdQtcPsQP/DjbkLvbHApoTavfXGsWQ==}
     peerDependencies:
       three: '>=0.183.0'
 
-  '@navaramap/three-default-descs@0.0.5':
-    resolution: {integrity: sha512-Q4clelHN0uE3ybzmOLsbEiLR0MRozIW3eLKNd2RnzottO1SLP9T819K8MQUw657cWlKU9ed2KYUuiAkHhRQOfQ==}
+  '@navaramap/three-default-descs@0.1.1':
+    resolution: {integrity: sha512-Fn62lVo73/+gEovhxA1VVgDrFXG4vpZsC0lcgDVPHj8GKg+9oLDHocaPtqtt+TVsH2/IhAA9w0rr69aFzl8Zuw==}
     peerDependencies:
-      '@navaramap/three': 0.0.5
+      '@navaramap/three': 0.1.1
       postprocessing: '>=6.38.0'
       three: '>=0.183.0'
 
-  '@navaramap/three-default-plugin@0.0.5':
-    resolution: {integrity: sha512-QTyb9m8JFS2QvXCqrbIUVVhIeL8Kyn4BKM26PRWYIq0RPKO4q71lzcVBzAWd9iEr2qodidrY0ikep8LRT6MXFA==}
+  '@navaramap/three-default-plugin@0.1.1':
+    resolution: {integrity: sha512-vxpHfVlcg07QAXBi/lC+Y9Td1tmOUs9wOXvG0Z1LQbMPM2BEQdb+lNVJnHsD870jeoP0YzVcjUjrEC3BH6+tvQ==}
     peerDependencies:
-      '@navaramap/three': 0.0.5
+      '@navaramap/three': 0.1.1
 
-  '@navaramap/three@0.0.5':
-    resolution: {integrity: sha512-BQ9iYCI55xpzUq/gk36RJ6VwaNUirMBAV9XaqJTIPjHFtu5IKlOLdAt7FW8sJ0v+wJrezsW8qzaxjaR3QoNf7g==}
+  '@navaramap/three@0.1.1':
+    resolution: {integrity: sha512-T2KpzvbLKK05Boy8a7D3KgnXPW0XtlFYxtsdX5HennfpRG13Yh9PktEtLG+SG6l46VQeHCUFvZyxSnsqaCxB1Q==}
     peerDependencies:
       postprocessing: '>=6.38.0'
       three: '>=0.183.0'
 
-  '@navaramap/worker@0.0.5':
-    resolution: {integrity: sha512-N/t1r7NUdgSrIp1BFu7k3aIM30wdgmRbeu7UsKeguqkza3KiLY4NshtJhFdFo6Yh035ZbXGgyQkbvnaBEgwxBg==}
+  '@navaramap/worker@0.1.1':
+    resolution: {integrity: sha512-Dmb7TJWdQ27n1n5wCptP6v1ilcb/XzoHXA8O+uSTJPqMZJTusFzjUwn/aflf2+9bwfvDWU1rjdapr6MJt/uYKA==}
 
   '@petamoriken/float16@3.9.3':
     resolution: {integrity: sha512-8awtpHXCx/bNpFt4mt2xdkgtgVvKqty8VbjHI/WWWQuEw+KLzFot3f4+LkQY9YmOtq7A5GdOnqoIC8Pdygjk2g==}
@@ -596,66 +597,79 @@ packages:
     resolution: {integrity: sha512-81wiiX3v7aqy+T+bT61TJ78yJjRquqFFTTbAPt08imfQQzkPIW8t6aJbkTagtCCrXMNc9D66+geqlK7ydLPNqA==}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm-musleabihf@4.62.4':
     resolution: {integrity: sha512-9kmDIvNZqdoHOBZgNtpTBeLWYO/LVipM3H/j62P8848/l/VPEQL6N3uxU9pvP1oZAsXyC2MEnFP3ovRjo7WYNQ==}
     cpu: [arm]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-arm64-gnu@4.62.4':
     resolution: {integrity: sha512-CcnXHWnXg69g+DX5VWL3FHts3qMRN2uVEHX+BZvGLdd07/gXkn3ePjYtO1LDJvxkGKVHMclKBRa1QUTH+6toYQ==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-musl@4.62.4':
     resolution: {integrity: sha512-iFOibiHnTRuhrWLlRsOQFdZJJIa7S8OwkneJr4ocALP16u5yk6lWLINFwhHaEqBFMsKDUZofLkGos7+CPzGB3g==}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-loong64-gnu@4.62.4':
     resolution: {integrity: sha512-XnWYMI7euHlb5a871xPja+Gm7DRCFU+FGRrtS2sMq9N8FvqtpagUy6gD4YOemC5MRk9xbh8+jYMEJbigFQwsgA==}
     cpu: [loong64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-loong64-musl@4.62.4':
     resolution: {integrity: sha512-qGDAlO0U8xedCcsdRm9oaoQY8DAx/QT7uIxJWhCdx0ceIWX783UC9QSYkdpzAe29wNiVfp24+bZdQmn49o45SQ==}
     cpu: [loong64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-ppc64-gnu@4.62.4':
     resolution: {integrity: sha512-ru4H6ezD7ysA5EiEK6qkkaEb4modH8CTej6kUy/gQi20u3kB3G7Zn8snXXkeJSCOFKG/rbPPtM/+9Wgas1961w==}
     cpu: [ppc64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-ppc64-musl@4.62.4':
     resolution: {integrity: sha512-2W4MO5WQVJnbJaZdvDb9rhBDuFU1nKIepPFpJUBsTh2k1YY2g+ODViaWuyOAjQ5cOP7NvrvLzt3wvHOoiAvc7w==}
     cpu: [ppc64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-riscv64-gnu@4.62.4':
     resolution: {integrity: sha512-+fxjfuoAmVMCYV5QyjoIpu0cp5DOiOTeqYFk1AVaxGr+/ravWLX89XfQmptsoWcaVy/TGf2hexzbUOrCQIL1CQ==}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-musl@4.62.4':
     resolution: {integrity: sha512-jTn8JfHGL4djjFxPuM06LmNUJDsst2jeVlsd9OmIH6zc5sC9K6rIuO4YajXatLUpBmBKl6b35ro1QZocLi+tcA==}
     cpu: [riscv64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-s390x-gnu@4.62.4':
     resolution: {integrity: sha512-oCJCJL4pXsoDcP2QZ+JVlPTIRc6266zsIaeJJsWImmF7HO0W8nb6HuSgZlMWxJwaPf8ehbSw8yo0EUw925hKsA==}
     cpu: [s390x]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.62.4':
     resolution: {integrity: sha512-W69hukhZ3KKNRCaMIEzKvcFye42hh0FE1+YoYaf5+Ikacuftoco6yO/xouz0hc5d5W/s3yBro5jRiuEE/Q5vUw==}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-x64-musl@4.62.4':
     resolution: {integrity: sha512-qiXbGG2jkjXhzXpsFZSR2Xpb8DN/UaxYsbb/STbuR/6fpaDgRmmaq1B/LmtF2wQFOFOSsK2jdE0RZ3a0zHn4QA==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-openbsd-x64@4.62.4':
     resolution: {integrity: sha512-nWeM//hxv8mIo6jD7Hu4o48DVmV9pbV6gsKaWU+4NFyqHoPKwrkRiZGLKUhOBk8qNmDmpwFtPKg80Bo/Tn4xiQ==}
@@ -1668,38 +1682,38 @@ snapshots:
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
-  '@navaramap/core@0.0.5':
+  '@navaramap/core@0.1.1':
     dependencies:
       d3: 7.9.0
 
-  '@navaramap/engine-api@0.0.5': {}
+  '@navaramap/engine-api@0.1.1': {}
 
-  '@navaramap/engine-font-worker@0.0.5': {}
+  '@navaramap/engine-font-worker@0.1.1': {}
 
-  '@navaramap/engine-worker@0.0.5': {}
+  '@navaramap/engine-worker@0.1.1': {}
 
-  '@navaramap/engine@0.0.5': {}
+  '@navaramap/engine@0.1.1': {}
 
-  '@navaramap/font@0.0.5':
+  '@navaramap/font@0.1.1':
     dependencies:
-      '@navaramap/engine-api': 0.0.5
-      '@navaramap/engine-font-worker': 0.0.5
-      '@navaramap/worker': 0.0.5
+      '@navaramap/engine-api': 0.1.1
+      '@navaramap/engine-font-worker': 0.1.1
+      '@navaramap/worker': 0.1.1
       three: 0.185.1
 
-  '@navaramap/three-api@0.0.5(three@0.183.2)':
+  '@navaramap/three-api@0.1.1(three@0.183.2)':
     dependencies:
-      '@navaramap/core': 0.0.5
-      '@navaramap/engine-api': 0.0.5
+      '@navaramap/core': 0.1.1
+      '@navaramap/engine-api': 0.1.1
       three: 0.183.2
 
-  '@navaramap/three-csm@0.0.5(three@0.183.2)':
+  '@navaramap/three-csm@0.1.1(three@0.183.2)':
     dependencies:
       three: 0.183.2
 
-  '@navaramap/three-default-descs@0.0.5(@navaramap/three@0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)':
+  '@navaramap/three-default-descs@0.1.1(@navaramap/three@0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)':
     dependencies:
-      '@navaramap/three': 0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
+      '@navaramap/three': 0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       '@sparkjsdev/spark': 2.1.0(three@0.183.2)
       '@takram/three-atmosphere': 0.19.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       '@takram/three-clouds': 0.7.6(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
@@ -1715,10 +1729,10 @@ snapshots:
       - '@react-three/postprocessing'
       - react
 
-  '@navaramap/three-default-plugin@0.0.5(@navaramap/three@0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)':
+  '@navaramap/three-default-plugin@0.1.1(@navaramap/three@0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)':
     dependencies:
-      '@navaramap/three': 0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
-      '@navaramap/three-default-descs': 0.0.5(@navaramap/three@0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
+      '@navaramap/three': 0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
+      '@navaramap/three-default-descs': 0.1.1(@navaramap/three@0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2))(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
     transitivePeerDependencies:
       - '@react-three/drei'
       - '@react-three/fiber'
@@ -1727,15 +1741,15 @@ snapshots:
       - react
       - three
 
-  '@navaramap/three@0.0.5(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)':
+  '@navaramap/three@0.1.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)':
     dependencies:
-      '@navaramap/core': 0.0.5
-      '@navaramap/engine': 0.0.5
-      '@navaramap/engine-api': 0.0.5
-      '@navaramap/font': 0.0.5
-      '@navaramap/three-api': 0.0.5(three@0.183.2)
-      '@navaramap/three-csm': 0.0.5(three@0.183.2)
-      '@navaramap/worker': 0.0.5
+      '@navaramap/core': 0.1.1
+      '@navaramap/engine': 0.1.1
+      '@navaramap/engine-api': 0.1.1
+      '@navaramap/font': 0.1.1
+      '@navaramap/three-api': 0.1.1(three@0.183.2)
+      '@navaramap/three-csm': 0.1.1(three@0.183.2)
+      '@navaramap/worker': 0.1.1
       '@takram/three-atmosphere': 0.19.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       '@takram/three-clouds': 0.7.6(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(postprocessing@6.39.4(three@0.183.2))(react@19.2.8)(three@0.183.2)
       '@takram/three-geospatial': 0.9.1(@react-three/fiber@9.7.0(@types/react@19.2.18)(react@19.2.8)(three@0.183.2))(react@19.2.8)(three@0.183.2)
@@ -1751,10 +1765,10 @@ snapshots:
       - '@react-three/postprocessing'
       - react
 
-  '@navaramap/worker@0.0.5':
+  '@navaramap/worker@0.1.1':
     dependencies:
-      '@navaramap/core': 0.0.5
-      '@navaramap/engine-worker': 0.0.5
+      '@navaramap/core': 0.1.1
+      '@navaramap/engine-worker': 0.1.1
       workerpool: 10.0.3
 
   '@petamoriken/float16@3.9.3': {}

@@ -29,16 +29,16 @@
     "@cityjson/flatcitybuf": "^0.3.0"
   },
   "peerDependencies": {
-    "@navaramap/three": "0.0.5",
-    "@navaramap/three-default-plugin": "0.0.5",
+    "@navaramap/three": "0.1.1",
+    "@navaramap/three-default-plugin": "0.1.1",
     "proj4": ">=2.20.0",
     "three": ">=0.183.0"
   },
   "devDependencies": {
-    "@navaramap/three": "0.0.5",
+    "@navaramap/three": "0.1.1",
     "@types/three": "0.183.1",
     "proj4": "2.21.0",
-    "@navaramap/three-default-plugin": "0.0.5",
+    "@navaramap/three-default-plugin": "0.1.1",
     "three": "0.183.2",
     "tsup": "8.5.1",
     "typescript": "6.0.3",
