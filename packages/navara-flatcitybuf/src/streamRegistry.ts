@@ -277,12 +277,17 @@ export class StreamLayerRegistry {
    * {@link attach}'s trailing `commitAll()` and `onCommitNeeded` — "a commit is
    * owed and no camera event is going to arrive".
    *
-   * SCHEDULED, not immediate: `flyTo` returns before its animation has run, so
-   * `fn`'s promise settles at the START of the flight and committing then
-   * would fetch the viewport the camera is leaving. The commit is queued for
-   * `FLYTO_QUIET_MS` later, which is exactly when the suppression window
-   * closes and the camera is at rest — the same constant that decides when
-   * real camera events start counting again, so the two can never disagree.
+   * SCHEDULED, not immediate: the commit is queued for `FLYTO_QUIET_MS` after
+   * `fn`'s promise settles, which is exactly when the suppression window
+   * closes — the same constant that decides when real camera events start
+   * counting again, so the two can never disagree. What that promise means
+   * depends on the caller: Navara 0.1.x's `flyTo` resolves at the END of its
+   * flight (or when a newer move supersedes it), so a caller that returns it
+   * holds the gate for the whole animation and the commit lands `FLYTO_QUIET_MS`
+   * after touchdown; a synchronous `setCamera` — or 0.0.5's `flyTo`, which
+   * returned nothing — settles at once, and the window has to absorb the
+   * whole animation on its own. Committing at settle time itself would, in
+   * the second case, fetch the viewport the camera is leaving.
    *
    * No double-commit with a user gesture: while the gate is held, camera
    * events produce nothing at all, so nothing else can commit inside the
