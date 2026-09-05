@@ -42,6 +42,7 @@ import {
 import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import { computeStyleColors, paintLayers } from "./surfaceColorLayers";
+import { resolveCityColors, type ResolvedCityColors } from "./cityColors";
 import type { Selection, SurfaceSelection } from "./selection";
 import { ThemeStyleController, type ThemeStyle } from "./themeStyle";
 import {
@@ -87,6 +88,10 @@ export interface CityModelMeshOptions {
   readonly textureBaseUrl?: string | null;
   /** Image-loading seam (tests inject a fake; the default needs a DOM). */
   readonly textureSource?: TextureSource;
+  /** Highlight, hover and surface palette, already resolved (the registry
+   *  lays the layer's override over the plugin's). Omitted keeps the
+   *  historical colours — see `cityColors.ts`. */
+  readonly colors?: ResolvedCityColors;
   /**
    * Test seam: replaces ONLY the ENU->ECEF matrix (so matrix assertions can
    * read `makeTranslation(1, 2, 3)` instead of ECEF megametres). The frame the
@@ -162,10 +167,14 @@ export class CityModelMesh {
    *  every hover/selection repaint until the style, the mask or the
    *  geometry changes. */
   private maskedSource: Float32Array | null = null;
+  private readonly colors: ResolvedCityColors;
 
   constructor(options: CityModelMeshOptions) {
     this.id = options.id;
     this.model = options.model;
+    // Before `buildArrays` runs (the constructor builds once), because the
+    // palette is baked into the base colours.
+    this.colors = options.colors ?? resolveCityColors();
     // Both halves of the CRS gate: resolvable by proj4 AND metre-based. A
     // foot-based CRS reprojects fine horizontally but would scale heights and
     // the geoid offset wrong, so it is refused rather than silently placed.
@@ -257,6 +266,7 @@ export class CityModelMesh {
       this.lod,
       this.hiddenTypes.size > 0 ? this.hiddenTypes : null,
       this.appearance,
+      this.colors.surfaceColorsLinear,
       this.visibleObjectIds,
     );
     // buildCityMeshArrays emits *source-CRS deltas* from originOffset. Those
@@ -419,6 +429,7 @@ export class CityModelMesh {
       this.arrays.objectKeys,
       this.selections,
       this.hovered,
+      this.colors,
     );
     attr.needsUpdate = true;
   }

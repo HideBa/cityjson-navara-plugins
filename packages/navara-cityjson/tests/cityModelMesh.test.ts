@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { DoubleSide, LineSegments, Matrix4, Vector3 } from "three";
 import type { CityModel } from "@cityjson/navara-core";
 import { CityModelMesh } from "../src/cityModelMesh";
+import { resolveCityColors } from "../src/cityColors";
 import type { ThemeStyle } from "../src/themeStyle";
 import { DEFAULT_PICK_STRATEGY } from "../src/pickStrategy";
 import { NonMetricCrsError } from "../src/enuPlacement";
@@ -64,6 +65,41 @@ const opts = {
   crs: "https://www.opengis.net/def/crs/EPSG/0/7415",
   makePlacementMatrix: () => new Matrix4().makeTranslation(1, 2, 3),
 };
+
+describe("CityModelMesh appearance", () => {
+  const red = {
+    RoofSurface: "#ff0000",
+    WallSurface: "#ff0000",
+    GroundSurface: "#ff0000",
+    ClosureSurface: "#ff0000",
+    OuterCeilingSurface: "#ff0000",
+    OuterFloorSurface: "#ff0000",
+    Window: "#ff0000",
+    Door: "#ff0000",
+    unknown: "#ff0000",
+  } as const;
+
+  it("bakes the resolved palette into the base colours and paints its highlight", () => {
+    const cityColors = resolveCityColors({
+      highlightColor: "#00ff00",
+      surfaceColors: red,
+    });
+    const m = new CityModelMesh({ ...opts, lod: "2", colors: cityColors });
+    const colors = () =>
+      Array.from(
+        (m.object3d.geometry.getAttribute("color").array as Float32Array).slice(
+          0,
+          3,
+        ),
+      );
+    expect(colors()).toEqual([1, 0, 0]);
+    m.setHighlight([{ kind: "object", layerId: "L1", objectId: "B1" }]);
+    expect(colors()).toEqual([0, 1, 0]);
+    // Clearing restores the palette, not core's default red-brown roof.
+    m.setHighlight([]);
+    expect(colors()).toEqual([1, 0, 0]);
+  });
+});
 
 describe("CityModelMesh", () => {
   // The STATIC counterpart of the same rule on `CityMeshArraysMesh`: real

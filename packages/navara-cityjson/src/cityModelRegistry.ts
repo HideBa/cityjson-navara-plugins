@@ -20,6 +20,7 @@ import {
   type SurfaceStyleEvaluator,
 } from "@cityjson/navara-core";
 import type { CityModelMesh } from "./cityModelMesh";
+import { resolveCityColors, type CityColors } from "./cityColors";
 import { CITY_MODEL_MESH_KEY } from "./descriptorKeys";
 import { resolveMetricEpsg } from "./enuPlacement";
 import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
@@ -75,6 +76,9 @@ export interface CityModelRegistryDeps {
     lngDeg: number,
     latDeg: number,
   ) => Promise<number>;
+  /** The plugin-wide default colours; a layer's own
+   *  `AddCityModelOptions.colors` is laid over it. */
+  readonly colors?: CityColors;
 }
 
 function isScreenPoint(
@@ -142,6 +146,9 @@ export class CityModelRegistry {
         appearance: opts.appearance ?? null,
         textureBaseUrl: opts.textureBaseUrl ?? null,
         textureSource: opts.textureSource,
+        // Resolved HERE, once per layer: the descriptor and the mesh only ever
+        // see the merged, linear-ready form.
+        colors: resolveCityColors(this.deps.colors, opts.colors),
       },
     });
 

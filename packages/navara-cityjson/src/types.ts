@@ -7,6 +7,7 @@ import type {
   AppearanceTheme,
   SurfaceStyleEvaluator,
 } from "@cityjson/navara-core";
+import type { CityColors } from "./cityColors";
 import type { GeodeticBounds } from "./enuPlacement";
 import type { TextureSource } from "./texturedMaterials";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
@@ -57,6 +58,10 @@ export interface AddCityModelOptions {
   readonly textureBaseUrl?: string | null;
   /** Image-loading seam; defaults to three's `TextureLoader`. */
   readonly textureSource?: TextureSource;
+  /** This layer's own colours (highlight, hover, surface palette), laid
+   *  over the plugin's `colors` option. Unrelated to `appearance`, which
+   *  names a theme the DATA carries. */
+  readonly colors?: CityColors;
 }
 
 /**
