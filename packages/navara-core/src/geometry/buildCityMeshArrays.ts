@@ -154,6 +154,12 @@ export function buildCityMeshArrays(
     // `null` and an EMPTY set are deliberately different — null is "no
     // filter", an empty set is "nothing matched", and a filter that matched
     // nothing must show nothing rather than everything.
+    //
+    // A RAW id test, with no ancestor walk — unlike `isHidden`, which folds an
+    // object up to its first-level type. The CALLER owns feature expansion
+    // (the app's feature-scoped SQL already expands a match to the whole
+    // feature, parts included), so walking parents here would double-expand,
+    // once per object, inside the hot pass-1 loop.
     if (visibleObjectIds !== null && !visibleObjectIds.has(id)) continue;
     for (let surfaceIdx = 0; surfaceIdx < obj.surfaces.length; surfaceIdx++) {
       const surface = obj.surfaces[surfaceIdx]!;

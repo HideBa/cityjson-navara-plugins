@@ -105,6 +105,16 @@ function sameTypes(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return true;
 }
 
+/** A private copy of a caller's filter set, `null` passed through. The mesh
+ *  must not alias a set the app still holds: mutating it in place would leave
+ *  `sameVisibleIds` reporting "unchanged" against geometry that no longer
+ *  matches it. */
+function copyVisibleIds(
+  ids: ReadonlySet<string> | null,
+): ReadonlySet<string> | null {
+  return ids === null ? null : new Set(ids);
+}
+
 /** Set equality that distinguishes `null` (no filter) from an empty set
  *  (a filter that matched nothing) — the two must never compare equal. */
 function sameVisibleIds(
@@ -165,7 +175,11 @@ export class CityModelMesh {
     this.pickStrategy = options.pickStrategy ?? DEFAULT_PICK_STRATEGY;
     this.lod = options.lod ?? null;
     this.hiddenTypes = new Set(options.hiddenTypes ?? []);
-    this.visibleObjectIds = options.visibleObjectIds ?? null;
+    // COPIED, like `hiddenTypes` above: the caller keeps its own reference,
+    // and an in-place mutation of it would silently defeat both "unchanged"
+    // guards (the app's set identity, and `sameVisibleIds` below). One
+    // allocation beside a full re-triangulation.
+    this.visibleObjectIds = copyVisibleIds(options.visibleObjectIds ?? null);
     this.originOffset = computeOriginOffset(options.model);
     this.makePlacementMatrix = options.makePlacementMatrix;
     this.placement = this.computePlacement(options.heightOffset ?? 0);
@@ -450,7 +464,7 @@ export class CityModelMesh {
    */
   setVisibleObjectIds(ids: ReadonlySet<string> | null): void {
     if (sameVisibleIds(ids, this.visibleObjectIds)) return;
-    this.visibleObjectIds = ids;
+    this.visibleObjectIds = copyVisibleIds(ids);
     this.rebuildGeometry();
   }
 

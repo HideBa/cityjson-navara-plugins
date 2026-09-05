@@ -338,7 +338,7 @@ describe("CityModelMesh hidden types", () => {
     m.dispose();
   });
 
-  it("builds filtered from the constructor option", () => {
+  it("builds filtered from the visibleObjectIds constructor option", () => {
     const m = new CityModelMesh({
       ...partOpts,
       visibleObjectIds: new Set(["T1"]),
@@ -368,14 +368,18 @@ describe("CityModelMesh hidden types", () => {
     m.dispose();
   });
 
-  it("keeps style and highlight across the rebuild", () => {
+  it("keeps style and highlight across a visible-id rebuild", () => {
     const m = new CityModelMesh(partOpts);
     m.setStyle((_surface, object) =>
       object.objectId === "T1" ? [0, 1, 0] : null,
     );
+    m.setHighlight([{ kind: "object", layerId: "L1", objectId: "T1" }], null);
     m.setVisibleObjectIds(new Set(["T1"]));
+    // Only the tree survives, so vertex 0 is its.
     const colors = m.object3d.geometry.getAttribute("color");
-    expect(colors.getY(0)).toBeGreaterThan(0.9);
+    expect(colors.getX(0)).toBeGreaterThan(0.5); // highlight orange survived
+    m.setHighlight([], null);
+    expect(colors.getY(0)).toBeGreaterThan(0.9); // ...over the surviving style
     expect(m.resolveVertex(0)?.objectId).toBe("T1");
     m.dispose();
   });
