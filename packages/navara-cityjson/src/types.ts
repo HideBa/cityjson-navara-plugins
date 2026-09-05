@@ -4,6 +4,7 @@
  * so both the engine-free registry and the thin plugin binding can import it.
  */
 import type { SurfaceStyleEvaluator } from "@cityjson/navara-core";
+import type { CityAppearance } from "./cityAppearance";
 import type { GeodeticBounds } from "./enuPlacement";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import type { PickedFeatureLike, ScreenPoint, Selection } from "./selection";
@@ -38,6 +39,8 @@ export interface AddCityModelOptions {
    * datum). An explicit value — including `0` — skips sampling entirely.
    */
   readonly heightOffset?: number;
+  /** This layer's colours, laid over the plugin's `appearance` option. */
+  readonly appearance?: CityAppearance;
 }
 
 /**

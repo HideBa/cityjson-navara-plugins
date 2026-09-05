@@ -1,3 +1,4 @@
+import type { SurfacePalette } from "@cityjson/navara-core";
 import type { BBox3, RoofMetrics, Rule } from "@cityjson/navara-core";
 import type { CellKey } from "./tileGrid";
 
@@ -39,6 +40,9 @@ export interface ResidentObjectRecord {
  */
 interface OpenExtras {
   readonly heightOffset?: number;
+  /** The host's surface palette overrides (CSS hex, structured-cloneable),
+   *  baked into every cell's base colours. Omitted means core's defaults. */
+  readonly surfaceColors?: SurfacePalette;
 }
 
 export type WorkerRequest =

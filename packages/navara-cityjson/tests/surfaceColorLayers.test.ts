@@ -85,6 +85,31 @@ describe("computeStyleColors", () => {
 });
 
 describe("paintLayers", () => {
+  it("paints a caller-supplied highlight and hover pair instead of the defaults", () => {
+    const target = new Float32Array(base.length);
+    const colors = {
+      highlight: srgbHexToLinear("#a7e32b"),
+      hover: srgbHexToLinear("#edfbc8"),
+    };
+    paintLayers(
+      target,
+      base,
+      objectIndices,
+      surfaceIndices,
+      objectKeys,
+      [{ kind: "object", layerId: "L", objectId: "B1" }],
+      { kind: "object", layerId: "L", objectId: "B2" },
+      colors,
+    );
+    expect(target[0]).toBeCloseTo(colors.highlight[0]!, 6);
+    expect(target[1]).toBeCloseTo(colors.highlight[1]!, 6);
+    expect(target[2]).toBeCloseTo(colors.highlight[2]!, 6);
+    // B2 is hovered, not selected: the hover colour, and not the default one.
+    expect(target[6]).toBeCloseTo(colors.hover[0]!, 6);
+    expect(target[7]).toBeCloseTo(colors.hover[1]!, 6);
+    expect(target[8]).toBeCloseTo(colors.hover[2]!, 6);
+  });
+
   it("restores the source layer then paints selection over hover", () => {
     const target = new Float32Array(base.length);
     paintLayers(

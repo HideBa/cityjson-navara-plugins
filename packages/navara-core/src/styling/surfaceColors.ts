@@ -49,3 +49,42 @@ export const SURFACE_COLORS_LINEAR: Record<BuildingSurfaceType, LinearRGB> =
       return [k, { r, g, b }];
     }),
   ) as Record<BuildingSurfaceType, LinearRGB>;
+
+/**
+ * A host's overrides for the semantic palette above, as CSS hex — the shape a
+ * brand hands over and the shape that survives `postMessage` to the worker.
+ * Missing types keep the defaults, so a host that only wants its own roof
+ * colour names one key.
+ */
+export type SurfacePalette = Readonly<
+  Partial<Record<BuildingSurfaceType, string>>
+>;
+
+/** Defaults with `palette` laid over them, as CSS hex (UI dots, legends). */
+export function resolveSurfaceColorHex(
+  palette?: SurfacePalette,
+): Record<BuildingSurfaceType, string> {
+  const out = { ...SURFACE_COLOR_HEX };
+  if (palette) {
+    for (const [type, hex] of Object.entries(palette)) {
+      if (typeof hex === "string") out[type as BuildingSurfaceType] = hex;
+    }
+  }
+  return out;
+}
+
+/**
+ * The same, as the Linear-sRGB triples `buildCityMeshArrays` bakes into vertex
+ * colours. Resolved ONCE per layer (or per worker open), never per vertex.
+ */
+export function resolveSurfaceColorsLinear(
+  palette?: SurfacePalette,
+): Record<BuildingSurfaceType, LinearRGB> {
+  if (!palette) return SURFACE_COLORS_LINEAR;
+  return Object.fromEntries(
+    Object.entries(resolveSurfaceColorHex(palette)).map(([k, hex]) => {
+      const [r, g, b] = srgbHexToLinear(hex);
+      return [k, { r, g, b }];
+    }),
+  ) as Record<BuildingSurfaceType, LinearRGB>;
+}

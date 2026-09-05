@@ -25,6 +25,7 @@ import {
   type CityModelViewLike,
 } from "./cityModelRegistry";
 import { CITY_MESH_ARRAYS_KEY, CITY_MODEL_MESH_KEY } from "./descriptorKeys";
+import type { CityAppearance } from "./cityAppearance";
 import type { PickStrategy } from "./pickStrategy";
 import type { EcefRay } from "./pickTypes";
 import type { AddCityModelOptions, CityModelHandle } from "./types";
@@ -34,6 +35,9 @@ export { CITY_MESH_ARRAYS_KEY, CITY_MODEL_MESH_KEY };
 export interface CityJSONPluginOptions {
   /** Task B1's PICK_PATH verdict; defaults to `DEFAULT_PICK_STRATEGY`. */
   readonly pickStrategy?: PickStrategy;
+  /** Default colours for every layer this plugin adds (highlight, hover, the
+   *  surface palette); `AddCityModelOptions.appearance` overrides per layer. */
+  readonly appearance?: CityAppearance;
 }
 
 export class CityJSONPlugin extends Plugin<ThreeView, ViewContext> {
@@ -50,6 +54,7 @@ export class CityJSONPlugin extends Plugin<ThreeView, ViewContext> {
       // The engine seam, supplied here and nowhere else.
       pickRays: { getPickRay: (x, y) => this.pickRay(x, y) },
       pickStrategy: options.pickStrategy,
+      appearance: options.appearance,
     });
   }
 

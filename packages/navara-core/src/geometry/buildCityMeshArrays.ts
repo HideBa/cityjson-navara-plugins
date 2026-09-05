@@ -14,7 +14,11 @@
 import { ShapeUtils, Vector2 } from "three";
 import type { BBox3, CityModel, Vec3 } from "../citymodel/types";
 import { toplevelCityObjectType } from "../citymodel/toplevelType";
-import { SURFACE_COLORS_LINEAR } from "../styling/surfaceColors";
+import {
+  SURFACE_COLORS_LINEAR,
+  type LinearRGB,
+} from "../styling/surfaceColors";
+import type { BuildingSurfaceType } from "../citymodel/types";
 
 export interface CityMeshArrays {
   readonly positions: Float32Array;
@@ -68,6 +72,9 @@ export function buildCityMeshArrays(
   originOffset: Vec3 = [0, 0, 0],
   selectedLod: string | null = null,
   hiddenTypes: ReadonlySet<string> | null = null,
+  /** Vertex colour per semantic surface type. Defaults to core's palette; a
+   *  host passes `resolveSurfaceColorsLinear(itsPalette)` to bake its own. */
+  surfaceColors: Record<BuildingSurfaceType, LinearRGB> = SURFACE_COLORS_LINEAR,
 ): CityMeshArrays {
   const objectKeys: string[] = [];
   const triangulationCache = new Map<
@@ -117,7 +124,7 @@ export function buildCityMeshArrays(
     for (let surfaceIdx = 0; surfaceIdx < obj.surfaces.length; surfaceIdx++) {
       const surface = obj.surfaces[surfaceIdx]!;
       if (selectedLod !== null && surface.lod !== selectedLod) continue;
-      const color = SURFACE_COLORS_LINEAR[surface.type];
+      const color = surfaceColors[surface.type];
       const triangulation = surfaceTriangulations[cachedSurfaceIdx++] ?? null;
       if (!triangulation) continue;
 

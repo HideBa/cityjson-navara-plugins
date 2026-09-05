@@ -33,6 +33,7 @@ import {
   type StreamLayerLike,
 } from "./streamRegistry";
 import { WorkerClient } from "./workerClient";
+import type { CityAppearance } from "@cityjson/navara-cityjson";
 
 export interface FlatCityBufPluginOptions {
   /** Task B1's PICK_PATH verdict, forwarded to every cell mesh. */
@@ -49,6 +50,9 @@ export interface FlatCityBufPluginOptions {
     lngDeg: number,
     latDeg: number,
   ) => Promise<number>;
+  /** Default colours for every stream this plugin opens (highlight, hover,
+   *  the surface palette); `OpenStreamOptions.appearance` overrides per layer. */
+  readonly appearance?: CityAppearance;
 }
 
 export class FlatCityBufPlugin extends Plugin<ThreeView, ViewContext> {
@@ -76,6 +80,7 @@ export class FlatCityBufPlugin extends Plugin<ThreeView, ViewContext> {
         }),
       getPickRays: () => this.raySource,
       sampleGeoidHeight: this.options.sampleGeoidHeight,
+      appearance: this.options.appearance,
     });
   }
 

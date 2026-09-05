@@ -31,6 +31,7 @@ import {
   ensureProjDef,
   geoidHeightAt,
   makeEnuFrame,
+  type SurfacePalette,
   type Rule,
 } from "@cityjson/navara-core";
 import { CellCache } from "./cellCache";
@@ -53,6 +54,10 @@ import {
   type TimerApi,
 } from "./settleController";
 import { FcbStreamLayerHandle, type CellEntry } from "./streamLayer";
+import {
+  resolveCityAppearance,
+  type CityAppearance,
+} from "@cityjson/navara-cityjson";
 import { makeGrid } from "./tileGrid";
 import type { Ray } from "./viewportFootprint";
 import type { WorkerClient } from "./workerClient";
@@ -105,6 +110,9 @@ export interface StreamLayerRegistryDeps {
   ) => Promise<number>;
   readonly settleMs?: number;
   readonly timers?: TimerApi;
+  /** The plugin-wide default appearance; a stream's own
+   *  `OpenStreamOptions.appearance` is laid over it. */
+  readonly appearance?: CityAppearance;
 }
 
 export interface OpenStreamOptions {
@@ -122,6 +130,10 @@ export interface OpenStreamOptions {
    *  before the worker's placement is established, so every cell bakes in the
    *  right frame from the very first fetch. */
   readonly heightOffset?: number;
+  /** This stream's colours, laid over the plugin's `appearance` option. The
+   *  palette goes to the worker with `open` (baked into every cell); the
+   *  highlight pair stays on the main-thread handle. */
+  readonly appearance?: CityAppearance;
 }
 
 /** The ambient timers, resolved at call time so a test's fake clock (installed
@@ -345,8 +357,19 @@ export class StreamLayerRegistry {
       );
     }
     const client = this.deps.createClient();
+    // Once per stream, before the worker opens: the worker needs the palette
+    // in its `open`, the handle needs the highlight pair.
+    const appearance = resolveCityAppearance(
+      this.deps.appearance,
+      opts.appearance,
+    );
     try {
-      const header = await this.openWorker(client, opts, opts.heightOffset);
+      const header = await this.openWorker(
+        client,
+        opts,
+        opts.heightOffset,
+        appearance.surfacePalette,
+      );
       if (!header.extent) {
         // Unreachable given checkAdmission's contract (its only extent-less
         // branch, "no-extent", is what `openWorker` already threw on) —
@@ -394,7 +417,12 @@ export class StreamLayerRegistry {
       if (opts.heightOffset === undefined) {
         // Establishes the worker's placement with the resolved offset. Only
         // now can a `fetch` be dispatched — see `openWorker`.
-        await this.openWorker(client, opts, heightOffsetM);
+        await this.openWorker(
+          client,
+          opts,
+          heightOffsetM,
+          appearance.surfacePalette,
+        );
       }
 
       const handle: FcbStreamLayerHandle = new FcbStreamLayerHandle({
@@ -413,6 +441,7 @@ export class StreamLayerRegistry {
         toSourceXY,
         toLngLat,
         heightOffsetM,
+        appearance,
         meshFactory: this.deps.createMeshFactory(opts.id),
         // Delegating rather than captured: `getPickRays()` is null until the
         // plugin has a view, and a layer opened in between must still pick.
@@ -546,11 +575,12 @@ export class StreamLayerRegistry {
     client: WorkerClient,
     opts: OpenStreamOptions,
     heightOffset: number | undefined,
+    surfaceColors: SurfacePalette | undefined,
   ): Promise<FcbHeaderModel> {
     const resp = await client.send(
       "url" in opts.source
-        ? { type: "open", url: opts.source.url, heightOffset }
-        : { type: "open", blob: opts.source.blob, heightOffset },
+        ? { type: "open", url: opts.source.url, heightOffset, surfaceColors }
+        : { type: "open", blob: opts.source.blob, heightOffset, surfaceColors },
     );
     if (resp.type === "error") throw new Error(resp.message);
     if (resp.type !== "opened") {

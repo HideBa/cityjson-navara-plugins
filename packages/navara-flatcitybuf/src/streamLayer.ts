@@ -24,7 +24,11 @@ import {
 // engine-free and Node-importable (its own doc comment; the `@navaramap/*`
 // modules live behind the separate `/plugin` entry point), so this does not
 // break the engine-binding rule.
-import { DEFAULT_THEME_STYLE, paintLayers } from "@cityjson/navara-cityjson";
+import {
+  DEFAULT_THEME_STYLE,
+  paintLayers,
+  type ResolvedCityAppearance,
+} from "@cityjson/navara-cityjson";
 import type {
   EcefRay,
   GeodeticBounds,
@@ -170,6 +174,12 @@ export interface FcbStreamLayerHandleOptions {
    *  Each cell's ENU frame must be rebuilt with the same value or every cell
    *  floats/sinks by it. */
   readonly heightOffsetM: number;
+  /** Highlight and hover colours, resolved by the registry (plugin default
+   *  laid under the layer's override). The surface PALETTE half of the same
+   *  object never reaches this handle: the worker bakes it into every cell's
+   *  base colours from the `open` message. Omitted keeps the historical
+   *  amber pair, so a host that builds handles itself changes nothing. */
+  readonly appearance?: ResolvedCityAppearance;
   /** Injected: builds one mesh per resident cell. Keeps this module free of
    *  @navaramap/* — Task C11's plugin supplies the real implementation. */
   readonly meshFactory: CellMeshFactory;
@@ -1315,6 +1325,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       cell.pickingIndex.objectKeys,
       this._selections,
       this._hovered,
+      this.options.appearance,
     );
     cell.handle.setColors(painted);
   }

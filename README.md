@@ -26,6 +26,6 @@ pinned to exact `0.0.5`, so the host app supplies a single engine instance.
 
 ## Consumption
 
-`multiroof-viewer` consumes this repo as a git submodule at
+[Roofy](https://github.com/MultiRoofs/roofy) consumes this repo as a git submodule at
 `packages/cityjson-navara-plugins`, with `file:` dependencies onto the built packages
 and a Vite alias onto `src/` for dev HMR.

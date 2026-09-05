@@ -25,6 +25,7 @@ import type ThreeView from "@navaramap/three";
 import type { Mesh } from "three";
 import type { CityModel } from "@cityjson/navara-core";
 import { CityModelMesh } from "./cityModelMesh";
+import type { ResolvedCityAppearance } from "./cityAppearance";
 import type { PickStrategy } from "./pickStrategy";
 
 /** The nested config the registry passes under `CITY_MODEL_MESH_KEY`. */
@@ -41,6 +42,8 @@ export interface CityModelDescOptions {
    *  resolves (Global Constraints -> Vertical datum). */
   readonly heightOffset?: number;
   readonly pickStrategy?: PickStrategy;
+  /** Already resolved by the registry (plugin default + layer override). */
+  readonly appearance?: ResolvedCityAppearance;
 }
 
 export type CityModelDescConfig = MeshConfig & {
@@ -70,6 +73,7 @@ export class CityModelMeshDesc extends MeshDesc<CityModelDescConfig> {
       hiddenTypes: options.hiddenTypes,
       heightOffset: options.heightOffset,
       pickStrategy: options.pickStrategy,
+      appearance: options.appearance,
       // No `makePlacementMatrix` override: the default is core's
       // `makeEnuFrame` via `buildPlacement`.
     });

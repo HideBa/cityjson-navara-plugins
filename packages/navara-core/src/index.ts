@@ -90,11 +90,13 @@ export {
   resetGeoidCacheForTest,
 } from "./geo/geoidHeight";
 
-export type { LinearRGB } from "./styling/surfaceColors";
+export type { LinearRGB, SurfacePalette } from "./styling/surfaceColors";
 export {
   SURFACE_COLOR_VALUES,
   SURFACE_COLOR_HEX,
   SURFACE_COLORS_LINEAR,
+  resolveSurfaceColorHex,
+  resolveSurfaceColorsLinear,
 } from "./styling/surfaceColors";
 
 export type { CityMeshArrays } from "./geometry/buildCityMeshArrays";

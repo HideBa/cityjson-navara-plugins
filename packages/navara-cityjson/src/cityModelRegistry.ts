@@ -19,6 +19,7 @@ import {
   type SurfaceStyleEvaluator,
 } from "@cityjson/navara-core";
 import type { CityModelMesh } from "./cityModelMesh";
+import { resolveCityAppearance, type CityAppearance } from "./cityAppearance";
 import { CITY_MODEL_MESH_KEY } from "./descriptorKeys";
 import { resolveMetricEpsg } from "./enuPlacement";
 import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
@@ -74,6 +75,9 @@ export interface CityModelRegistryDeps {
     lngDeg: number,
     latDeg: number,
   ) => Promise<number>;
+  /** The plugin-wide default appearance; a layer's own
+   *  `AddCityModelOptions.appearance` is laid over it. */
+  readonly appearance?: CityAppearance;
 }
 
 function isScreenPoint(
@@ -138,6 +142,12 @@ export class CityModelRegistry {
         hiddenTypes: opts.hiddenTypes,
         heightOffset: opts.heightOffset,
         pickStrategy: this.pickStrategy,
+        // Resolved HERE, once per layer: the descriptor and the mesh only ever
+        // see the merged, linear-ready form.
+        appearance: resolveCityAppearance(
+          this.deps.appearance,
+          opts.appearance,
+        ),
       },
     });
 

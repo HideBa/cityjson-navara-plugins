@@ -29,13 +29,18 @@ import {
   type SurfaceStyleEvaluator,
 } from "@cityjson/navara-core";
 import type { Selection } from "./selection";
+import { DEFAULT_CITY_APPEARANCE, type HighlightRGB } from "./cityAppearance";
 
-export const HIGHLIGHT_COLOR_HEX = "#e8973f";
-export const HOVER_COLOR_HEX = "#fbbf24";
+/** The historical defaults, kept as named exports for hosts and tests that
+ *  read them; a host that wants its own passes `CityAppearance` instead. */
+export const HIGHLIGHT_COLOR_HEX = DEFAULT_CITY_APPEARANCE.highlightColor;
+export const HOVER_COLOR_HEX = DEFAULT_CITY_APPEARANCE.hoverColor;
 
-/** Linear-sRGB, matching `new Color(0xe8973f)` under three's ColorManagement. */
-const HIGHLIGHT_RGB = srgbHexToLinear(HIGHLIGHT_COLOR_HEX);
-const HOVER_RGB = srgbHexToLinear(HOVER_COLOR_HEX);
+/** Linear-sRGB, matching `new Color(hex)` under three's ColorManagement. */
+const DEFAULT_HIGHLIGHT_RGB: HighlightRGB = {
+  highlight: srgbHexToLinear(HIGHLIGHT_COLOR_HEX),
+  hover: srgbHexToLinear(HOVER_COLOR_HEX),
+};
 
 /**
  * Apply `evaluator` to every unique (object, surface) pair referenced by the
@@ -124,8 +129,12 @@ export function paintLayers(
   objectKeys: readonly string[],
   selections: readonly Selection[],
   hovered: Selection | null,
+  /** The two paint colours; a resolved `CityAppearance` satisfies it. Defaults
+   *  to the historical amber pair. */
+  colors: HighlightRGB = DEFAULT_HIGHLIGHT_RGB,
 ): void {
   target.set(source);
+  const { highlight: HIGHLIGHT_RGB, hover: HOVER_RGB } = colors;
 
   // Resolve selections to object indices once, rather than per vertex.
   // Surface selections are keyed by (object, surface), NOT by object alone:

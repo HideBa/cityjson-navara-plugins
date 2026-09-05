@@ -29,6 +29,8 @@ import {
   CityMeshArraysMesh,
   DEFAULT_THEME_STYLE,
   HIGHLIGHT_COLOR_HEX,
+  resolveCityAppearance,
+  type ResolvedCityAppearance,
   type CityMeshHandle,
   type Selection,
   type ThemeStyle,
@@ -496,6 +498,8 @@ function makeHandle(
     /** Resident triangle budget. The real one is 4 M — set it low to make
      *  `evictToBudget` actually bite within a fixture-sized cover. */
     maxTriangles?: number;
+    /** A host's highlight/hover pair; omitted keeps the historical amber. */
+    appearance?: ResolvedCityAppearance;
   },
 ) {
   const fake = makeFakeClient(opts);
@@ -513,6 +517,7 @@ function makeHandle(
     toSourceXY: TO_SOURCE_XY,
     toLngLat: TO_LNG_LAT,
     heightOffsetM: opts.heightOffsetM ?? 0,
+    appearance: opts.appearance,
     // Injected, so streamLayer.ts never imports addCityMeshArrays and
     // therefore never reaches @navaramap/*. Task C11 supplies the real one.
     meshFactory: opts.meshFactory ?? meshes.factory,
@@ -992,6 +997,27 @@ describe("FcbStreamLayerHandle rules and LoD", () => {
     // painted from it.
     for (const rec of factory.all) expect(rec.colors).toBeNull();
     for (const rec of superseded) expect(rec.deleted).toBe(true);
+  });
+
+  it("paints a host-supplied highlight colour, not the default amber", async () => {
+    const appearance = resolveCityAppearance({ highlightColor: "#a7e32b" });
+    const factory = pickingFactory();
+    const { handle } = makeHandle({ meshFactory: factory.factory, appearance });
+    await handle.commit(topDownRays());
+
+    const [ownerKey] = [...factory.created.keys()] as [string];
+    const objectId = factory.created.get(ownerKey)!.objectKeys[0]!;
+    handle.setHighlight([{ kind: "object", layerId: "l1", objectId }]);
+
+    const painted = rendered(factory.created.get(ownerKey)!);
+    expect(painted[0]!).toBeCloseTo(appearance.highlight[0]!, 6);
+    expect(painted[1]!).toBeCloseTo(appearance.highlight[1]!, 6);
+    expect(painted[2]!).toBeCloseTo(appearance.highlight[2]!, 6);
+    // And it is NOT the default: the two differ in the red channel.
+    expect(painted[0]!).not.toBeCloseTo(
+      srgbHexToLinear(HIGHLIGHT_COLOR_HEX)[0]!,
+      3,
+    );
   });
 
   it("a recolor does not wipe an active highlight", async () => {

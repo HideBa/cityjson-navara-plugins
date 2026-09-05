@@ -8,6 +8,10 @@ import {
   buildCityMeshArrays,
   computeOriginOffset,
 } from "../../src/geometry/buildCityMeshArrays";
+import {
+  SURFACE_COLORS_LINEAR,
+  resolveSurfaceColorsLinear,
+} from "../../src/styling/surfaceColors";
 import type {
   CityModel,
   CityObject,
@@ -264,6 +268,31 @@ describe("buildCityMeshArrays LoD filtering (independent oracle)", () => {
   it("counts all triangles when no lod filter is applied", () => {
     const arrays = buildCityMeshArrays(mixedModel, "L", [0, 0, 0], null);
     expect(arrays.triangleCount).toBe(3);
+  });
+});
+
+describe("buildCityMeshArrays surface palette", () => {
+  const roof = makeSurface("RoofSurface", [
+    [0, 0, 0],
+    [1, 0, 0],
+    [0, 1, 0],
+  ]);
+  const model = makeModel({ b1: makeObject("b1", [roof]) });
+
+  it("bakes core's palette when none is given", () => {
+    const a = buildCityMeshArrays(model, "L", [0, 0, 0], null, null);
+    const c = SURFACE_COLORS_LINEAR.RoofSurface;
+    // Float32 vertex data against double-precision palette values.
+    expect(Array.from(a.colors.slice(0, 3))).toEqual(
+      Array.from(Float32Array.from([c.r, c.g, c.b])),
+    );
+  });
+
+  it("bakes a host palette, leaving the unnamed types on the defaults", () => {
+    const palette = resolveSurfaceColorsLinear({ RoofSurface: "#ff0000" });
+    const a = buildCityMeshArrays(model, "L", [0, 0, 0], null, null, palette);
+    expect(Array.from(a.colors.slice(0, 3))).toEqual([1, 0, 0]);
+    expect(palette.WallSurface).toEqual(SURFACE_COLORS_LINEAR.WallSurface);
   });
 });
 

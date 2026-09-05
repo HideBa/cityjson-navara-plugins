@@ -40,6 +40,10 @@ import {
 import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import { computeStyleColors, paintLayers } from "./surfaceColorLayers";
+import {
+  resolveCityAppearance,
+  type ResolvedCityAppearance,
+} from "./cityAppearance";
 import type { Selection, SurfaceSelection } from "./selection";
 import { ThemeStyleController, type ThemeStyle } from "./themeStyle";
 
@@ -59,6 +63,10 @@ export interface CityModelMeshOptions {
   readonly heightOffset?: number;
   /** Task B1's PICK_PATH verdict. Defaults to DEFAULT_PICK_STRATEGY. */
   readonly pickStrategy?: PickStrategy;
+  /** Highlight, hover and surface palette, already resolved (the registry
+   *  lays the layer's override over the plugin's). Omitted keeps the
+   *  historical colours — see `cityAppearance.ts`. */
+  readonly appearance?: ResolvedCityAppearance;
   /**
    * Test seam: replaces ONLY the ENU->ECEF matrix (so matrix assertions can
    * read `makeTranslation(1, 2, 3)` instead of ECEF megametres). The frame the
@@ -98,10 +106,14 @@ export class CityModelMesh {
   private selections: readonly Selection[] = [];
   private hovered: Selection | null = null;
   private readonly theme: ThemeStyleController;
+  private readonly appearance: ResolvedCityAppearance;
 
   constructor(options: CityModelMeshOptions) {
     this.id = options.id;
     this.model = options.model;
+    // Before `buildArrays` runs (the constructor builds once), because the
+    // palette is baked into the base colours.
+    this.appearance = options.appearance ?? resolveCityAppearance();
     // Both halves of the CRS gate: resolvable by proj4 AND metre-based. A
     // foot-based CRS reprojects fine horizontally but would scale heights and
     // the geoid offset wrong, so it is refused rather than silently placed.
@@ -181,6 +193,7 @@ export class CityModelMesh {
       this.originOffset,
       this.lod,
       this.hiddenTypes.size > 0 ? this.hiddenTypes : null,
+      this.appearance.surfaceColorsLinear,
     );
     // buildCityMeshArrays emits *source-CRS deltas* from originOffset. Those
     // are NOT ENU metres: a projected CRS carries scale factor and grid
@@ -250,6 +263,7 @@ export class CityModelMesh {
       this.arrays.objectKeys,
       this.selections,
       this.hovered,
+      this.appearance,
     );
     attr.needsUpdate = true;
   }

@@ -22,6 +22,8 @@ import {
   mergeBBox,
   parseCityObject,
   projectPositionsToEnu,
+  resolveSurfaceColorsLinear,
+  SURFACE_COLORS_LINEAR,
   type BBox3,
   type CityJSONFeature,
   type CityJSONObject,
@@ -89,6 +91,9 @@ let grid: Grid | undefined;
 /** Set together with `grid` — both exist exactly when a file is open and
  *  admitted (see the `open` handler). */
 let placement: CellPlacement | undefined;
+/** The host's surface palette, resolved once from `open` — every cell built
+ *  after that bakes it. Defaults to core's palette. */
+let surfaceColors = SURFACE_COLORS_LINEAR;
 let controller: AbortController | null = null;
 /** The worker's own cell cache. Counts against the same memory budget as
  *  the main thread's cache; the main thread's `evict` message is what
@@ -153,6 +158,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           toLngLat: (coords) => converter.forward(coords),
         };
       }
+      surfaceColors = resolveSurfaceColorsLinear(msg.surfaceColors);
       post({ type: "opened", id: msg.id, header, admission });
       return;
     }
@@ -303,6 +309,7 @@ ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
             origin,
             msg.lod,
             hiddenTypes,
+            surfaceColors,
           );
           // `a.positions` are source-CRS deltas from `origin`; the renderer
           // wants local ENU metres in the cell's OWN frame. Build that frame
