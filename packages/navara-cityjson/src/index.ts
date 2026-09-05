@@ -80,6 +80,16 @@ export {
   paintLayers,
 } from "./surfaceColorLayers";
 
+export {
+  DEFAULT_CITY_COLORS,
+  resolveCityColors,
+} from "./cityColors";
+export type {
+  CityColors,
+  HighlightRGB,
+  ResolvedCityColors,
+} from "./cityColors";
+
 export type { GeodeticBounds, Lle, Placement } from "./enuPlacement";
 export {
   assertMetricCrs,

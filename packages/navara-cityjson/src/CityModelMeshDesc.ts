@@ -25,6 +25,7 @@ import type ThreeView from "@navaramap/three";
 import type { Mesh } from "three";
 import type { AppearanceTheme, CityModel } from "@cityjson/navara-core";
 import { CityModelMesh } from "./cityModelMesh";
+import type { ResolvedCityColors } from "./cityColors";
 import type { PickStrategy } from "./pickStrategy";
 import type { TextureSource } from "./texturedMaterials";
 
@@ -46,6 +47,8 @@ export interface CityModelDescOptions {
   readonly appearance?: AppearanceTheme | null;
   readonly textureBaseUrl?: string | null;
   readonly textureSource?: TextureSource;
+  /** Already resolved by the registry (plugin default + layer override). */
+  readonly colors?: ResolvedCityColors;
 }
 
 export type CityModelDescConfig = MeshConfig & {
@@ -78,6 +81,7 @@ export class CityModelMeshDesc extends MeshDesc<CityModelDescConfig> {
       appearance: options.appearance,
       textureBaseUrl: options.textureBaseUrl,
       textureSource: options.textureSource,
+      colors: options.colors,
       // No `makePlacementMatrix` override: the default is core's
       // `makeEnuFrame` via `buildPlacement`.
     });

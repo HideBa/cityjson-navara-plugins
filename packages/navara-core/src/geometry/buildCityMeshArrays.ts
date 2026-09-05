@@ -22,7 +22,11 @@ import type {
 } from "../citymodel/types";
 import { toplevelCityObjectType } from "../citymodel/toplevelType";
 import { srgbToLinear } from "../styling/srgb";
-import { SURFACE_COLORS_LINEAR } from "../styling/surfaceColors";
+import {
+  SURFACE_COLORS_LINEAR,
+  type LinearRGB,
+} from "../styling/surfaceColors";
+import type { BuildingSurfaceType } from "../citymodel/types";
 
 /**
  * A contiguous VERTEX range of the arrays drawn with one texture image
@@ -122,6 +126,9 @@ export function buildCityMeshArrays(
   selectedLod: string | null = null,
   hiddenTypes: ReadonlySet<string> | null = null,
   appearance: AppearanceTheme | null = null,
+  /** Vertex colour per semantic surface type. Defaults to core's palette; a
+   *  host passes `resolveSurfaceColorsLinear(itsPalette)` to bake its own. */
+  surfaceColors: Record<BuildingSurfaceType, LinearRGB> = SURFACE_COLORS_LINEAR,
 ): CityMeshArrays {
   const objectKeys: string[] = [];
   const textureTheme =
@@ -155,7 +162,7 @@ export function buildCityMeshArrays(
       // Textured only when the UVs made it through triangulation intact.
       const textureIndex =
         surfaceTexture && triangulation.uvs ? surfaceTexture.textureIndex : -1;
-      let color: PendingSurface["color"] = SURFACE_COLORS_LINEAR[surface.type];
+      let color: PendingSurface["color"] = surfaceColors[surface.type];
       if (materialTheme !== null) {
         const materialIdx = surface.material?.[materialTheme];
         const diffuse =
