@@ -114,6 +114,13 @@ interface PendingSurface {
  *    null), so a model without images costs nothing extra.
  * With no theme (the default) `uvs`/`textureGroups` are null and the
  * vertex order is the file's.
+ *
+ * `visibleObjectIds` is the ATTRIBUTE filter's geometry side: only the named
+ * objects contribute triangles, `null` means no filter, and an EMPTY set means
+ * nothing matched and nothing is drawn. Like `hiddenTypes`, a filtered object
+ * still takes its `objectKeys` slot and its object index — object indices must
+ * be identical to an unfiltered build, or every consumer that maps an index
+ * back through `objectKeys` shifts by the number of filtered objects before it.
  */
 export function buildCityMeshArrays(
   model: CityModel,
@@ -122,6 +129,7 @@ export function buildCityMeshArrays(
   selectedLod: string | null = null,
   hiddenTypes: ReadonlySet<string> | null = null,
   appearance: AppearanceTheme | null = null,
+  visibleObjectIds: ReadonlySet<string> | null = null,
 ): CityMeshArrays {
   const objectKeys: string[] = [];
   const textureTheme =
@@ -141,6 +149,12 @@ export function buildCityMeshArrays(
     objectKeys.push(id);
     const thisObjectIdx = objectIdx++;
     if (isHidden(obj.objectType, hiddenTypes)) continue;
+    // An ATTRIBUTE filter, ANDed with the type filter above: an object draws
+    // only if its type is not hidden AND (no id filter is set OR it is named).
+    // `null` and an EMPTY set are deliberately different — null is "no
+    // filter", an empty set is "nothing matched", and a filter that matched
+    // nothing must show nothing rather than everything.
+    if (visibleObjectIds !== null && !visibleObjectIds.has(id)) continue;
     for (let surfaceIdx = 0; surfaceIdx < obj.surfaces.length; surfaceIdx++) {
       const surface = obj.surfaces[surfaceIdx]!;
       if (selectedLod !== null && surface.lod !== selectedLod) continue;

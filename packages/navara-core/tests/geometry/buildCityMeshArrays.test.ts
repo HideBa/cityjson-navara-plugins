@@ -372,3 +372,108 @@ describe("computeOriginOffset", () => {
     expect(offset[2]).toBeCloseTo(5);
   });
 });
+
+describe("buildCityMeshArrays visible-id filtering", () => {
+  const tri = (z: number) =>
+    makeSurface("RoofSurface", [
+      [0, 0, z],
+      [1, 0, z],
+      [0, 1, z],
+    ]);
+  const typed = (id: string, objectType: string, z: number): CityObject => ({
+    ...makeObject(id, [tri(z)]),
+    objectType,
+  });
+  // `visibleModel`, not `model`: this file already has a top-level `model`, and
+  // shadowing it inside the describe reads as the same fixture when it is not.
+  const visibleModel = makeModel({
+    b1: typed("b1", "Building", 0),
+    b2: typed("b2", "Building", 1),
+    tree: typed("tree", "SolitaryVegetationObject", 2),
+  });
+  const unfiltered = buildCityMeshArrays(visibleModel, "L", [0, 0, 0], null);
+
+  it("passes everything through for a null set", () => {
+    const arrays = buildCityMeshArrays(
+      visibleModel,
+      "L",
+      [0, 0, 0],
+      null,
+      null,
+      null,
+      null,
+    );
+    expect(arrays.triangleCount).toBe(unfiltered.triangleCount);
+    expect([...arrays.positions]).toEqual([...unfiltered.positions]);
+  });
+
+  it("emits only the named objects", () => {
+    const arrays = buildCityMeshArrays(
+      visibleModel,
+      "L",
+      [0, 0, 0],
+      null,
+      null,
+      null,
+      new Set(["b2"]),
+    );
+    expect(arrays.triangleCount).toBe(1);
+    expect(arrays.positions[2]).toBe(1); // b2's triangle, at z = 1
+  });
+
+  it("hides EVERYTHING for an empty set — distinct from null", () => {
+    const arrays = buildCityMeshArrays(
+      visibleModel,
+      "L",
+      [0, 0, 0],
+      null,
+      null,
+      null,
+      new Set<string>(),
+    );
+    expect(arrays.triangleCount).toBe(0);
+    expect(arrays.objectKeys).toEqual(unfiltered.objectKeys);
+  });
+
+  it("keeps the objectKeys slot invariant — a filtered object still takes its index", () => {
+    const arrays = buildCityMeshArrays(
+      visibleModel,
+      "L",
+      [0, 0, 0],
+      null,
+      null,
+      null,
+      new Set(["tree"]),
+    );
+    expect(arrays.objectKeys).toEqual(unfiltered.objectKeys);
+    const treeIdx = unfiltered.objectKeys.indexOf("tree");
+    for (const idx of arrays.objectIndices) expect(idx).toBe(treeIdx);
+  });
+
+  it("ANDs with hiddenTypes — a visible id that is a hidden type stays hidden", () => {
+    const arrays = buildCityMeshArrays(
+      visibleModel,
+      "L",
+      [0, 0, 0],
+      null,
+      new Set(["Building"]),
+      null,
+      new Set(["b1", "tree"]),
+    );
+    expect(arrays.triangleCount).toBe(1);
+    expect(arrays.positions[2]).toBe(2); // only the tree survives
+  });
+
+  it("ignores an id the model does not have", () => {
+    const arrays = buildCityMeshArrays(
+      visibleModel,
+      "L",
+      [0, 0, 0],
+      null,
+      null,
+      null,
+      new Set(["b1", "ghost"]),
+    );
+    expect(arrays.triangleCount).toBe(1);
+  });
+});
