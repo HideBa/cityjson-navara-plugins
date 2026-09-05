@@ -314,6 +314,71 @@ describe("CityModelMesh hidden types", () => {
     expect(m.resolveVertex(0)?.objectId).toBe("T1");
     m.dispose();
   });
+
+  it("setVisibleObjectIds rebuilds with only the named objects", () => {
+    const m = new CityModelMesh(partOpts);
+    expect(m.triangleCount()).toBe(6);
+    const before = m.object3d.geometry;
+
+    m.setVisibleObjectIds(new Set(["T1"]));
+    expect(m.object3d.geometry).not.toBe(before);
+    expect(m.triangleCount()).toBe(2);
+
+    m.setVisibleObjectIds(null);
+    expect(m.triangleCount()).toBe(6);
+    m.dispose();
+  });
+
+  it("an EMPTY set draws nothing, and is not the same as null", () => {
+    const m = new CityModelMesh(partOpts);
+    m.setVisibleObjectIds(new Set());
+    expect(m.triangleCount()).toBe(0);
+    m.setVisibleObjectIds(null);
+    expect(m.triangleCount()).toBe(6);
+    m.dispose();
+  });
+
+  it("builds filtered from the constructor option", () => {
+    const m = new CityModelMesh({
+      ...partOpts,
+      visibleObjectIds: new Set(["T1"]),
+    });
+    expect(m.triangleCount()).toBe(2);
+    m.dispose();
+  });
+
+  it("drops a no-op setVisibleObjectIds instead of rebuilding the geometry", () => {
+    const m = new CityModelMesh({
+      ...partOpts,
+      visibleObjectIds: new Set(["T1"]),
+    });
+    const geometry = m.object3d.geometry;
+    m.setVisibleObjectIds(new Set(["T1"]));
+    expect(m.object3d.geometry).toBe(geometry);
+    m.setVisibleObjectIds(null);
+    expect(m.object3d.geometry).not.toBe(geometry);
+    m.dispose();
+  });
+
+  it("ANDs with hidden types", () => {
+    const m = new CityModelMesh(partOpts);
+    m.setHiddenTypes(["Building"]);
+    m.setVisibleObjectIds(new Set(["B1", "T1"]));
+    expect(m.triangleCount()).toBe(2); // only the tree
+    m.dispose();
+  });
+
+  it("keeps style and highlight across the rebuild", () => {
+    const m = new CityModelMesh(partOpts);
+    m.setStyle((_surface, object) =>
+      object.objectId === "T1" ? [0, 1, 0] : null,
+    );
+    m.setVisibleObjectIds(new Set(["T1"]));
+    const colors = m.object3d.geometry.getAttribute("color");
+    expect(colors.getY(0)).toBeGreaterThan(0.9);
+    expect(m.resolveVertex(0)?.objectId).toBe("T1");
+    m.dispose();
+  });
 });
 
 describe("pick strategy capability", () => {

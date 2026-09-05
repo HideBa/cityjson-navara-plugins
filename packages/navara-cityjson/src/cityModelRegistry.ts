@@ -159,6 +159,8 @@ export class CityModelRegistry {
       setLod: (lod: string | null) => mesh.setLod(lod),
       setHiddenTypes: (types: ReadonlyArray<string>) =>
         mesh.setHiddenTypes(types),
+      setVisibleObjectIds: (ids: ReadonlySet<string> | null) =>
+        mesh.setVisibleObjectIds(ids),
       setStyle: (evaluator: SurfaceStyleEvaluator | null) =>
         mesh.setStyle(evaluator),
       setThemeStyle: (style: ThemeStyle) => mesh.setThemeStyle(style),

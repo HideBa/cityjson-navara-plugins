@@ -61,6 +61,19 @@ export interface CityModelMeshOptions {
    *  "Building" also drops its BuildingParts). Arrays, not a Set, because this
    *  travels as a descriptor config; the mesh keeps its own set. */
   readonly hiddenTypes?: ReadonlyArray<string>;
+  /**
+   * Only these objects contribute geometry; `null`/absent means every one
+   * does. An EMPTY set draws nothing — see `setVisibleObjectIds`.
+   *
+   * NOT on `AddCityModelOptions`, deliberately: the app's filter arrives after
+   * the layer exists, so the handle's setter is the only path it needs, and
+   * this option is reachable only by constructing a mesh directly (which the
+   * tests below do). Promoting it to an ADD-TIME option later means threading
+   * it through `AddCityModelOptions`, `cityModelRegistry.addCityModel` and
+   * `CityModelMeshDesc.createMesh` as well — the descriptor is what the engine
+   * actually calls, and an option the desc drops is silently ignored.
+   */
+  readonly visibleObjectIds?: ReadonlySet<string> | null;
   /** Metres added to every vertex's geodetic height before the ENU transform
    *  (the geoid undulation at the layer origin). Defaults to 0; Task B7's
    *  registry calls `setHeightOffset()` when its async `geoidHeightAt()`
@@ -92,6 +105,18 @@ function sameTypes(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return true;
 }
 
+/** Set equality that distinguishes `null` (no filter) from an empty set
+ *  (a filter that matched nothing) — the two must never compare equal. */
+function sameVisibleIds(
+  a: ReadonlySet<string> | null,
+  b: ReadonlySet<string> | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.size !== b.size) return false;
+  for (const id of a) if (!b.has(id)) return false;
+  return true;
+}
+
 export class CityModelMesh {
   readonly id: string;
   readonly epsg: number;
@@ -106,6 +131,7 @@ export class CityModelMesh {
   private placement: Placement;
   private lod: string | null;
   private hiddenTypes: ReadonlySet<string>;
+  private visibleObjectIds: ReadonlySet<string> | null;
   private arrays: CityMeshArrays;
   private baseColors: Float32Array;
   private styleColors: Float32Array | null = null;
@@ -139,6 +165,7 @@ export class CityModelMesh {
     this.pickStrategy = options.pickStrategy ?? DEFAULT_PICK_STRATEGY;
     this.lod = options.lod ?? null;
     this.hiddenTypes = new Set(options.hiddenTypes ?? []);
+    this.visibleObjectIds = options.visibleObjectIds ?? null;
     this.originOffset = computeOriginOffset(options.model);
     this.makePlacementMatrix = options.makePlacementMatrix;
     this.placement = this.computePlacement(options.heightOffset ?? 0);
@@ -216,6 +243,7 @@ export class CityModelMesh {
       this.lod,
       this.hiddenTypes.size > 0 ? this.hiddenTypes : null,
       this.appearance,
+      this.visibleObjectIds,
     );
     // buildCityMeshArrays emits *source-CRS deltas* from originOffset. Those
     // are NOT ENU metres: a projected CRS carries scale factor and grid
@@ -405,6 +433,24 @@ export class CityModelMesh {
     const next = new Set(types);
     if (sameTypes(next, this.hiddenTypes)) return;
     this.hiddenTypes = next;
+    this.rebuildGeometry();
+  }
+
+  /**
+   * Draw only the named objects — the geometry side of the table panel's
+   * attribute filter.
+   *
+   * A REBUILD, on the same seam `setLod` and `setHiddenTypes` use, and for the
+   * same reason: a style evaluator writes RGB into an opaque material, so a
+   * "filtered out" object would still occlude what is behind it and still
+   * answer a raycast.
+   *
+   * `null` clears the filter. An EMPTY set is NOT the same thing — it means
+   * the filter matched nothing, and nothing is what must be drawn.
+   */
+  setVisibleObjectIds(ids: ReadonlySet<string> | null): void {
+    if (sameVisibleIds(ids, this.visibleObjectIds)) return;
+    this.visibleObjectIds = ids;
     this.rebuildGeometry();
   }
 

@@ -76,6 +76,9 @@ export interface CityModelHandle {
    *  hides its BuildingParts too); `[]` clears the filter. Geometry, not
    *  styling — a hidden object stops occluding and stops picking. */
   setHiddenTypes(types: ReadonlyArray<string>): void;
+  /** Rebuilds geometry containing only these objects; `null` clears the
+   *  filter, an EMPTY set draws nothing. ANDed with {@link setHiddenTypes}. */
+  setVisibleObjectIds(ids: ReadonlySet<string> | null): void;
   /** Per-surface rule colors; `null` restores the semantic base colors. */
   setStyle(evaluator: SurfaceStyleEvaluator | null): void;
   /**
