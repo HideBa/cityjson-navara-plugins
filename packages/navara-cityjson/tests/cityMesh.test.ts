@@ -234,6 +234,25 @@ describe("CityMeshArraysMesh.setThemeStyle", () => {
     m.dispose();
   });
 
+  it("gives the edge lines a finite unit normal, because they ride into the MRT scene", () => {
+    // The parent mesh draws in the engine's G-buffer scene, and its child
+    // goes with it. The line material compiles from three's `basic` shader,
+    // which the engine patches to ALWAYS compute and write the normal; an
+    // absent attribute reads as (0,0,0), normalises to NaN, and one NaN texel
+    // poisons the shared normal buffer for every effect that reads it.
+    const m = new CityMeshArraysMesh(opts());
+    m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
+    const normal = edgeChild(m).geometry.getAttribute("normal");
+    expect(normal).toBeDefined();
+    expect(normal.count).toBe(6);
+    for (let i = 0; i < normal.count; i++) {
+      const [x, y, z] = [normal.getX(i), normal.getY(i), normal.getZ(i)];
+      expect(Number.isFinite(x + y + z)).toBe(true);
+      expect(Math.hypot(x, y, z)).toBeCloseTo(1, 6);
+    }
+    m.dispose();
+  });
+
   it("reads a plain edge colour as sRGB and an hdr triple as linear", () => {
     const m = new CityMeshArraysMesh(opts());
     m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });

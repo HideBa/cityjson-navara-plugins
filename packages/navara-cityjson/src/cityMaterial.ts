@@ -20,8 +20,11 @@ import { DoubleSide, MeshLambertMaterial, type Material } from "three";
  * engine-bound descriptors can reach, hence the seam: the descriptor fills
  * it, the mesh class calls it for every material it creates and, BEFORE
  * disposing, for every material it replaces or drops (a LoD swap or an
- * appearance switch rebuilds materials; a stream evicts cells all day), so
- * the registry never keeps a dead material alive.
+ * appearance switch rebuilds materials; a stream evicts cells all day). The
+ * registry also listens for the material's own `dispose` event, so this is
+ * not what prevents a leak: it is what keeps the seam symmetric and lets the
+ * registry roll its shader patch back on a live material before three tears
+ * the program down, in a deterministic order.
  */
 export interface ShadowMaterialHooks {
   register(material: Material): void;

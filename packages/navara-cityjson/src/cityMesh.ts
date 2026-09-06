@@ -281,9 +281,9 @@ export class CityMeshArraysMesh {
     this.theme.dispose();
     this.object3d.geometry.dispose();
     const material = this.object3d.material;
-    // Unregister from the shadow registry FIRST, then dispose: a stream
-    // evicts cells all day, and a disposed material the registry still
-    // holds is a leak per cell.
+    // Unregister from the shadow registry FIRST, then dispose, so the
+    // registry rolls its shader patch back on a live material (see
+    // `cityMaterial.ts`); a stream evicts cells all day.
     for (const m of Array.isArray(material) ? material : [material]) {
       this.shadowMaterials.unregister(m);
       m.dispose();

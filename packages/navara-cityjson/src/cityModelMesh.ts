@@ -325,8 +325,9 @@ export class CityModelMesh {
     this.theme.materialsReplaced();
   }
 
-  /** Unregister from the shadow registry FIRST, then dispose: a disposed
-   *  material the registry still holds is a leak on every LoD swap. */
+  /** Unregister from the shadow registry FIRST, then dispose, so the
+   *  registry rolls its shader patch back on a live material (it would also
+   *  drop the entry on the dispose event; see `cityMaterial.ts`). */
   private releaseMaterials(materials: Material | Material[]): void {
     for (const m of Array.isArray(materials) ? materials : [materials]) {
       this.shadowMaterials.unregister(m);

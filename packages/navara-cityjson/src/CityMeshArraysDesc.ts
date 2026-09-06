@@ -23,12 +23,18 @@ export type CityMeshArraysDescConfig = MeshConfig & {
 /**
  * `MeshDescWithSelectiveEffect`, not the plain `MeshDesc`, and not for the
  * selective effects: its `getPassKey()` puts the mesh in the engine's MRT
- * scene whenever any optional G-buffer is allocated. The plain base class
- * answers "opaque", a forward scene the engine draws AFTER it has copied the
- * G-buffer out, so a city mesh there never wrote its normals (or its CSM
- * shadow term) anywhere a lighting pass could read them — every wall came out
- * as flat albedo whatever the sun did. The MRT scene is also where the
- * engine's own shadow-receiving mesh descriptors live, so depth ordering
+ * scene whenever any optional G-buffer is allocated (always, since the
+ * aerial-perspective effect requires the normal buffer). The plain base
+ * class answers "opaque", a forward scene the engine draws AFTER it has
+ * copied the G-buffer out, so a city mesh there writes NO normal or depth
+ * into the G-buffer: under the app's earlier deferred calibration (the
+ * aerial-perspective pass re-lighting the G-buffer) that alone left every
+ * wall as flat albedo whatever the sun did, and under the forward-lit one
+ * every effect that reads the G-buffer (fog lights, SSR, AO) shades
+ * "through" the building to whatever lies behind it. The opaque scene IS
+ * lit and shadowed too — the scene lights are parented into every scene —
+ * so the pass key is about the G-buffer, not the lighting. The MRT scene is
+ * also where the engine draws its own feature meshes, so depth ordering
  * against terrain and draped layers is the engine's, not ours.
  */
 export class CityMeshArraysDesc extends MeshDescWithSelectiveEffect<CityMeshArraysDescConfig> {

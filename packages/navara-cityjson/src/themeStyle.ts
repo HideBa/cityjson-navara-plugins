@@ -38,8 +38,9 @@ export interface ThemeStyle {
   readonly edges: ThemeEdgeStyle | null;
 }
 
-/** Photoreal: vertex colours, no edges. The theme system is a no-op here, and
- *  every mesh starts in this state. */
+/** The plugin's own default: vertex colours, no edges — the state every mesh
+ *  starts in until a `setThemeStyle`. The app's photoreal theme is NOT this
+ *  any more: it draws the edges in a dark ink (issue #13). */
 export const DEFAULT_THEME_STYLE: ThemeStyle = { fill: "vertex", edges: null };
 
 function sameTriple(
@@ -166,6 +167,16 @@ export class ThemeStyleController {
     const segments = buildCityEdgeSegments(position.array as Float32Array);
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new BufferAttribute(segments, 3));
+    // A finite unit normal per vertex, though the line is unlit and never
+    // reads it: the child rides with its parent into the engine's MRT scene,
+    // where the patched `basic` shader the line material compiles from
+    // ALWAYS writes the normal G-buffer. An absent attribute reads as
+    // (0,0,0), normalises to NaN, and one NaN texel poisons that buffer for
+    // every effect reading it (the fog lights, SSR) — the same mechanism the
+    // app's Known Issue (e) records for a globe without terrain.
+    const normals = new Float32Array(segments.length);
+    for (let i = 2; i < normals.length; i += 3) normals[i] = 1;
+    geometry.setAttribute("normal", new BufferAttribute(normals, 3));
 
     const material = new LineBasicMaterial();
     writeEdgeColor(material.color, edges);
