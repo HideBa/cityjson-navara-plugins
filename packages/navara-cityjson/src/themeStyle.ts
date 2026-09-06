@@ -4,7 +4,7 @@
  *
  * One implementation, two mesh classes. `CityModelMesh` and
  * `CityMeshArraysMesh` are already twins in the parts that must not drift
- * (unlit albedo, double-sided, vertex colours — see either material comment),
+ * (one lit, double-sided, vertex-coloured material — see `cityMaterial.ts`),
  * and a theme has to look identical whether a building arrived as a file or as
  * a stream, so the behaviour lives here and both classes delegate to it.
  *

@@ -24,10 +24,10 @@
  * Material note: the Task B1 spike measured `MRT_VERTEX_COLORS_OK = true` — a
  * plain built-in material with `vertexColors: true` renders correctly through
  * Navara's MRT pass, so the `color` attribute needs no shader patching and
- * this builder emits nothing MRT-specific. Both mesh classes now use
- * `MeshBasicMaterial` (unlit albedo, lit by the aerial-perspective pass in
- * `irradiance` mode); the `normal` attribute is still load-bearing, because
- * that pass reads the MRT normal buffer.
+ * this builder emits nothing MRT-specific. Both mesh classes draw with
+ * `createCityMaterial` (a lit Lambert, see `cityMaterial.ts`); the `normal`
+ * attribute is load-bearing twice over — the lighting equation reads it, and
+ * the MRT pass writes it to the normal G-buffer for the effects that read one.
  */
 
 import type { CityMeshArrays } from "@cityjson/navara-core";
