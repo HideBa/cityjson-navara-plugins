@@ -56,6 +56,8 @@ export {
   TextureCache,
 } from "./texturedMaterials";
 
+export type { ShadowMaterialHooks } from "./cityMaterial";
+export { createCityMaterial, NO_SHADOW_MATERIALS } from "./cityMaterial";
 export type { CityModelMeshOptions } from "./cityModelMesh";
 export { CityModelMesh } from "./cityModelMesh";
 

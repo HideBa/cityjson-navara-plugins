@@ -19,7 +19,7 @@ import {
   LineBasicMaterial,
   LineSegments,
   type Mesh,
-  type MeshBasicMaterial,
+  type MeshLambertMaterial,
 } from "three";
 import { buildCityEdgeSegments } from "@cityjson/navara-core";
 
@@ -119,12 +119,13 @@ export class ThemeStyleController {
     this.dropEdges();
   }
 
-  /** Both mesh classes build `MeshBasicMaterial`s (see either material
-   *  comment for why they are unlit): one, or — under a texture theme — one
-   *  per texture group. The tint applies to all of them alike. */
-  private get materials(): MeshBasicMaterial[] {
+  /** Both mesh classes draw with `createCityMaterial` (a lit Lambert, see
+   *  `cityMaterial.ts`): one, or — under a texture theme — one per texture
+   *  group. The tint applies to all of them alike; Lambert multiplies
+   *  `material.color` into the diffuse term raw, exactly as basic did. */
+  private get materials(): MeshLambertMaterial[] {
     const material = this.mesh.material;
-    return (Array.isArray(material) ? material : [material]) as MeshBasicMaterial[];
+    return (Array.isArray(material) ? material : [material]) as MeshLambertMaterial[];
   }
 
   /** The mesh swapped its material array (a texture-theme rebuild): re-apply

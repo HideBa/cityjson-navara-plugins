@@ -11,13 +11,18 @@
  * wraps it lives in `CityMeshArraysDesc.ts`.
  */
 import {
-  DoubleSide,
   Matrix4,
   Mesh,
-  MeshBasicMaterial,
   Raycaster,
   Vector3,
+  type Material,
+  type MeshLambertMaterial,
 } from "three";
+import {
+  createCityMaterial,
+  NO_SHADOW_MATERIALS,
+  type ShadowMaterialHooks,
+} from "./cityMaterial";
 import type { CityMeshArrays, EnuFrame } from "@cityjson/navara-core";
 import { geometryFromMeshArrays } from "./cityMeshGeometry";
 import { CITY_MESH_ARRAYS_KEY } from "./descriptorKeys";
@@ -50,6 +55,10 @@ export interface AddCityMeshArraysOptions {
    * calls `textureChanged`; the mesh never listens itself.
    */
   readonly textures?: TextureCache;
+  /** Where every material this mesh draws with is registered for the
+   *  engine's cascaded shadow maps (see `cityMaterial.ts`). Filled by
+   *  `CityMeshArraysDesc`; a mesh built outside the engine leaves it unset. */
+  readonly shadowMaterials?: ShadowMaterialHooks;
 }
 
 /**
@@ -105,9 +114,11 @@ export class CityMeshArraysMesh {
   private readonly arrays: CityMeshArrays;
   private readonly theme: ThemeStyleController;
   private readonly textures: TextureCache | null;
+  private readonly shadowMaterials: ShadowMaterialHooks;
 
   constructor(options: AddCityMeshArraysOptions) {
     this.arrays = options.arrays;
+    this.shadowMaterials = options.shadowMaterials ?? NO_SHADOW_MATERIALS;
     this.pickStrategy = options.pickStrategy ?? DEFAULT_PICK_STRATEGY;
     this.textures =
       options.textures && (options.arrays.textureGroups?.length ?? 0) > 0
@@ -119,41 +130,11 @@ export class CityMeshArraysMesh {
 
     this.object3d = new Mesh(
       geometryFromMeshArrays(options.arrays),
-      // MRT_VERTEX_COLORS_OK = true (Task B1): a plain built-in material with
-      // vertex colors renders correctly through Navara's MRT pass, so no
-      // shader patching and no custom pass key.
-      //
-      // UNLIT ALBEDO, exactly as `CityModelMesh` — the aerial-perspective pass
-      // runs in `irradiance` mode and lights the g-buffer albedo from the
-      // physical atmosphere, so a lit material would be lit twice and clip to
-      // white at the exposure that calibration needs. The full reasoning, and
-      // why `MeshBasicMaterial` still fills the MRT normal buffer, is on
-      // `CityModelMesh`'s material.
-      new MeshBasicMaterial({
-        vertexColors: true,
-      // DOUBLE-SIDED, and not as a convenience: front-face culling removes
-      // real geometry from this data. CityJSON's spec asks for outward-facing
-      // exterior shells, but real files vary — and `orientExteriorRing`
-      // (navara-core's `buildCityMeshArrays`) makes it worse rather than
-      // better on the shapes that matter, because it decides orientation by
-      // asking whether a face's normal points away from the object's bbox
-      // CENTRE. That is right for a convex block and wrong for every concave
-      // one: an L-shaped building's inner walls, a courtyard's inward faces
-      // and anything under an overhang legitimately face their own centroid,
-      // so the heuristic reverses them and `FrontSide` then culls them.
-      // Measured on the Delft sample at a fixed camera with the backdrop off:
-      // ~1.1% of the viewport was building pixels that only appear
-      // double-sided (3400 px, against 56 the other way).
-      //
-      // The cost is bounded: these are opaque solids behind a depth test, so
-      // the extra fragments are overdraw the z-buffer discards, on a model of
-      // ~10^5 triangles. Correct geometry is worth that. Fixing the winding
-      // properly needs solid-orientation analysis (ray parity per shell), not
-      // a centroid guess — worth doing, but it would still not make a viewer
-      // of third-party data safe to cull.
-        side: DoubleSide,
-      }),
+      // The ONE city material, shared with `CityModelMesh` so a building
+      // renders the same as a file and as a stream; see `createCityMaterial`.
+      createCityMaterial(),
     );
+    this.shadowMaterials.register(this.object3d.material as Material);
     this.object3d.name = `cityMesh:${options.id}`;
     // Routing metadata rides on `userData`, not on the engine's pick payload:
     // `PickableMeshWrapper` takes only `(object, ctx)` and the spike measured
@@ -183,11 +164,15 @@ export class CityMeshArraysMesh {
       // One material per texture group (`buildGroupMaterials`), same
       // calibration as the single one above; images the cache already holds
       // attach at once, the rest as the owner reports them.
-      (this.object3d.material as MeshBasicMaterial).dispose();
-      this.object3d.material = buildGroupMaterials(
+      const plain = this.object3d.material as Material;
+      const grouped = buildGroupMaterials(
         options.arrays.textureGroups ?? [],
         this.textures,
       );
+      this.object3d.material = grouped;
+      for (const m of grouped) this.shadowMaterials.register(m);
+      this.shadowMaterials.unregister(plain);
+      plain.dispose();
       this.theme.materialsReplaced();
       this.setColors(this.maskTextured(options.arrays.colors));
     }
@@ -208,7 +193,7 @@ export class CityMeshArraysMesh {
     const entry = this.textures.get(textureIndex);
     groups.forEach((group, i) => {
       if (group.textureIndex !== textureIndex) return;
-      const material = materials[i] as MeshBasicMaterial | undefined;
+      const material = materials[i] as MeshLambertMaterial | undefined;
       if (!material) return;
       material.map = entry?.status === "ready" ? entry.texture : null;
       material.needsUpdate = true;
@@ -296,10 +281,12 @@ export class CityMeshArraysMesh {
     this.theme.dispose();
     this.object3d.geometry.dispose();
     const material = this.object3d.material;
-    if (Array.isArray(material)) {
-      for (const m of material) m.dispose();
-    } else {
-      material.dispose();
+    // Unregister from the shadow registry FIRST, then dispose: a stream
+    // evicts cells all day, and a disposed material the registry still
+    // holds is a leak per cell.
+    for (const m of Array.isArray(material) ? material : [material]) {
+      this.shadowMaterials.unregister(m);
+      m.dispose();
     }
   }
 }

@@ -9,6 +9,7 @@ import {
   LineBasicMaterial,
   LineSegments,
   Matrix4,
+  MeshLambertMaterial,
   Vector3,
   type BufferAttribute,
   type BufferGeometry,
@@ -284,5 +285,25 @@ describe("CityMeshArraysMesh.setThemeStyle", () => {
     m.dispose();
     expect(geometry).toHaveBeenCalled();
     expect(material).toHaveBeenCalled();
+  });
+});
+
+/** The streaming twin of `CityModelMesh lighting`: both classes must agree. */
+describe("CityMeshArraysMesh lighting", () => {
+  it("draws with a lit Lambert material", () => {
+    const m = new CityMeshArraysMesh(opts());
+    expect(m.object3d.material).toBeInstanceOf(MeshLambertMaterial);
+    m.dispose();
+  });
+
+  it("registers its material with the shadow hooks and unregisters it on dispose", () => {
+    const hooks = { register: vi.fn(), unregister: vi.fn() };
+    const m = new CityMeshArraysMesh(opts({ shadowMaterials: hooks }));
+    const material = m.object3d.material;
+    expect(hooks.register).toHaveBeenCalledTimes(1);
+    expect(hooks.register).toHaveBeenCalledWith(material);
+    m.dispose();
+    expect(hooks.unregister).toHaveBeenCalledTimes(1);
+    expect(hooks.unregister).toHaveBeenCalledWith(material);
   });
 });

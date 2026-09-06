@@ -93,6 +93,12 @@ export class CityModelMeshDesc extends MeshDescWithSelectiveEffect<CityModelDesc
       textureBaseUrl: options.textureBaseUrl,
       textureSource: options.textureSource,
       colors: options.colors,
+      // The engine's cascaded-shadow registry (`SunLightDesc` listens): a
+      // material it has never seen receives no shadow. See `cityMaterial.ts`.
+      shadowMaterials: {
+        register: (m) => this.ctx.applyShadowMaterial(m),
+        unregister: (m) => this.ctx.removeShadowMaterial(m),
+      },
       // No `makePlacementMatrix` override: the default is core's
       // `makeEnuFrame` via `buildPlacement`.
     });

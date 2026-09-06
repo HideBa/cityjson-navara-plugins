@@ -19,15 +19,15 @@
  */
 import {
   ClampToEdgeWrapping,
-  DoubleSide,
-  MeshBasicMaterial,
   MirroredRepeatWrapping,
   RepeatWrapping,
   SRGBColorSpace,
   TextureLoader,
+  type MeshLambertMaterial,
   type Texture,
 } from "three";
 import type { CityTexture, TextureGroup } from "@cityjson/navara-core";
+import { createCityMaterial } from "./cityMaterial";
 
 /**
  * The image-loading seam. `load` starts fetching `url` and reports through
@@ -224,19 +224,17 @@ export function applyTextureSettings(
 }
 
 /**
- * One unlit, double-sided, vertex-coloured material per group — the same
- * calibration as the untextured mesh (see `CityModelMesh`'s material comment),
- * plus a `map` where the group's image is ready. Group `g` uses material `g`.
+ * One city material per group — the same lit, double-sided, vertex-coloured
+ * material as the untextured mesh (`createCityMaterial`), plus a `map` where
+ * the group's image is ready. Group `g` uses material `g`. The CALLER
+ * registers these with its shadow hooks; this builder has no engine seam.
  */
 export function buildGroupMaterials(
   groups: ReadonlyArray<TextureGroup>,
   cache: TextureCache,
-): MeshBasicMaterial[] {
+): MeshLambertMaterial[] {
   return groups.map((group) => {
-    const material = new MeshBasicMaterial({
-      vertexColors: true,
-      side: DoubleSide,
-    });
+    const material = createCityMaterial();
     if (group.textureIndex >= 0) {
       const entry = cache.request(group.textureIndex);
       if (entry.status === "ready") material.map = entry.texture;

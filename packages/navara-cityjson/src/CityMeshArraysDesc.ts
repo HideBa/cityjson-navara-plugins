@@ -48,7 +48,15 @@ export class CityMeshArraysDesc extends MeshDescWithSelectiveEffect<CityMeshArra
   }
 
   createMesh(): Mesh {
-    this.cityMesh = new CityMeshArraysMesh(this.descConfig.cityMeshArrays);
+    this.cityMesh = new CityMeshArraysMesh({
+      ...this.descConfig.cityMeshArrays,
+      // The engine's cascaded-shadow registry (`SunLightDesc` listens): a
+      // material it has never seen receives no shadow. See `cityMaterial.ts`.
+      shadowMaterials: {
+        register: (m) => this.ctx.applyShadowMaterial(m),
+        unregister: (m) => this.ctx.removeShadowMaterial(m),
+      },
+    });
     // Task B1 finding 7: the cell's ENU->ECEF frame is the mesh's top-level
     // `matrixWorld`; `MeshDesc.applyTransform` copies it and disables
     // auto-update.

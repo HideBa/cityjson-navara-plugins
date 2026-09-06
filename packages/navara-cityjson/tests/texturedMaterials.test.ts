@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   ClampToEdgeWrapping,
+  MeshLambertMaterial,
   MirroredRepeatWrapping,
   RepeatWrapping,
   SRGBColorSpace,
@@ -173,6 +174,8 @@ describe("buildGroupMaterials", () => {
     ];
     const materials = buildGroupMaterials(groups, cache);
     expect(materials).toHaveLength(2);
+    // Lit, like the untextured material: the sun and its shadows shade it.
+    expect(materials[0]).toBeInstanceOf(MeshLambertMaterial);
     expect(materials[0]!.vertexColors).toBe(true);
     expect(materials[0]!.map).toBeNull();
     expect(materials[1]!.map).toBeNull(); // not ready yet

@@ -10,14 +10,19 @@
  * streaming cells (Task C8) on one frame implementation.
  */
 import {
-  DoubleSide,
   Matrix4,
   Mesh,
-  MeshBasicMaterial,
   Raycaster,
   Vector3,
   type BufferGeometry,
+  type Material,
+  type MeshLambertMaterial,
 } from "three";
+import {
+  createCityMaterial,
+  NO_SHADOW_MATERIALS,
+  type ShadowMaterialHooks,
+} from "./cityMaterial";
 import {
   appearanceThemesEqual,
   buildCityMeshArrays,
@@ -92,6 +97,10 @@ export interface CityModelMeshOptions {
    *  lays the layer's override over the plugin's). Omitted keeps the
    *  historical colours — see `cityColors.ts`. */
   readonly colors?: ResolvedCityColors;
+  /** Where every material this mesh draws with is registered for the
+   *  engine's cascaded shadow maps (see `cityMaterial.ts`). Filled by
+   *  `CityModelMeshDesc`; a mesh built outside the engine leaves it unset. */
+  readonly shadowMaterials?: ShadowMaterialHooks;
   /**
    * Test seam: replaces ONLY the ENU->ECEF matrix (so matrix assertions can
    * read `makeTranslation(1, 2, 3)` instead of ECEF megametres). The frame the
@@ -168,6 +177,7 @@ export class CityModelMesh {
    *  geometry changes. */
   private maskedSource: Float32Array | null = null;
   private readonly colors: ResolvedCityColors;
+  private readonly shadowMaterials: ShadowMaterialHooks;
 
   constructor(options: CityModelMeshOptions) {
     this.id = options.id;
@@ -195,55 +205,19 @@ export class CityModelMesh {
     this.appearance = options.appearance ?? null;
     this.textureBaseUrl = options.textureBaseUrl ?? null;
     this.textureSource = options.textureSource ?? defaultTextureSource();
+    this.shadowMaterials = options.shadowMaterials ?? NO_SHADOW_MATERIALS;
 
     this.arrays = this.buildArrays();
     this.baseColors = Float32Array.from(this.arrays.colors);
 
     this.object3d = new Mesh(
       geometryFromMeshArrays(this.arrays),
-      // UNLIT ALBEDO, not a lit material. The renderer this mesh lives in is
-      // calibrated for the PHYSICAL ATMOSPHERE, not for scene lights: the
-      // aerial-perspective pass runs in `irradiance` mode and re-shades the
-      // g-buffer albedo with the atmosphere's own sun + sky irradiance
-      // (`AerialPerspective.irradiance` sets `sunLight = skyLight = true`),
-      // and the tone mapper is driven at exposure ~10. A lit
-      // `MeshStandardMaterial` would be lit TWICE — once by
-      // `SunLightDesc`/`skyLightProbe` at scene-light scale (calibrated for
-      // exposure ~1), then again by the AP pass — and every roof clipped to
-      // white. See docs/superpowers/research/2026-08-04-overbright-scene-diagnosis.md.
-      //
-      // The AP pass reads the MRT normal buffer (`useNormalBuffer: true`), and
-      // `MeshBasicMaterial` fills it: Navara patches three's `basic` ShaderLib
-      // entry on import so the normal varyings are always computed, not only
-      // under `USE_ENVMAP`/`USE_SKINNING` (`overrideMaterialsForMRT`). No
-      // `flatShading` here — the material has no such option, and that patch
-      // `#undef`s `FLAT_SHADED` anyway; our geometry is non-indexed with one
-      // normal per face, so the shading reads flat regardless.
-      new MeshBasicMaterial({
-        vertexColors: true,
-      // DOUBLE-SIDED, and not as a convenience: front-face culling removes
-      // real geometry from this data. CityJSON's spec asks for outward-facing
-      // exterior shells, but real files vary — and `orientExteriorRing`
-      // (navara-core's `buildCityMeshArrays`) makes it worse rather than
-      // better on the shapes that matter, because it decides orientation by
-      // asking whether a face's normal points away from the object's bbox
-      // CENTRE. That is right for a convex block and wrong for every concave
-      // one: an L-shaped building's inner walls, a courtyard's inward faces
-      // and anything under an overhang legitimately face their own centroid,
-      // so the heuristic reverses them and `FrontSide` then culls them.
-      // Measured on the Delft sample at a fixed camera with the backdrop off:
-      // ~1.1% of the viewport was building pixels that only appear
-      // double-sided (3400 px, against 56 the other way).
-      //
-      // The cost is bounded: these are opaque solids behind a depth test, so
-      // the extra fragments are overdraw the z-buffer discards, on a model of
-      // ~10^5 triangles. Correct geometry is worth that. Fixing the winding
-      // properly needs solid-orientation analysis (ray parity per shell), not
-      // a centroid guess — worth doing, but it would still not make a viewer
-      // of third-party data safe to cull.
-        side: DoubleSide,
-      }),
+      // LIT, vertex-coloured, double-sided — the ONE city material; the
+      // reasoning (and why it is no longer unlit albedo) is on
+      // `createCityMaterial`.
+      createCityMaterial(),
     );
+    this.shadowMaterials.register(this.object3d.material as Material);
     this.object3d.name = `cityModel:${this.id}`;
     this.object3d.userData.layerId = this.id;
     this.object3d.castShadow = true;
@@ -329,11 +303,9 @@ export class CityModelMesh {
       this.textures?.dispose();
       this.textures = null;
       if (Array.isArray(this.object3d.material)) {
-        for (const m of this.object3d.material) m.dispose();
-        this.object3d.material = new MeshBasicMaterial({
-          vertexColors: true,
-          side: DoubleSide,
-        });
+        this.releaseMaterials(this.object3d.material);
+        this.object3d.material = createCityMaterial();
+        this.shadowMaterials.register(this.object3d.material);
         this.theme.materialsReplaced();
       }
       return;
@@ -346,10 +318,20 @@ export class CityModelMesh {
       warn: (message) => console.warn(`[cityModel:${this.id}] ${message}`),
     });
     const previous = this.object3d.material;
-    this.object3d.material = buildGroupMaterials(groups, this.textures);
-    if (Array.isArray(previous)) for (const m of previous) m.dispose();
-    else previous.dispose();
+    const next = buildGroupMaterials(groups, this.textures);
+    this.object3d.material = next;
+    for (const m of next) this.shadowMaterials.register(m);
+    this.releaseMaterials(previous);
     this.theme.materialsReplaced();
+  }
+
+  /** Unregister from the shadow registry FIRST, then dispose: a disposed
+   *  material the registry still holds is a leak on every LoD swap. */
+  private releaseMaterials(materials: Material | Material[]): void {
+    for (const m of Array.isArray(materials) ? materials : [materials]) {
+      this.shadowMaterials.unregister(m);
+      m.dispose();
+    }
   }
 
   /** An image landed (or failed): give its group the map, then repaint so
@@ -372,7 +354,7 @@ export class CityModelMesh {
     if (!groups || !Array.isArray(materials)) return;
     groups.forEach((group, i) => {
       if (!changed.has(group.textureIndex)) return;
-      const material = materials[i] as MeshBasicMaterial | undefined;
+      const material = materials[i] as MeshLambertMaterial | undefined;
       if (!material) return;
       const entry = this.textures?.get(group.textureIndex);
       material.map = entry?.status === "ready" ? entry.texture : null;
@@ -689,11 +671,6 @@ export class CityModelMesh {
     this.geometry.dispose();
     this.textures?.dispose();
     this.textures = null;
-    const material = this.object3d.material;
-    if (Array.isArray(material)) {
-      for (const m of material) m.dispose();
-    } else {
-      material.dispose();
-    }
+    this.releaseMaterials(this.object3d.material);
   }
 }

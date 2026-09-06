@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { DoubleSide, LineSegments, Matrix4, Vector3 } from "three";
+import { describe, it, expect, vi } from "vitest";
+import {
+  DoubleSide,
+  LineSegments,
+  Matrix4,
+  MeshLambertMaterial,
+  Vector3,
+} from "three";
 import type { CityModel } from "@cityjson/navara-core";
 import { CityModelMesh } from "../src/cityModelMesh";
 import { resolveCityColors } from "../src/cityColors";
@@ -684,5 +690,32 @@ describe("CityModelMesh.setThemeStyle", () => {
       surfaceIndex: 0,
     });
     m.dispose();
+  });
+});
+
+/**
+ * The forward-lit calibration: a city mesh draws with a LIT material so the
+ * engine's sun (with its cascaded shadow maps) and sky probe shade it, and
+ * every material it draws with is handed to the shadow registry — the seam
+ * `CityModelMeshDesc` fills with Navara's `applyShadowMaterial` — and taken
+ * back before it is disposed, so the registry never holds a dead material.
+ */
+describe("CityModelMesh lighting", () => {
+  it("draws with a lit Lambert material", () => {
+    const m = new CityModelMesh({ ...opts, lod: "2" });
+    expect(m.object3d.material).toBeInstanceOf(MeshLambertMaterial);
+    m.dispose();
+  });
+
+  it("registers its material with the shadow hooks and unregisters it on dispose", () => {
+    const hooks = { register: vi.fn(), unregister: vi.fn() };
+    const m = new CityModelMesh({ ...opts, lod: "2", shadowMaterials: hooks });
+    const material = m.object3d.material;
+    expect(hooks.register).toHaveBeenCalledTimes(1);
+    expect(hooks.register).toHaveBeenCalledWith(material);
+    expect(hooks.unregister).not.toHaveBeenCalled();
+    m.dispose();
+    expect(hooks.unregister).toHaveBeenCalledTimes(1);
+    expect(hooks.unregister).toHaveBeenCalledWith(material);
   });
 });

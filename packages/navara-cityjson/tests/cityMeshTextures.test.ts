@@ -3,8 +3,12 @@
  * the shared layer cache, the raw/masked colour split the streaming layer
  * relies on, and map swaps on `textureChanged`.
  */
-import { describe, it, expect } from "vitest";
-import { Texture, type MeshBasicMaterial } from "three";
+import { describe, it, expect, vi } from "vitest";
+import {
+  Texture,
+  type MeshBasicMaterial,
+  type MeshLambertMaterial,
+} from "three";
 import { makeEnuFrame, type CityMeshArrays } from "@cityjson/navara-core";
 import { CityMeshArraysMesh } from "../src/cityMesh";
 import { TextureCache, type TextureSource } from "../src/texturedMaterials";
@@ -82,5 +86,30 @@ describe("CityMeshArraysMesh with textures", () => {
     const c = new Float32Array(18);
     expect(plain.maskTextured(c)).toBe(c);
     plain.dispose();
+  });
+});
+
+describe("CityMeshArraysMesh with textures: shadow hooks", () => {
+  it("registers each group material, releasing the plain one it replaced, and all on dispose", () => {
+    const cache = cacheWith({ load: () => {} });
+    const hooks = { register: vi.fn(), unregister: vi.fn() };
+    const mesh = new CityMeshArraysMesh({
+      id: "c1",
+      arrays: arrays(),
+      frame: FRAME,
+      textures: cache,
+      shadowMaterials: hooks,
+    });
+    const materials = mesh.object3d.material as MeshLambertMaterial[];
+    expect(materials).toHaveLength(2);
+    // The plain material built first, then one per group.
+    expect(hooks.register).toHaveBeenCalledTimes(3);
+    expect(hooks.register.mock.calls.slice(1).map((c) => c[0])).toEqual(materials);
+    // The plain one was released when the groups replaced it.
+    expect(hooks.unregister).toHaveBeenCalledTimes(1);
+    expect(hooks.unregister.mock.calls[0]![0]).toBe(hooks.register.mock.calls[0]![0]);
+    mesh.dispose();
+    expect(hooks.unregister).toHaveBeenCalledTimes(3);
+    expect(hooks.unregister.mock.calls.slice(1).map((c) => c[0])).toEqual(materials);
   });
 });
