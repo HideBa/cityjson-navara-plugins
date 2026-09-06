@@ -6,7 +6,7 @@
  * imports nothing from the engine.
  */
 import {
-  MeshDesc,
+  MeshDescWithSelectiveEffect,
   PickableMeshWrapper,
   type MeshConfig,
   type ViewContext,
@@ -20,7 +20,18 @@ export type CityMeshArraysDescConfig = MeshConfig & {
   readonly cityMeshArrays: AddCityMeshArraysOptions;
 };
 
-export class CityMeshArraysDesc extends MeshDesc<CityMeshArraysDescConfig> {
+/**
+ * `MeshDescWithSelectiveEffect`, not the plain `MeshDesc`, and not for the
+ * selective effects: its `getPassKey()` puts the mesh in the engine's MRT
+ * scene whenever any optional G-buffer is allocated. The plain base class
+ * answers "opaque", a forward scene the engine draws AFTER it has copied the
+ * G-buffer out, so a city mesh there never wrote its normals (or its CSM
+ * shadow term) anywhere a lighting pass could read them — every wall came out
+ * as flat albedo whatever the sun did. The MRT scene is also where the
+ * engine's own shadow-receiving mesh descriptors live, so depth ordering
+ * against terrain and draped layers is the engine's, not ours.
+ */
+export class CityMeshArraysDesc extends MeshDescWithSelectiveEffect<CityMeshArraysDescConfig> {
   /** The behaviour object every `CityMeshHandle` method delegates to. */
   cityMesh!: CityMeshArraysMesh;
 
