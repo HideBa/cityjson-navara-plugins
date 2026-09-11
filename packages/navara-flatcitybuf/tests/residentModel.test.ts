@@ -23,6 +23,7 @@ function entry(ids: string[], surfaceAttrKeys = ["slope"]): CellEntry {
       lod: "2.2",
       surfaceCount: 2,
       roofMetrics: [],
+      geometryLods: [],
       footprintAreaSqM: 10,
       volumeCuM: 30,
       parents: [],

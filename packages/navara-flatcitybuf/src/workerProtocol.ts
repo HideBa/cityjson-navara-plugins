@@ -34,6 +34,18 @@ export interface CellGeometry {
   readonly textures?: ReadonlyArray<CellTexture>;
 }
 
+/**
+ * A resident roof surface's metrics plus the LoD of the surface itself.
+ *
+ * `toObjectRecords` runs on the whole cell model, so an object with geometry at
+ * several LoDs contributes roof surfaces at all of them;
+ * `ResidentObjectRecord.lod` is the OBJECT's LoD and cannot tell them apart. A
+ * widening of `RoofMetrics`, so every existing reader keeps working untouched.
+ */
+export interface ResidentRoofMetrics extends RoofMetrics {
+  readonly lod: string | null;
+}
+
 /** A streaming layer's object payload. NOT a CityObject — CityObject.surfaces
  *  is non-optional, and rings are fetched on demand instead (see 'surfaces'). */
 export interface ResidentObjectRecord {
@@ -43,7 +55,17 @@ export interface ResidentObjectRecord {
   readonly bbox: BBox3;
   readonly lod: string | null;
   readonly surfaceCount: number;
-  readonly roofMetrics: ReadonlyArray<RoofMetrics>;
+  readonly roofMetrics: ReadonlyArray<ResidentRoofMetrics>;
+  /**
+   * Distinct non-null `Surface.lod` values over ALL of this object's surfaces,
+   * whatever their semantic type, in the order first seen.
+   *
+   * The main thread's spec §7 contributor rule asks "does this feature's part
+   * have GEOMETRY at the chosen LoD" — a wall-only part counts. `roofMetrics`
+   * cannot answer that and `surfaceCount` has no LoD breakdown, so the answer
+   * is carried explicitly. Short: a handful of labels per record.
+   */
+  readonly geometryLods: ReadonlyArray<string>;
   readonly footprintAreaSqM: number;
   readonly volumeCuM: number | null;
   readonly parents: ReadonlyArray<string>;

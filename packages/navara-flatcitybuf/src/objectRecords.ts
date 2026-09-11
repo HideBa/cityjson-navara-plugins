@@ -32,10 +32,14 @@ export function toObjectRecords(model: CityModel): {
 
     const roofMetrics = obj.surfaces
       .filter((s) => s.type === "RoofSurface")
-      .map(computeRoofMetrics);
+      .map((s) => ({ ...computeRoofMetrics(s), lod: s.lod }));
 
+    // ONE pass over the surfaces for both the attribute keys the cell reports
+    // and the LoD labels the contributor rule needs.
+    const lods = new Set<string>();
     for (const surface of obj.surfaces) {
       for (const key of Object.keys(surface.attributes)) attrKeys.add(key);
+      if (surface.lod) lods.add(surface.lod);
     }
 
     const footprintAreaSqM = computeFootprintArea(obj) ?? 0;
@@ -53,6 +57,7 @@ export function toObjectRecords(model: CityModel): {
       lod: obj.lod,
       surfaceCount: obj.surfaces.length,
       roofMetrics,
+      geometryLods: [...lods],
       footprintAreaSqM,
       volumeCuM,
       parents: obj.parents,

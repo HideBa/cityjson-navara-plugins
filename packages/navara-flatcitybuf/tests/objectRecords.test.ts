@@ -37,6 +37,7 @@ const RESIDENT_OBJECT_RECORD_KEYS = [
   "lod",
   "surfaceCount",
   "roofMetrics",
+  "geometryLods",
   "footprintAreaSqM",
   "volumeCuM",
   "parents",
@@ -61,7 +62,9 @@ describe("toObjectRecords", () => {
       expect(r.roofMetrics.length).toBe(roofs.length);
       // Not just the count — the values themselves, in surface order, must
       // match what computeRoofMetrics produces directly from the surface.
-      expect(r.roofMetrics).toEqual(roofs.map(computeRoofMetrics));
+      expect(r.roofMetrics).toEqual(
+        roofs.map((s) => ({ ...computeRoofMetrics(s), lod: s.lod })),
+      );
     }
   });
 
@@ -78,7 +81,13 @@ describe("toObjectRecords", () => {
       expect(Object.keys(r).sort()).toEqual(RESIDENT_OBJECT_RECORD_KEYS);
       for (const rm of r.roofMetrics) {
         expect(Object.keys(rm).sort()).toEqual(
-          ["areaSqM", "azimuthDeg", "elevationM", "inclinationDeg"].sort(),
+          [
+            "areaSqM",
+            "azimuthDeg",
+            "elevationM",
+            "inclinationDeg",
+            "lod",
+          ].sort(),
         );
       }
     }
@@ -225,5 +234,84 @@ describe("toObjectRecords", () => {
     // surfaces (GroundSurface/WallSurface carry no extra keys beyond "type",
     // which extractSemanticAttributes already strips).
     expect([...surfaceAttrKeys].sort()).toEqual(["slope"]);
+  });
+});
+
+/** A unit square at height `z`, of `type`, tagged with `lod`. */
+function taggedSurface(type: string, lod: string | null, z: number) {
+  return {
+    type,
+    rings: [
+      [
+        [0, 0, z],
+        [1, 0, z],
+        [1, 1, z],
+        [0, 1, z],
+      ],
+    ],
+    attributes: {},
+    lod,
+  };
+}
+
+function modelWith(surfaces: ReadonlyArray<unknown>): CityModel {
+  return {
+    sourceEncoding: "flatcitybuf",
+    metadata: {},
+    bbox: [0, 0, 0, 1, 1, 9],
+    vertexCount: 0,
+    objects: {
+      b1: {
+        id: "b1",
+        objectType: "Building",
+        attributes: {},
+        surfaces,
+        bbox: [0, 0, 0, 1, 1, 9],
+        children: [],
+        parents: [],
+        lod: "2.2",
+      },
+    },
+  } as unknown as CityModel;
+}
+
+describe("toObjectRecords, per-LoD", () => {
+  it("tags each roof metric with its OWN surface's LoD", () => {
+    // `toObjectRecords` runs on the UNFILTERED cell model (`fcb.worker.ts` —
+    // `msg.lod` filters the mesh, not the parse), so one object contributes
+    // roof surfaces at every LoD it has, and `record.lod` (the OBJECT's)
+    // cannot tell them apart.
+    const { records } = toObjectRecords(
+      modelWith([
+        taggedSurface("RoofSurface", "1.2", 3),
+        taggedSurface("RoofSurface", "2.2", 9),
+      ]),
+    );
+    expect(records[0]!.roofMetrics.map((m) => m.lod)).toEqual(["1.2", "2.2"]);
+    expect(records[0]!.roofMetrics[0]!.areaSqM).toBeCloseTo(1, 6);
+  });
+
+  it("reports the LoDs of EVERY surface, not only the roofs", () => {
+    // The case §7's contributor rule turns on: geometry at 2.2 that is not a
+    // roof still makes this object a contributor at 2.2.
+    const { records } = toObjectRecords(
+      modelWith([
+        taggedSurface("WallSurface", "2.2", 9),
+        taggedSurface("RoofSurface", "1.2", 3),
+      ]),
+    );
+    expect([...records[0]!.geometryLods].sort()).toEqual(["1.2", "2.2"]);
+    expect(records[0]!.roofMetrics.map((m) => m.lod)).toEqual(["1.2"]);
+  });
+
+  it("de-duplicates the LoD list and drops untagged surfaces", () => {
+    const { records } = toObjectRecords(
+      modelWith([
+        taggedSurface("RoofSurface", "2.2", 9),
+        taggedSurface("WallSurface", "2.2", 9),
+        taggedSurface("WallSurface", null, 9),
+      ]),
+    );
+    expect(records[0]!.geometryLods).toEqual(["2.2"]);
   });
 });

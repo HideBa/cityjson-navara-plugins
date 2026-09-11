@@ -158,6 +158,7 @@ function objectRecord(id: string, objectType: string): ResidentObjectRecord {
     lod: null,
     surfaceCount: 0,
     roofMetrics: [],
+    geometryLods: [],
     footprintAreaSqM: 0,
     volumeCuM: null,
     parents: [],
