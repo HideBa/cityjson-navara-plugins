@@ -147,7 +147,7 @@ export class CityModelMesh {
   readonly pickStrategy: PickStrategy;
   readonly object3d: Mesh;
 
-  private readonly model: CityModel;
+  private model: CityModel;
   private readonly originOffset: Vec3;
   private readonly makePlacementMatrix:
     | ((lle: Lle) => Matrix4)
@@ -520,6 +520,29 @@ export class CityModelMesh {
 
   setStyle(evaluator: SurfaceStyleEvaluator | null): void {
     this.evaluator = evaluator;
+    this.repaint();
+  }
+
+  /**
+   * Swap the model whose ATTRIBUTES rules read, without touching geometry.
+   *
+   * The app merges computed attributes into a NEW immutable model (new objects
+   * for the touched ids only) and pushes it here. The mesh's arrays index
+   * objects by id, so only the `this.model.objects[objectId]` lookup inside
+   * `repaint`'s `computeStyleColors` changes — a repaint, not a rebuild.
+   *
+   * Deliberately NOT a `rebuildGeometry` seam, unlike `setLod` /
+   * `setHiddenTypes` / `setAppearance`: the geometry-dependent readers
+   * (`buildArrays`'s surfaces and vertices, `getBoundsGeodetic`'s bbox, the
+   * `TextureCache`'s appearance) must not be re-derived from a model that
+   * differs from the built one only in attributes, and a rebuild would drop
+   * the texture images and re-triangulate the whole layer on every computed
+   * column. A caller that changes GEOMETRY must replace the layer, not call
+   * this.
+   */
+  setModel(model: CityModel): void {
+    if (model === this.model) return;
+    this.model = model;
     this.repaint();
   }
 

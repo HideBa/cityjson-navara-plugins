@@ -5,6 +5,7 @@
  */
 import type {
   AppearanceTheme,
+  CityModel,
   SurfaceStyleEvaluator,
 } from "@cityjson/navara-core";
 import type { CityColors } from "./cityColors";
@@ -86,6 +87,14 @@ export interface CityModelHandle {
   setVisibleObjectIds(ids: ReadonlySet<string> | null): void;
   /** Per-surface rule colors; `null` restores the semantic base colors. */
   setStyle(evaluator: SurfaceStyleEvaluator | null): void;
+  /**
+   * Swap the model rules evaluate against — ATTRIBUTES only, and a repaint
+   * rather than a rebuild. The host merges computed attributes into a new
+   * immutable model and pushes it here; geometry, bounds and appearance are
+   * still those of the model the layer was added with, so a caller whose
+   * GEOMETRY changed must replace the layer instead.
+   */
+  setModel(model: CityModel): void;
   /**
    * Scene-theme presentation: a fill multiplier over the vertex colours plus
    * optional structural edge lines. Orthogonal to {@link setStyle} — a theme

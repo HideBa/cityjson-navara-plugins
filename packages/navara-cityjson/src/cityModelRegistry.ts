@@ -170,6 +170,7 @@ export class CityModelRegistry {
         mesh.setVisibleObjectIds(ids),
       setStyle: (evaluator: SurfaceStyleEvaluator | null) =>
         mesh.setStyle(evaluator),
+      setModel: (next: CityModel) => mesh.setModel(next),
       setThemeStyle: (style: ThemeStyle) => mesh.setThemeStyle(style),
       setAppearance: (theme: AppearanceTheme | null) =>
         mesh.setAppearance(theme),
