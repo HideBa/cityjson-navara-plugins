@@ -6,6 +6,7 @@
  * Parsers for CityJSON / CityJSONSeq / FlatCityBuf all produce these types.
  */
 
+import type { CityJSONGeometryType } from "./cityjson/types";
 import type { CityModelEncoding } from "./supportedEncodings";
 
 // ---------------------------------------------------------------------------
@@ -111,6 +112,23 @@ export interface Surface {
   readonly attributes: Readonly<Record<string, unknown>>;
   /** LoD of the source geometry that produced this surface (e.g. "2", "2.2"). */
   readonly lod: string | null;
+  /**
+   * The CityJSON geometry TYPE this surface was extracted from — "Solid",
+   * "MultiSurface", "CompositeSolid" and so on.
+   *
+   * Semantically distinct from `type`, which is the surface's own role
+   * (RoofSurface, WallSurface): a RoofSurface can come from a MultiSurface at
+   * LoD 0 and from a Solid at LoD 2.2, and only this field can tell them
+   * apart. It is what lets the processing toolbox answer "does this building
+   * have a SOLID at LoD 2.2?" from the in-memory model, with no geometry
+   * measured and no source re-read (spec §6).
+   *
+   * OPTIONAL AND NULLABLE, and the two mean the same thing to every reader:
+   * "no geometry-type information here". `null` is written by a producer that
+   * genuinely has none (CityParquet's flat face list); absent is a `Surface`
+   * literal built by hand. Neither is a solid.
+   */
+  readonly geometryType?: CityJSONGeometryType | null;
   /** Theme name -> index into `CityAppearance.materials`. Absent: no material. */
   readonly material?: Readonly<Record<string, number>>;
   /** Theme name -> texture and UVs. Absent: untextured in every theme. */

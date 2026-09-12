@@ -729,6 +729,13 @@ function readRowGeometry(
         rings: face,
         attributes: resolveSurfaceAttributes(definition),
         lod: column.lod,
+        // CityParquet has no geometry-type information to give: the table's
+        // `faces` are flat across every shell and every solid member, and the
+        // `GeometryColumnRef` behind them carries only `{ name, lod }`. NULL
+        // is the honest answer, and it reads as "not a solid" everywhere —
+        // which is correct: a CityParquet layer has no reader, so the solids
+        // tools refuse it on eligibility long before any LoD is offered.
+        geometryType: null,
         ...extra,
       });
     }

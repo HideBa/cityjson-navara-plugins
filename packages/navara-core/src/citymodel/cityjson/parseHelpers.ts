@@ -24,6 +24,7 @@ import {
   type SurfacePath,
 } from "./appearance";
 import type {
+  CityJSONGeometryType,
   CityJSONObject,
   CityJSONRoot,
   CityJSONSemanticSurface,
@@ -179,6 +180,7 @@ function buildSurface(
     rings: Vec3[][];
     attributes: Record<string, unknown>;
     lod: string | null;
+    geometryType: CityJSONGeometryType;
     material?: Readonly<Record<string, number>>;
     texture?: Readonly<Record<string, SurfaceTexture>>;
   } = {
@@ -186,6 +188,11 @@ function buildSurface(
     rings,
     attributes: extractSemanticAttributes(sem),
     lod,
+    // ONE site for all five of `extractSurfaces`' surface-producing cases:
+    // they all funnel through here and `geom` is already the first parameter,
+    // so nothing about the boundary walk changes. A `switch` added there would
+    // be a second place for the same fact to be wrong in.
+    geometryType: geom.type,
   };
 
   if (geom.material !== undefined) {
