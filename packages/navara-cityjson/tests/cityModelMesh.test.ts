@@ -719,3 +719,15 @@ describe("CityModelMesh lighting", () => {
     expect(hooks.unregister).toHaveBeenCalledWith(material);
   });
 });
+
+it("renders highest selected LoD and updates geometry and picking when it changes", () => {
+  const m = new CityModelMesh({ ...opts, lod: ["1", "2"] });
+  expect(m.triangleCount()).toBe(2);
+  expect(m.resolveVertex(0)?.surfaceIndex).toBe(0);
+  m.setLod(["1"]);
+  expect(m.triangleCount()).toBe(2);
+  expect(m.resolveVertex(0)?.surfaceIndex).toBe(1);
+  m.setLod([]);
+  expect(m.triangleCount()).toBe(0);
+  m.dispose();
+});

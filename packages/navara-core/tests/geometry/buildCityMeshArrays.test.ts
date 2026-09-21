@@ -520,3 +520,27 @@ describe("buildCityMeshArrays visible-id filtering", () => {
     expect(arrays.triangleCount).toBe(1);
   });
 });
+
+describe("multiple selected LoDs", () => {
+  const ring: Vec3[] = [[0, 0, 0], [10, 0, 0], [0, 10, 0]];
+  const mixed = makeModel({
+    detailed: makeObject("detailed", [makeSurface("RoofSurface", ring, "1"), makeSurface("RoofSurface", ring, "2.2")]),
+    basic: makeObject("basic", [makeSurface("RoofSurface", ring, "1")]),
+    excluded: makeObject("excluded", [makeSurface("RoofSurface", ring, "0")]),
+  });
+  it("draws only each object's highest selected LoD, retaining lower-detail objects", () => {
+    const mesh = buildCityMeshArrays(mixed, "test", [0, 0, 0], ["1", "2.2"]);
+    expect(mesh.triangleCount).toBe(2);
+    expect([...mesh.objectIndices]).toEqual([0, 0, 0, 1, 1, 1]);
+    expect([...mesh.surfaceIndices]).toEqual([1, 1, 1, 0, 0, 0]);
+    expect(mesh.objectKeys).toEqual(["detailed", "basic", "excluded"]);
+  });
+  it("draws nothing with an empty selection and never falls back to unchecked LoDs", () => {
+    expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], []).triangleCount).toBe(0);
+    expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], ["2.2"]).triangleCount).toBe(1);
+  });
+  it("keeps legacy single-LoD and unfiltered callers unchanged", () => {
+    expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], "1").triangleCount).toBe(2);
+    expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], null).triangleCount).toBe(4);
+  });
+});

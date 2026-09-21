@@ -130,7 +130,7 @@ export function buildCityMeshArrays(
   model: CityModel,
   _layerId: string,
   originOffset: Vec3 = [0, 0, 0],
-  selectedLod: string | null = null,
+  selectedLod: string | readonly string[] | null = null,
   hiddenTypes: ReadonlySet<string> | null = null,
   appearance: AppearanceTheme | null = null,
   /** Vertex colour per semantic surface type. Defaults to core's palette; a
@@ -144,6 +144,10 @@ export function buildCityMeshArrays(
   const materialTheme =
     appearance?.kind === "material" ? appearance.name : null;
   const materials = model.appearance?.materials;
+
+  // An array selects one representation per object, never overlapping LoDs.
+  const allowedLods = typeof selectedLod === "object" && selectedLod !== null
+    ? new Set(selectedLod) : null;
 
   // Pass 1: triangulate, resolve colour/texture, build the object key list.
   let totalTriangles = 0;
@@ -168,9 +172,20 @@ export function buildCityMeshArrays(
     // feature, parts included), so walking parents here would double-expand,
     // once per object, inside the hot pass-1 loop.
     if (visibleObjectIds !== null && !visibleObjectIds.has(id)) continue;
+    let objectLod: string | null = null;
+    if (allowedLods) {
+      for (const surface of obj.surfaces) {
+        if (surface.lod !== null && allowedLods.has(surface.lod) &&
+            (objectLod === null || Number(surface.lod) > Number(objectLod))) {
+          objectLod = surface.lod;
+        }
+      }
+      if (objectLod === null) continue;
+    }
     for (let surfaceIdx = 0; surfaceIdx < obj.surfaces.length; surfaceIdx++) {
       const surface = obj.surfaces[surfaceIdx]!;
-      if (selectedLod !== null && surface.lod !== selectedLod) continue;
+      if (allowedLods ? surface.lod !== objectLod :
+          selectedLod !== null && surface.lod !== selectedLod) continue;
       const surfaceTexture =
         textureTheme !== null ? surface.texture?.[textureTheme] : undefined;
       const triangulation = triangulateSurface(

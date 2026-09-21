@@ -62,7 +62,7 @@ export interface CityModelMeshOptions {
   readonly id: string;
   readonly model: CityModel;
   readonly crs?: string | number;
-  readonly lod?: string | null;
+  readonly lod?: string | readonly string[] | null;
   /** First-level object types whose geometry is left out of the build (so
    *  "Building" also drops its BuildingParts). Arrays, not a Set, because this
    *  travels as a descriptor config; the mesh keeps its own set. */
@@ -153,7 +153,7 @@ export class CityModelMesh {
     | ((lle: Lle) => Matrix4)
     | undefined;
   private placement: Placement;
-  private lod: string | null;
+  private lod: string | readonly string[] | null;
   private hiddenTypes: ReadonlySet<string>;
   private visibleObjectIds: ReadonlySet<string> | null;
   private arrays: CityMeshArrays;
@@ -421,7 +421,7 @@ export class CityModelMesh {
     this.object3d.visible = visible;
   }
 
-  setLod(lod: string | null): void {
+  setLod(lod: string | readonly string[] | null): void {
     if (lod === this.lod) return;
     this.lod = lod;
     this.rebuildGeometry();

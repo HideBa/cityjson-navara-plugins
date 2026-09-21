@@ -31,8 +31,9 @@ export interface AddCityModelOptions {
   readonly id: string;
   /** Overrides the model's own `metadata.referenceSystem`. */
   readonly crs?: string | number;
-  /** LoD to render; `null`/omitted renders every LoD in the model. */
-  readonly lod?: string | null;
+  /** LoD to render; an array picks the highest selected LoD per object.
+   * `null`/omitted renders every LoD in the model; an empty array renders none. */
+  readonly lod?: string | readonly string[] | null;
   /** First-level object types to build WITHOUT geometry — hiding "Building"
    *  also hides its BuildingParts (`toplevelCityObjectType`). Omitted or empty
    *  builds everything. */
@@ -77,7 +78,7 @@ export interface CityModelHandle {
   readonly id: string;
   setVisible(v: boolean): void;
   /** Rebuilds geometry filtered by LoD; `null` clears the filter. */
-  setLod(lod: string | null): void;
+  setLod(lod: string | readonly string[] | null): void;
   /** Rebuilds geometry without the named first-level types (hiding "Building"
    *  hides its BuildingParts too); `[]` clears the filter. Geometry, not
    *  styling — a hidden object stops occluding and stops picking. */

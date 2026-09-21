@@ -163,7 +163,7 @@ export class CityModelRegistry {
         mesh.setVisible(v);
         meshHandle.visible = v;
       },
-      setLod: (lod: string | null) => mesh.setLod(lod),
+      setLod: (lod: string | readonly string[] | null) => mesh.setLod(lod),
       setHiddenTypes: (types: ReadonlyArray<string>) =>
         mesh.setHiddenTypes(types),
       setVisibleObjectIds: (ids: ReadonlySet<string> | null) =>
