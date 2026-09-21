@@ -28,6 +28,7 @@ import {
   buildCityMeshArrays,
   computeOriginOffset,
   projectPositionsToEnu,
+  sameLodGeometry,
   type AppearanceTheme,
   type CityMeshArrays,
   type CityModel,
@@ -421,10 +422,20 @@ export class CityModelMesh {
     this.object3d.visible = visible;
   }
 
+  /**
+   * Draw another LoD selection. The selection is always recorded — every later
+   * rebuild (hidden types, filter, appearance, placement) reads it — but the
+   * geometry is rebuilt only when some object's drawn LoD changes: dropping
+   * LoD 0 from [2, 1, 0] on a city where every object also has LoD 1 draws the
+   * same triangles, and re-triangulating 1.9 M of them took ~2.7 s
+   * (docs/performance/cityparquet-2026-09-21). `sameLodGeometry` walks the
+   * surfaces' LoD labels only and shares the builder's per-object choice.
+   */
   setLod(lod: string | readonly string[] | null): void {
     if (lod === this.lod) return;
+    const unchanged = sameLodGeometry(this.model, this.lod, lod);
     this.lod = lod;
-    this.rebuildGeometry();
+    if (!unchanged) this.rebuildGeometry();
   }
 
   /**

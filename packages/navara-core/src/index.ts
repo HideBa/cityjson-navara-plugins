@@ -133,6 +133,8 @@ export {
   buildCityMeshArrays,
   computeOriginOffset,
 } from "./geometry/buildCityMeshArrays";
+export type { LodSelection } from "./geometry/lodSelection";
+export { sameLodGeometry } from "./geometry/lodSelection";
 export {
   buildCityEdgeSegments,
   DEFAULT_EDGE_ANGLE_DEG,

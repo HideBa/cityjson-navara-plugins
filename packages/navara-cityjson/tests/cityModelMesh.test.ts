@@ -731,3 +731,85 @@ it("renders highest selected LoD and updates geometry and picking when it change
   expect(m.triangleCount()).toBe(0);
   m.dispose();
 });
+
+describe("CityModelMesh setLod skips no-op rebuilds", () => {
+  // Nishitokyo's shape: B1 has LoDs 0/1/2, B2 only 0/1 — dropping LoD 0 from
+  // [2,1,0] changes no object's winner.
+  const nishitokyo: CityModel = {
+    ...model,
+    objects: {
+      B1: {
+        ...model.objects.B1!,
+        surfaces: [quad(6, "2"), quad(3, "1"), quad(1, "0")],
+      },
+      B2: {
+        ...model.objects.B1!,
+        id: "B2",
+        objectType: "Bridge",
+        surfaces: [farQuad(3, "1"), farQuad(1, "0")],
+      },
+    },
+  };
+  const all = ["2", "1", "0"] as const;
+
+  it("keeps the geometry when no object's effective LoD changes", () => {
+    const m = new CityModelMesh({ ...opts, model: nishitokyo, lod: all });
+    const geometry = m.object3d.geometry;
+    let disposed = false;
+    geometry.addEventListener("dispose", () => (disposed = true));
+    m.setLod(["2", "1"]);
+    m.setLod(["1", "2", "2"]);
+    expect(m.object3d.geometry).toBe(geometry);
+    expect(disposed).toBe(false);
+    expect(m.triangleCount()).toBe(4);
+    m.dispose();
+  });
+
+  it("rebuilds when a fallback LoD is added", () => {
+    const m = new CityModelMesh({ ...opts, model: nishitokyo, lod: ["2"] });
+    expect(m.triangleCount()).toBe(2);
+    const geometry = m.object3d.geometry;
+    m.setLod(["2", "1"]);
+    expect(m.object3d.geometry).not.toBe(geometry);
+    expect(m.triangleCount()).toBe(4);
+    m.dispose();
+  });
+
+  it("rebuilds across empty and non-empty selections", () => {
+    const m = new CityModelMesh({ ...opts, model: nishitokyo, lod: all });
+    m.setLod([]);
+    expect(m.triangleCount()).toBe(0);
+    m.setLod(["0"]);
+    expect(m.triangleCount()).toBe(4);
+    m.dispose();
+  });
+
+  it("keeps picking and styling after a skipped rebuild", () => {
+    const m = new CityModelMesh({ ...opts, model: nishitokyo, lod: all });
+    const before = [0, 3, 6, 9].map((v) => m.resolveVertex(v));
+    m.setLod(["2", "1"]);
+    expect([0, 3, 6, 9].map((v) => m.resolveVertex(v))).toEqual(before);
+    m.setStyle(() => [0, 1, 0]);
+    const colors = m.object3d.geometry.getAttribute("color");
+    expect(colors.getY(0)).toBeGreaterThan(colors.getX(0));
+    m.dispose();
+  });
+
+  it("builds a later reveal with the selection it skipped to", () => {
+    const m = new CityModelMesh({
+      ...opts,
+      model: nishitokyo,
+      lod: all,
+      hiddenTypes: ["Bridge"],
+    });
+    m.setLod(["2", "1"]);
+    m.setHiddenTypes([]);
+    expect(m.triangleCount()).toBe(4);
+    // B2 draws its LoD 1 quad (surface 0), never its LoD 0 one (surface 1).
+    const b2 = [0, 3, 6, 9]
+      .map((v) => m.resolveVertex(v))
+      .filter((hit) => hit?.objectId === "B2");
+    expect(b2.map((hit) => hit?.surfaceIndex)).toEqual([0, 0]);
+    m.dispose();
+  });
+});
