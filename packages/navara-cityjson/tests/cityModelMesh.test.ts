@@ -758,7 +758,9 @@ describe("CityModelMesh setLod skips no-op rebuilds", () => {
     let disposed = false;
     geometry.addEventListener("dispose", () => (disposed = true));
     m.setLod(["2", "1"]);
+    expect(m.getLod()).toEqual(["2", "1"]);
     m.setLod(["1", "2", "2"]);
+    expect(m.getLod()).toEqual(["1", "2", "2"]);
     expect(m.object3d.geometry).toBe(geometry);
     expect(disposed).toBe(false);
     expect(m.triangleCount()).toBe(4);

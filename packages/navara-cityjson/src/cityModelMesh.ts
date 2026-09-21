@@ -438,6 +438,11 @@ export class CityModelMesh {
     if (!unchanged) this.rebuildGeometry();
   }
 
+  /** The selection last requested — also after a skipped rebuild. */
+  getLod(): string | readonly string[] | null {
+    return this.lod;
+  }
+
   /**
    * Which first-level object types are left out of the geometry — hiding
    * "Building" hides its BuildingParts too (`toplevelCityObjectType`).
