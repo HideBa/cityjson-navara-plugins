@@ -321,6 +321,28 @@ describe("streamWorkerCore", () => {
     expect(posted.at(-1)).toEqual({ type: "done", id: 1 });
   });
 
+  it("buckets by the adapter's ownership: 'feature' keeps a family in one cell", async () => {
+    // One model, two objects: 'p' centred in 2/0/0 and 'q' centred in 2/1/0;
+    // the model's bbox (x 95..485) is centred in 2/0/0.
+    const p = feature("p", 100, 100);
+    const q = feature("q", 480, 100);
+    const fam: CityModel = {
+      ...p,
+      bbox: [95, 95, 0, 485, 105, 10],
+      objects: { ...p.objects, ...q.objects },
+    };
+    const adapter = Object.assign(fakeAdapter([fam]), {
+      ownership: "feature" as const,
+    });
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, url: "fake://x" });
+    await send(fetchMsg(1, ["2/0/0", "2/1/0"]));
+
+    const cells = posted.filter(ofType("cell"));
+    expect(cells.map((c) => c.key)).toEqual(["2/0/0"]);
+    expect(cells[0]!.objects.map((o) => o.id).sort()).toEqual(["p", "q"]);
+  });
+
   it("close closes the adapter and clears the cache", async () => {
     const adapter = fakeAdapter([feature("a", 100, 100)]);
     const { posted, send } = harness(adapter);

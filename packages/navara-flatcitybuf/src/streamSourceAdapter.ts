@@ -10,6 +10,7 @@ import type {
   CityAppearance,
   CityModel,
 } from "@cityjson/navara-core";
+import type { CellOwnership } from "./bucketFeatures";
 import type { WorkerRequest } from "./workerProtocol";
 
 /** What the app reads from an opened stream: its extent, CRS and counts. */
@@ -48,6 +49,9 @@ export interface OpenedSource {
 export type OpenRequest = Extract<WorkerRequest, { type: "open" }>;
 
 export interface StreamSourceAdapter {
+  /** How the core files a decoded model's objects into cells (see
+   *  `bucketFeatures`). Omitted means `"object"`. */
+  readonly ownership?: CellOwnership;
   open(req: OpenRequest): Promise<OpenedSource>;
   probe(
     bbox: readonly [number, number, number, number],

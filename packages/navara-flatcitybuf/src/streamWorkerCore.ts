@@ -287,7 +287,13 @@ export function installStreamWorker(
           // all read them and must still see a hidden object.
           const hiddenTypes =
             msg.hiddenTypes.length > 0 ? new Set(msg.hiddenTypes) : null;
-          const buckets = bucketFeatures(models, theGrid, msg.level, new Set());
+          const buckets = bucketFeatures(
+            models,
+            theGrid,
+            msg.level,
+            new Set(),
+            adapter.ownership ?? "object",
+          );
           // Built once per fetch, AFTER the traversal so this fetch's own
           // features are in it: the tables a material theme reads its diffuse
           // colours from, and the theme list the main thread learns from.
