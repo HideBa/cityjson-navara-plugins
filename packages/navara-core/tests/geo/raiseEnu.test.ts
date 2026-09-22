@@ -8,7 +8,9 @@ import { raisePositionsInEnu } from "../../src/geo/raiseEnu";
 // EPSG:32654 (UTM 54N), where the PLATEAU Tokyo cities land; Tokyo's geoid
 // undulation is about +37 m.
 const EPSG = 32654;
-const ORIGIN: readonly [number, number, number] = [370000, 3950000, 40];
+// 100 m up: the vertex's height above the ellipsoid is what separates the
+// geodetic normal from the ellipsoid gradient at the raised point.
+const ORIGIN: readonly [number, number, number] = [370000, 3950000, 100];
 const N = 37;
 
 /** Source deltas from ORIGIN: the origin itself, a roof corner, and points
@@ -16,6 +18,10 @@ const N = 37;
  *  would be off by centimetres. */
 const DELTAS = [
   [0, 0, 0],
+  // Codex review: a vertex ~1 m from the origin, where one Float32 step is
+  // ~1e-7 m, exposed a µm-level normal error.
+  [0.2, 1.1, 0],
+  [-0.9, 0.35, 3],
   [12.5, -7.25, 18],
   [15000, 0, 5],
   [-15000, 0, 5],
@@ -43,7 +49,11 @@ function projected(heightOffset: number): Float32Array {
  *  as Float32 and stores Float32 again: two roundings, where a fresh
  *  projection has one. */
 function f32Step(x: number): number {
-  return x === 0 ? 1e-6 : 2 ** (Math.floor(Math.log2(Math.abs(x))) - 23);
+  // Floored at 1e-8 m: a fresh projection is itself only exact to the double
+  // rounding of ECEF values (~6.4e6 m × 2⁻⁵² ≈ 1e-9 m), so a coordinate that
+  // is "zero" at the origin comes out as ±1e-10.
+  const step = x === 0 ? 0 : 2 ** (Math.floor(Math.log2(Math.abs(x))) - 23);
+  return Math.max(step, 1e-8);
 }
 
 function frameAt(heightOffset: number) {
@@ -70,7 +80,8 @@ describe("raisePositionsInEnu", () => {
     // frame) is centimetres off 15 km out.
     const before = projected(0);
     const oracle = projected(N);
-    expect(Math.abs(before[6]! - oracle[6]!)).toBeGreaterThan(0.05);
+    const east = 3 * DELTAS.findIndex(([x, y]) => x === 15000 && y === 0);
+    expect(Math.abs(before[east]! - oracle[east]!)).toBeGreaterThan(0.05);
   });
 
   it("round-trips back down", () => {

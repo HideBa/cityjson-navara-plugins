@@ -13,10 +13,10 @@
  * out, so moving only the frame is ~N·d/R off (6 cm at 10 km for Tokyo's
  * N ≈ 37 m) — but no proj4 call and no re-triangulation.
  *
- * `n` is the ellipsoid gradient at the vertex's ECEF position rather than the
- * geodetic normal at its foot point; they differ by ~e²·h/a radians (µm-level
- * displacement for building heights). Positions are read and re-stored as
- * Float32, so each call can add up to one Float32 rounding (≈0.5 mm at 10 km).
+ * `n` is the geodetic normal: the ellipsoid gradient at the vertex's foot
+ * point, found without trigonometry (see the loop). Positions are read and
+ * re-stored as Float32, so a raise lands within two Float32 roundings of a
+ * fresh projection (≈1 mm at 10 km, ≈1e-7 m at 1 m).
  */
 
 import type { EnuFrame } from "./enuFrame";
@@ -51,11 +51,23 @@ export function raisePositionsInEnu(
     const X = tx + ex * e + nx * n + ux * u;
     const Y = ty + ey * e + ny * n + uy * u;
     const Z = tz + ez * e + nz * n + uz * u;
-    const gx = X * INV_A2;
-    const gy = Y * INV_A2;
-    const gz = Z * INV_B2;
+    // The geodetic normal is the ellipsoid gradient at the FOOT point, not at
+    // the vertex (at 100 m up they differ by ~e²·h/a rad — µm after scaling
+    // by dh, which is many Float32 steps near the origin; Codex review). So:
+    // gradient at the vertex -> height from the ellipsoid equation
+    // (f ≈ 2·h·|g|) -> step down to the foot -> gradient there. The residual
+    // angle is second order (~h·1e-7/a), far below Float32 anywhere.
     // sqrt, not Math.hypot: hypot's overflow guard is ~5x slower in V8, and
     // these magnitudes (~1e-7) cannot overflow.
+    const px = X * INV_A2;
+    const py = Y * INV_A2;
+    const pz = Z * INV_B2;
+    const pLen = Math.sqrt(px * px + py * py + pz * pz);
+    const h = (X * px + Y * py + Z * pz - 1) / (2 * pLen);
+    const k = h / pLen;
+    const gx = (X - k * px) * INV_A2;
+    const gy = (Y - k * py) * INV_A2;
+    const gz = (Z - k * pz) * INV_B2;
     const s = deltaHeight / Math.sqrt(gx * gx + gy * gy + gz * gz);
     // dh·(Rᵀn − ẑ): the up component subtracts the origin's own rise.
     positions[i] = e + s * (ex * gx + ey * gy + ez * gz);
