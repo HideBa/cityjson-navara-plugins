@@ -215,6 +215,14 @@ export function installStreamWorker(
    *  source when the next arrives would otherwise land its result (and the
    *  adapter's state) over the newer one. */
   let openQueue: Promise<void> = Promise.resolve();
+  /** Bumped by every `close`. An open captures it on arrival and re-checks it
+   *  at both of its suspension points, so a `close` that lands while an open
+   *  is queued or still reading its source invalidates it: the late open
+   *  installs no grid, no placement and no `opened` source, and posts no
+   *  `opened` response for a layer the main thread has already dropped.
+   *  `controller` cannot do this job — it is the PROBE/FETCH controller, and
+   *  an adapter's `open` never sees it (Codex milestone review, Minor). */
+  let closeGeneration = 0;
   /** Whether the adapter holds state from an `open` not yet closed. */
   let adapterOpen = false;
   /** The worker's own cell cache. Counts against the same memory budget as
@@ -227,8 +235,14 @@ export function installStreamWorker(
     ctx.postMessage(msg, transfer);
   }
 
-  /** One `open`, run through `openQueue` so opens never overlap. */
-  async function handleOpen(msg: OpenRequest): Promise<void> {
+  /** One `open`, run through `openQueue` so opens never overlap. `generation`
+   *  is `closeGeneration` as this request ARRIVED: a `close` since then makes
+   *  the whole open a no-op. */
+  async function handleOpen(
+    msg: OpenRequest,
+    generation: number,
+  ): Promise<void> {
+    if (generation !== closeGeneration) return; // closed while queued
     let result: OpenedSource;
     const same = opened !== undefined && sameOpen(opened, msg);
     if (opened && same) {
@@ -250,7 +264,16 @@ export function installStreamWorker(
       }
       adapterOpen = true;
       result = await adapter.open(msg);
+      if (generation !== closeGeneration) {
+        // Closed while this open was reading. Whatever the adapter installed
+        // for it must go with it, or the next open sees a source nobody
+        // asked for.
+        adapterOpen = false;
+        adapter.close();
+        return;
+      }
     }
+    if (generation !== closeGeneration) return;
     const { header, admission } = result;
     // An admitted source guarantees header.extent is set and header.epsg is a
     // metre-based code (the adapter's admission refuses anything else), but
@@ -293,7 +316,8 @@ export function installStreamWorker(
     let own: AbortController | null = null;
     try {
       if (msg.type === "open") {
-        const run = openQueue.then(() => handleOpen(msg));
+        const generation = closeGeneration;
+        const run = openQueue.then(() => handleOpen(msg, generation));
         openQueue = run.catch(() => undefined);
         await run;
         return;
@@ -602,6 +626,7 @@ export function installStreamWorker(
       }
       if (msg.type === "close") {
         controller?.abort();
+        closeGeneration++;
         adapterOpen = false;
         opened = undefined;
         adapter.close();

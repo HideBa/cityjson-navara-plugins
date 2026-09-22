@@ -615,6 +615,48 @@ describe("streamWorkerCore — reopening", () => {
     expect(adapter.opens).toHaveLength(opensBefore);
   });
 
+  it("an open still reading when 'close' arrives installs nothing and posts nothing", async () => {
+    // Codex milestone review (Minor): `close` aborted the in-flight REQUEST
+    // controller, which a slow `open` never consults, so the open landed
+    // afterwards — reinstalling grid, placement and the opened source of a
+    // stream the main thread had already given up on, and posting an
+    // `opened` for a layer that no longer exists.
+    const adapter = fakeAdapter([feature("a", 100, 100)]);
+    let releaseX!: () => void;
+    adapter.openGates["fake://x"] = new Promise((r) => (releaseX = r));
+    const { posted, send } = harness(adapter);
+
+    const opening = send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await new Promise((r) => setTimeout(r, 0));
+    await send({ type: "close", id: 1 });
+    releaseX();
+    await opening;
+
+    expect(posted.filter(ofType("opened"))).toHaveLength(0);
+    // The adapter it did open is closed, not left holding a source.
+    expect(adapter.closed).toBeGreaterThanOrEqual(1);
+    await send(fetchMsg(2, ["2/0/0"]));
+    expect(posted.find(errorOf(2))?.message).toBe("no file open");
+  });
+
+  it("an open still QUEUED when 'close' arrives never reaches the adapter", async () => {
+    const adapter = fakeAdapter([feature("a", 100, 100)]);
+    let releaseX!: () => void;
+    adapter.openGates["fake://x"] = new Promise((r) => (releaseX = r));
+    const { posted, send } = harness(adapter);
+
+    const first = send({ type: "open", id: 0, source: { url: "fake://x" } });
+    const second = send({ type: "open", id: 1, source: { url: "fake://y" } });
+    await new Promise((r) => setTimeout(r, 0));
+    await send({ type: "close", id: 2 });
+    releaseX();
+    await Promise.all([first, second]);
+
+    expect(posted.filter(ofType("opened"))).toHaveLength(0);
+    // Only the first open ever ran; the queued one was dropped at the gate.
+    expect(adapter.opens.map((o) => o.id)).toEqual([0]);
+  });
+
   it("a refused open is not cached: reopening the same source asks the adapter again", async () => {
     const adapter = fakeAdapter([]);
     adapter.admission = { code: "no-index", message: "refused" };
