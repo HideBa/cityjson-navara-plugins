@@ -75,6 +75,16 @@ describe("asyncBufferFromBlob", () => {
     expect(buf.bytesRead()).toBe(10);
   });
 
+  it("carries a File's name, and none for a bare Blob", () => {
+    const bytes = new Uint8Array(8);
+    // The stream reader labels each of its tables with this name, which is all
+    // it can know about a source it was handed as a buffer.
+    expect(asyncBufferFromBlob(new File([bytes], "bridge.parquet")).name).toBe(
+      "bridge.parquet",
+    );
+    expect(asyncBufferFromBlob(new Blob([bytes])).name).toBeUndefined();
+  });
+
   it("reads a partial row-group range through the offset index with fewer bytes", async () => {
     const blob = await blobOf("multigroup-cityparquet");
     const paged = await readRange(blob, true);
@@ -161,6 +171,15 @@ describe("asyncBufferFromHttp", () => {
     });
     expect(Array.from(out)).toEqual(Array.from(bytes.slice(100, 200)));
     expect(buf.bytesRead()).toBe(100);
+  });
+
+  it("names itself after the URL's last path segment, without query or hash", async () => {
+    const server = fakeFetch(bytes);
+    const buf = await asyncBufferFromHttp(
+      "https://example.test/plateau/yokohama-shi/water_body.parquet?v=2#top",
+      { fetch: server.fetch },
+    );
+    expect(buf.name).toBe("water_body.parquet");
   });
 
   it("falls back to a bytes=0-0 GET's Content-Range when HEAD gives no length", async () => {

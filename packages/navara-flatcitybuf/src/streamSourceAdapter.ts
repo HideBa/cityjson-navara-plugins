@@ -25,6 +25,20 @@ export interface StreamHeader {
   /** The source's known LoDs, when the format knows them up front. The core
    *  folds them into every posted cell's `lodsSeen`. */
   readonly lods?: ReadonlyArray<string>;
+  /** Per file of the source, its name and its own row count — a breakdown of
+   *  `objectsCount`. CityParquet sets it (one object family per file, so the
+   *  app can report a family's size before a row is read); a single-file format
+   *  leaves it undefined. */
+  readonly tables?: ReadonlyArray<{
+    readonly name: string;
+    readonly rowCount: number;
+  }>;
+  /** Whether the source carries geometry that names no LoD. CityParquet's
+   *  reader computes it and the worker's own bake selection reads it from the
+   *  stream; it is declared here because the posted header is the stream
+   *  header's projection, and a field the worker posts must not be one this
+   *  type denies exists. */
+  readonly unlabelledGeometry?: boolean;
   /** Rows of the source that carry no usable bounding box and therefore can
    *  never be placed in a cell — counted by the format that indexes rows
    *  (CityParquet's family index), `undefined` where the format has no such

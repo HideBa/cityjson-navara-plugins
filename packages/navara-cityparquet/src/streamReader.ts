@@ -80,10 +80,30 @@ export interface ReadBatch {
   readonly rows: ReadonlyMap<string, StreamRow>;
 }
 
+/** One opened table of a stream, as the header reports it. */
+export interface CityParquetStreamTable {
+  /**
+   * The table's identifying name: its buffer's (`RangeBuffer.name` — a URL's
+   * last path segment, a File's name), or `table-<i>` with its ZERO-BASED
+   * index for a source that carries none, so the name matches the `table`
+   * field of `FamilyRange` and `StreamRow`. A label, not an identity: the
+   * caller that supplied the buffers is the one that knows which family each
+   * one is (`CityParquetManifest.families`).
+   */
+  name: string;
+  /** The table's own `num_rows`, valid bbox or not. */
+  rowCount: number;
+}
+
 export interface CityParquetStreamHeader {
   version: string;
-  /** Rows across every table, valid bbox or not. */
+  /** Rows across every table, valid bbox or not — the sum of
+   *  {@link tables}' row counts. */
   objectsCount: number;
+  /** Each table of the stream, in the order its buffer was passed. A per-table
+   *  breakdown of {@link objectsCount}: one object family per table, so the
+   *  sum alone cannot say how many of the rows are buildings. */
+  tables: ReadonlyArray<CityParquetStreamTable>;
   /** In the stream's projected CRS. */
   extent: BBox3;
   /** The stream's (projected, metric) EPSG code. */
@@ -462,6 +482,10 @@ export async function openCityParquetStream(
   const header: CityParquetStreamHeader = {
     version: schemas[0]!.footer.version,
     objectsCount: tables.reduce((n, t) => n + t.rowCount, 0),
+    tables: tables.map((t, i) => ({
+      name: t.buffer.name ?? `table-${String(i)}`,
+      rowCount: t.rowCount,
+    })),
     extent: index.extent,
     epsg: target.epsg,
     referenceSystem: `https://www.opengis.net/def/crs/EPSG/0/${String(target.epsg)}`,

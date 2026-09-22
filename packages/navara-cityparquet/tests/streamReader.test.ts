@@ -134,6 +134,37 @@ describe("openCityParquetStream", () => {
     expect(dataBytes).toBeLessThan(footerStart * 0.05);
   });
 
+  it("reports each table's own name and row count, summing to objectsCount", async () => {
+    // Per-table counts are what lets the app report a FAMILY's size: the sum
+    // alone cannot say how many of the rows are buildings.
+    const stream = await openCityParquetStream([
+      asyncBufferFromBlob(
+        new File([await bytesOf("multigroup-cityparquet")], "building.parquet"),
+      ),
+      asyncBufferFromBlob(
+        new File(
+          [await bytesOf("two-buildings-cityparquet")],
+          "bridge.parquet",
+        ),
+      ),
+    ]);
+    expect(stream.header.tables).toEqual([
+      { name: "building.parquet", rowCount: 60 },
+      { name: "bridge.parquet", rowCount: 3 },
+    ]);
+    expect(stream.header.tables.reduce((n, t) => n + t.rowCount, 0)).toBe(
+      stream.header.objectsCount,
+    );
+  });
+
+  it("names a table by its index when its source carries no name", async () => {
+    const stream = await openCityParquetStream([
+      await bufferOf("multigroup-cityparquet"),
+    ]);
+    // 0-based, like `FamilyRange.table` and `StreamRow.table`.
+    expect(stream.header.tables).toEqual([{ name: "table-0", rowCount: 60 }]);
+  });
+
   it("refuses tables that declare different EPSG codes", async () => {
     const open = openCityParquetStream([
       await bufferOf("multigroup-cityparquet"),

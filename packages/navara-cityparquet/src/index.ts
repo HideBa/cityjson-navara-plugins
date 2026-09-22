@@ -64,6 +64,7 @@ export type {
   AdmissionRefusedCode,
   CityParquetStream,
   CityParquetStreamHeader,
+  CityParquetStreamTable,
   ReadBatch,
   StreamRow,
 } from "./streamReader";

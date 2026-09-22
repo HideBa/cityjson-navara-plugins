@@ -19,6 +19,15 @@ import type { AsyncBuffer } from "./vendor/hyparquet/index.js";
 
 export interface RangeBuffer extends AsyncBuffer {
   readonly bytesRead: () => number;
+  /**
+   * What to call this source in a report: a URL's last path segment, a File's
+   * name — `undefined` when the source carries none (a bare `Blob`, a test
+   * double). The stream reader labels each of its tables with it
+   * (`CityParquetStreamHeader.tables`), which is all a reader handed nothing
+   * but buffers can know about where its rows came from. Never an identity:
+   * two packages can ship the same file name.
+   */
+  readonly name?: string;
   /** The signal every subsequent `slice` is fetched under — set per request
    *  by the worker (`fetch`/`probe`), so an abort cancels in-flight range
    *  reads and a later request is not poisoned by an earlier abort. */
@@ -101,6 +110,28 @@ function clampRange(
 }
 
 /**
+ * A `File`'s name, or `undefined` for a blob that has none.
+ *
+ * Duck-typed rather than `instanceof File`: a `File` from another realm (a
+ * worker's, a test's polyfill) fails the class test while carrying a perfectly
+ * good name, and the name is only ever a label.
+ */
+function blobName(blob: Blob): string | undefined {
+  const name: unknown = (blob as Partial<File>).name;
+  return typeof name === "string" && name !== "" ? name : undefined;
+}
+
+/**
+ * The last path segment of a URL, minus any query or fragment — `undefined`
+ * when there is none to take (a URL ending in `/`).
+ */
+function urlName(url: string): string | undefined {
+  const path = url.split(/[?#]/, 1)[0] ?? url;
+  const segment = path.split("/").pop();
+  return segment === undefined || segment === "" ? undefined : segment;
+}
+
+/**
  * A `Blob` (or `File`) as a range-read buffer. `Blob#slice` is lazy, so each
  * read touches only its own bytes; the signal is checked before a read starts
  * and after it settles (a local read cannot be interrupted mid-flight).
@@ -110,6 +141,7 @@ export function asyncBufferFromBlob(blob: Blob): RangeBuffer {
   let signal: AbortSignal | undefined;
   return {
     byteLength: blob.size,
+    name: blobName(blob),
     bytesRead: () => bytesRead,
     setSignal(next) {
       signal = next;
@@ -239,6 +271,7 @@ export async function asyncBufferFromHttp(
 
   return {
     byteLength,
+    name: urlName(url),
     bytesRead: () => bytesRead,
     setSignal(next) {
       signal = next;

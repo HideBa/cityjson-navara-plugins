@@ -89,7 +89,23 @@ describe("createCityParquetSourceAdapter — open", () => {
       epsg: 7415,
       lods: ["0", "2.2"],
       invalidBBoxRows: 0,
+      unlabelledGeometry: false,
+      tables: [{ name: "table-0", rowCount: 60 }],
     });
+  });
+
+  it("posts every field of the stream's own header, so a new one cannot be dropped", async () => {
+    // The adapter used to rebuild the header field by field, which silently
+    // dropped anything the reader added (Codex review). The posted header is a
+    // projection of the stream's, so each new reader field arrives by itself.
+    const blob = await blobOf(MULTIGROUP);
+    const direct = await openCityParquetStream([asyncBufferFromBlob(blob)]);
+    const adapter = createCityParquetSourceAdapter();
+    const opened = await adapter.open(openReq({ blob }));
+    expect(opened.header.tables).toEqual(direct.header.tables);
+    expect(Object.keys(opened.header)).toEqual(
+      expect.arrayContaining(Object.keys(direct.header)),
+    );
   });
 
   it("carries the index's unplaceable-row count onto the posted header", async () => {

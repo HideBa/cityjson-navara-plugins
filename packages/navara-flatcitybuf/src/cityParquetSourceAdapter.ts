@@ -243,18 +243,17 @@ export function createCityParquetSourceAdapter(
       controller.signal.throwIfAborted();
       stream = opened;
       buffers = opening;
-      const h = opened.header;
       return {
+        // A PROJECTION of the stream's own header, not a copy field by field:
+        // every field the reader adds (`tables`, and whatever comes next)
+        // reaches the app by itself. Rebuilding it here silently dropped
+        // `invalidBBoxRows` once already (Codex milestone review), and the
+        // header crosses a `postMessage`, where a dropped field is invisible.
         header: {
-          version: h.version,
-          // Kept populated for readers of the FlatCityBuf field.
-          featuresCount: h.objectsCount,
-          objectsCount: h.objectsCount,
-          extent: h.extent,
-          referenceSystem: h.referenceSystem,
-          epsg: h.epsg,
-          lods: h.lods,
-          invalidBBoxRows: h.invalidBBoxRows,
+          ...opened.header,
+          // The one field the two headers disagree on: FlatCityBuf's
+          // `featuresCount`, kept populated for its readers.
+          featuresCount: opened.header.objectsCount,
         },
         admission: null,
       };
