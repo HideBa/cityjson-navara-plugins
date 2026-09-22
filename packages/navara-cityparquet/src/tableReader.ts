@@ -130,7 +130,8 @@ function asyncBufferOf(bytes: Uint8Array): AsyncBuffer {
     // ever wraps the result in a `DataView`/`Uint8Array`, which both accept a
     // shared buffer, so the cast is a typing formality rather than a claim
     // that the buffer is unshared.
-    slice: (start: number, end?: number) => buf.slice(start, end) as ArrayBuffer,
+    slice: (start: number, end?: number) =>
+      buf.slice(start, end) as ArrayBuffer,
   };
 }
 
@@ -168,11 +169,23 @@ async function wrapHyparquet<T>(
   try {
     return await fn();
   } catch (cause) {
+    // An abort and a range-less server are the transport's answers, not a
+    // corrupt file: they pass through for the caller to recognise by name.
+    if (isTransportError(cause)) throw cause;
     throw new CityParquetError(
       `This file could not be read as Parquet while ${what}. It may be truncated or corrupt, or use a Parquet feature this reader does not support.`,
       { cause },
     );
   }
+}
+
+/** An error raised by the `AsyncBuffer` (an abort, `RangeNotSupportedError`)
+ *  rather than by hyparquet's decoding. */
+function isTransportError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "RangeNotSupportedError")
+  );
 }
 
 /** The top-level column names of a file's schema, in file order. */
@@ -236,7 +249,7 @@ function requireWkb(footer: CityFooter): void {
  * optional in practice (the mirrors are independently generated), and hyparquet
  * gives no guarantee about how it treats a column it cannot find.
  */
-function buildProjection(
+export function buildProjection(
   schemaColumns: ReadonlyArray<string>,
   footer: CityFooter,
   geometryColumns: ReadonlyArray<GeometryColumnRef>,
@@ -265,6 +278,70 @@ function buildProjection(
   return projection;
 }
 
+/** A CityParquet file's footer and schema, read before any row is. */
+export interface CityParquetSchema {
+  metadata: FileMetaData;
+  footer: CityFooter;
+  /** Top-level column names, in file order. */
+  schemaColumns: ReadonlyArray<string>;
+  geometryColumns: ReadonlyArray<GeometryColumnRef>;
+}
+
+/**
+ * Reads a file's Parquet footer and resolves its `city` metadata and geometry
+ * columns. `file` must address the whole file from byte 0 (hyparquet slices
+ * absolute offsets); only the footer is read.
+ */
+export async function readCityParquetSchema(
+  file: AsyncBuffer,
+): Promise<CityParquetSchema> {
+  const metadata = await wrapHyparquet("reading its footer", () =>
+    parquetMetadataAsync(file),
+  );
+  const footer = parseCityFooter(metadata.key_value_metadata ?? []);
+  requireWkb(footer);
+
+  const schemaColumns = await wrapHyparquet("reading its schema", () =>
+    topLevelColumnNames(metadata),
+  );
+  const geometryColumns = discoverGeometryColumns(schemaColumns, footer);
+  return { metadata, footer, schemaColumns, geometryColumns };
+}
+
+/**
+ * Reads `columns` for the rows `[rowStart, rowEnd)` (every row when no range
+ * is given), with the decode conventions the rest of this package relies on:
+ * `utf8: false` (STRING columns are still strings, WKB blobs stay bytes) and
+ * {@link RAW_WKB_PARSERS} (a GeoParquet-declared column stays bytes too). A
+ * ranged read uses each chunk's offset index to skip the pages outside the
+ * range. An abort or a `RangeNotSupportedError` from `file` passes through;
+ * anything else becomes a `CityParquetError`.
+ */
+export async function readCityParquetRows(
+  file: AsyncBuffer,
+  metadata: FileMetaData,
+  columns: string[],
+  range?: { rowStart: number; rowEnd: number },
+): Promise<Record<string, unknown>[]> {
+  return wrapHyparquet("reading its rows", () =>
+    parquetReadObjects({
+      file,
+      metadata,
+      columns,
+      ...(range
+        ? {
+            rowStart: range.rowStart,
+            rowEnd: range.rowEnd,
+            useOffsetIndex: true,
+          }
+        : {}),
+      utf8: false,
+      parsers: RAW_WKB_PARSERS,
+      compressors,
+    }),
+  );
+}
+
 /**
  * Reads a whole CityParquet file: its `city` footer, its geometry columns and
  * every row of the columns a viewer needs.
@@ -279,29 +356,9 @@ export async function readCityParquetTable(
   bytes: Uint8Array,
 ): Promise<CityParquetTableData> {
   const file = asyncBufferOf(bytes);
-
-  const metadata = await wrapHyparquet("reading its footer", () =>
-    parquetMetadataAsync(file),
-  );
-  const footer = parseCityFooter(metadata.key_value_metadata ?? []);
-  requireWkb(footer);
-
-  const schemaColumns = await wrapHyparquet("reading its schema", () =>
-    topLevelColumnNames(metadata),
-  );
-  const geometryColumns = discoverGeometryColumns(schemaColumns, footer);
+  const { metadata, footer, schemaColumns, geometryColumns } =
+    await readCityParquetSchema(file);
   const columns = buildProjection(schemaColumns, footer, geometryColumns);
-
-  const rows = await wrapHyparquet("reading its rows", () =>
-    parquetReadObjects({
-      file,
-      metadata,
-      columns,
-      utf8: false,
-      parsers: RAW_WKB_PARSERS,
-      compressors,
-    }),
-  );
-
+  const rows = await readCityParquetRows(file, metadata, columns);
   return { footer, rows, geometryColumns };
 }

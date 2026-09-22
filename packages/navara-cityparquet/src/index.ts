@@ -15,8 +15,16 @@
 export { CityParquetError } from "./footer";
 export type { CityFooter, CityGeometryColumnMeta } from "./footer";
 
-export type { CityParquetTableData, GeometryColumnRef } from "./tableReader";
-export { readCityParquetTable } from "./tableReader";
+export type {
+  CityParquetSchema,
+  CityParquetTableData,
+  GeometryColumnRef,
+} from "./tableReader";
+export {
+  readCityParquetRows,
+  readCityParquetSchema,
+  readCityParquetTable,
+} from "./tableReader";
 
 export { decodeTableObjects } from "./decodeTable";
 
@@ -41,3 +49,21 @@ export {
   asyncBufferFromBlob,
   asyncBufferFromHttp,
 } from "./rangeSource";
+
+export type { FamilyColumns, FamilyIndex, FamilyRange } from "./familyIndex";
+export { MERGE_GAP_ROWS, buildFamilyIndex } from "./familyIndex";
+
+export type { CoordinateTarget } from "./geographicToProjected";
+export {
+  coordinateTargetFor,
+  projectCityObjects,
+} from "./geographicToProjected";
+
+export type {
+  AdmissionRefusedCode,
+  CityParquetStream,
+  CityParquetStreamHeader,
+  ReadBatch,
+  StreamRow,
+} from "./streamReader";
+export { AdmissionRefusedError, openCityParquetStream } from "./streamReader";

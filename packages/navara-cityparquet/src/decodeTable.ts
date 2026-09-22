@@ -223,7 +223,7 @@ function finiteNumber(value: unknown): number | null {
  * than a box with `undefined` corners, which would poison every bbox merge
  * downstream.
  */
-function readBBox(value: unknown): BBox3 | null {
+export function readBBox(value: unknown): BBox3 | null {
   if (!isPlainObject(value)) return null;
   const xmin = finiteNumber(value.xmin);
   const ymin = finiteNumber(value.ymin);
