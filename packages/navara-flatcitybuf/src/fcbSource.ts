@@ -10,31 +10,16 @@
  * is: a wrong render is worse than a clear refusal.
  */
 import { FcbReader, type HeaderView } from "@cityjson/flatcitybuf";
-import { isMetricCrs, type BBox3 } from "@cityjson/navara-core";
+import { isMetricCrs } from "@cityjson/navara-core";
+import type { AdmissionError, StreamHeader } from "./streamSourceAdapter";
 
-export interface FcbHeaderModel {
-  readonly version: string;
-  readonly featuresCount: number | undefined;
-  /** `undefined` exactly when the header carries no geographical extent —
-   *  callers must check `checkAdmission` first; this model does not repeat
-   *  that gate, so it never lies about having an extent it doesn't. */
-  readonly extent: BBox3 | undefined;
-  readonly referenceSystem: string | undefined;
-  readonly epsg: number | null;
-}
+export type {
+  AdmissionCode,
+  AdmissionError,
+} from "./streamSourceAdapter";
 
-export type AdmissionCode =
-  | "no-extent"
-  | "degenerate-extent"
-  | "no-index"
-  | "unknown-count"
-  | "non-metric-crs"
-  | "non-finite";
-
-export interface AdmissionError {
-  readonly code: AdmissionCode;
-  readonly message: string;
-}
+/** The FlatCityBuf header as the app reads it: the generic stream header. */
+export type FcbHeaderModel = StreamHeader;
 
 /**
  * The EPSG code, read from the header's STRUCTURED reference-system fields
