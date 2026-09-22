@@ -24,7 +24,10 @@ import {
 } from "@cityjson/navara-core";
 import { bucketFeatures } from "./bucketFeatures";
 import { toObjectRecords } from "./objectRecords";
-import type { StreamSourceAdapter } from "./streamSourceAdapter";
+import type {
+  OpenedSource,
+  StreamSourceAdapter,
+} from "./streamSourceAdapter";
 import {
   makeGrid,
   cellCentre,
@@ -35,6 +38,7 @@ import {
 import type {
   CellGeometry,
   CellTexture,
+  StreamSource,
   WorkerRequest,
   WorkerResponse,
 } from "./workerProtocol";
@@ -139,6 +143,27 @@ function distinctLods(model: CityModel): string[] {
   return [...set];
 }
 
+/** Whether two opens name the same source: urls by value (a list element by
+ *  element, in order), Blobs by identity. */
+function sameSource(a: StreamSource, b: StreamSource): boolean {
+  if ("url" in a) return "url" in b && a.url === b.url;
+  if ("blob" in a) return "blob" in b && a.blob === b.blob;
+  const listA: ReadonlyArray<unknown> = "urls" in a ? a.urls : a.blobs;
+  const listB: ReadonlyArray<unknown> | null =
+    "urls" in a
+      ? "urls" in b
+        ? b.urls
+        : null
+      : "blobs" in b
+        ? b.blobs
+        : null;
+  return (
+    listB !== null &&
+    listA.length === listB.length &&
+    listA.every((item, i) => item === listB[i])
+  );
+}
+
 /**
  * Installs the streaming worker protocol on `ctx`, reading features through
  * `adapter`. All state lives in this call's closure: one install is one
@@ -156,6 +181,14 @@ export function installStreamWorker(
    *  after that bakes it. Defaults to core's palette. */
   let surfaceColors = SURFACE_COLORS_LINEAR;
   let controller: AbortController | null = null;
+  /** The admitted source and what its `open` answered, kept so a second
+   *  `open` of the SAME source (the registry opens twice: once to learn the
+   *  extent, once with the resolved geoid offset) re-establishes placement
+   *  and palette without re-reading the source. Unset after a refused or
+   *  failed open, so a retry asks the adapter again. */
+  let opened: { source: StreamSource; result: OpenedSource } | undefined;
+  /** Whether the adapter holds state from an `open` not yet closed. */
+  let adapterOpen = false;
   /** The worker's own cell cache. Counts against the same memory budget as
    *  the main thread's cache; the main thread's `evict` message is what
    *  releases entries here (see the `evict`/`close` handlers below). Without
@@ -174,13 +207,33 @@ export function installStreamWorker(
     let own: AbortController | null = null;
     try {
       if (msg.type === "open") {
-        const { header, admission } = await adapter.open(msg);
+        let result: OpenedSource;
+        if (opened && sameSource(opened.source, msg.source)) {
+          result = opened.result;
+        } else {
+          // Another source: drop everything of the previous one FIRST, so an
+          // open that is refused or throws can never leave a stale grid
+          // serving fetches, or stale cells answering `surfaces`.
+          controller?.abort();
+          grid = undefined;
+          placement = undefined;
+          cells.clear();
+          opened = undefined;
+          if (adapterOpen) {
+            adapterOpen = false;
+            adapter.close();
+          }
+          adapterOpen = true;
+          result = await adapter.open(msg);
+        }
+        const { header, admission } = result;
         // An admitted source guarantees header.extent is set and header.epsg
         // is a metre-based code (the adapter's admission refuses anything
         // else), but the two are independent as far as the type checker
         // knows.
         if (!admission && header.extent && header.epsg !== null) {
-          grid = makeGrid(header.extent);
+          opened = { source: msg.source, result };
+          grid ??= makeGrid(header.extent);
           const epsg = header.epsg;
           // Registers RD New and friends; built-in codes are a no-op. Without
           // it proj4 cannot construct the converter below at all.
@@ -328,13 +381,13 @@ export function installStreamWorker(
             const cellModel: CityModel = builtAppearance
               ? { ...cellModelBare, appearance: builtAppearance }
               : cellModelBare;
-            const lodsSeen = distinctLods(cellModel);
+            const cellLods = distinctLods(cellModel);
             const origin = cellCentre(theGrid, key, 0);
             const a = buildCityMeshArrays(
               cellModel,
               key,
               origin,
-              adapter.bakeLod(msg.lod, lodsSeen),
+              adapter.bakeLod(msg.lod, cellLods),
               hiddenTypes,
               msg.appearance ?? null,
               surfaceColors,
@@ -417,7 +470,7 @@ export function installStreamWorker(
                 // always `[]`, which left the ladder permanently empty and
                 // auto mode permanently selecting "all LoDs" (B1, 2026-07-28
                 // final review).
-                lodsSeen,
+                lodsSeen: cellLods,
                 appearanceThemes,
               },
               [
@@ -504,6 +557,8 @@ export function installStreamWorker(
       }
       if (msg.type === "close") {
         controller?.abort();
+        adapterOpen = false;
+        opened = undefined;
         adapter.close();
         grid = undefined;
         placement = undefined;

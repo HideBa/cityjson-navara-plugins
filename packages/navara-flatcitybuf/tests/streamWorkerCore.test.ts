@@ -85,6 +85,8 @@ interface FakeAdapter extends StreamSourceAdapter {
   readonly opens: OpenRequest[];
   /** What the next `open` answers. */
   admission: AdmissionError | null;
+  /** When set, the next `open` rejects with it. */
+  openError: Error | null;
   /** When set, the header's up-front LoDs. */
   lods: string[] | undefined;
   /** When set, `select` throws (rather than returning) once its signal is
@@ -99,10 +101,12 @@ function fakeAdapter(features: CityModel[]): FakeAdapter {
     closed: 0,
     opens: [],
     admission: null,
+    openError: null,
     lods: undefined,
     throwWhenAborted: false,
     open(req): Promise<OpenedSource> {
       adapter.opens.push(req);
+      if (adapter.openError) return Promise.reject(adapter.openError);
       return Promise.resolve({
         header: {
           version: "fake",
@@ -395,11 +399,127 @@ describe("streamWorkerCore", () => {
     expect(adapter.closed).toBe(1);
 
     await send({ type: "open", id: 3, source: { url: "fake://x" } });
+    // A closed source is opened afresh, even under the same url.
+    expect(adapter.opens).toHaveLength(2);
     await send({ type: "surfaces", id: 4, objectId: "a" });
     const err = posted.find(
       (m): m is Extract<WorkerResponse, { type: "error" }> =>
         m.type === "error" && m.id === 4,
     );
     expect(err?.code).toBe("not-found");
+  });
+});
+
+const errorOf =
+  (id: number) =>
+  (m: WorkerResponse): m is Extract<WorkerResponse, { type: "error" }> =>
+    m.type === "error" && m.id === id;
+
+describe("streamWorkerCore — reopening", () => {
+  for (const failure of ["refused", "throws"] as const) {
+    it(`an open of another source that ${failure} leaves nothing of the previous one`, async () => {
+      const adapter = fakeAdapter([feature("a", 100, 100)]);
+      const { posted, send } = harness(adapter);
+      await send({ type: "open", id: 0, source: { url: "fake://x" } });
+      await send(fetchMsg(1, ["2/0/0"]));
+      expect(posted.filter(ofType("cell"))).toHaveLength(1);
+
+      if (failure === "refused") {
+        adapter.admission = { code: "no-index", message: "refused" };
+      } else {
+        adapter.openError = new Error("unreadable");
+      }
+      await send({ type: "open", id: 2, source: { url: "fake://y" } });
+
+      await send({ type: "surfaces", id: 3, objectId: "a" });
+      expect(posted.find(errorOf(3))?.code).toBe("not-found");
+      await send(fetchMsg(4, ["2/0/0"]));
+      expect(posted.find(errorOf(4))?.message).toBe("no file open");
+      // The previous source's adapter state is closed too.
+      expect(adapter.closed).toBe(1);
+    });
+  }
+
+  it("a second open of the same url does not reopen the adapter", async () => {
+    const adapter = fakeAdapter([]);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send({
+      type: "open",
+      id: 1,
+      source: { url: "fake://x" },
+      heightOffset: 40,
+    });
+    expect(adapter.opens).toHaveLength(1);
+    const opened = posted.filter(ofType("opened"));
+    expect(opened.map((o) => o.id)).toEqual([0, 1]);
+    expect(opened[1]!.header).toEqual(opened[0]!.header);
+    expect(opened[1]!.admission).toBeNull();
+    expect(adapter.closed).toBe(0);
+  });
+
+  it("the same-source reopen re-establishes the placement with its own heightOffset", async () => {
+    const reopened = harness(fakeAdapter([feature("a", 100, 100)]));
+    await reopened.send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await reopened.send({
+      type: "open",
+      id: 1,
+      source: { url: "fake://x" },
+      heightOffset: 40,
+    });
+    await reopened.send(fetchMsg(2, ["2/0/0"]));
+
+    const direct = harness(fakeAdapter([feature("a", 100, 100)]));
+    await direct.send({
+      type: "open",
+      id: 0,
+      source: { url: "fake://x" },
+      heightOffset: 40,
+    });
+    await direct.send(fetchMsg(2, ["2/0/0"]));
+
+    const unshifted = harness(fakeAdapter([feature("a", 100, 100)]));
+    await unshifted.send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await unshifted.send(fetchMsg(2, ["2/0/0"]));
+
+    const positions = (h: { posted: WorkerResponse[] }) =>
+      [...h.posted.find(ofType("cell"))!.geometry.positions];
+    expect(positions(reopened)).toEqual(positions(direct));
+    expect(positions(reopened)).not.toEqual(positions(unshifted));
+  });
+
+  it("keys a url list by its urls, and a blob by its identity", async () => {
+    const adapter = fakeAdapter([]);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { urls: ["u1", "u2"] } });
+    await send({ type: "open", id: 1, source: { urls: ["u1", "u2"] } });
+    expect(adapter.opens).toHaveLength(1);
+
+    const blob = new Blob(["x"]);
+    await send({ type: "open", id: 2, source: { blob } });
+    await send({ type: "open", id: 3, source: { blob } });
+    expect(adapter.opens).toHaveLength(2);
+    await send({ type: "open", id: 4, source: { blob: new Blob(["x"]) } });
+    expect(adapter.opens).toHaveLength(3);
+
+    const b1 = new Blob(["1"]);
+    const b2 = new Blob(["2"]);
+    await send({ type: "open", id: 5, source: { blobs: [b1, b2] } });
+    await send({ type: "open", id: 6, source: { blobs: [b1, b2] } });
+    expect(adapter.opens).toHaveLength(4);
+    await send({ type: "open", id: 7, source: { blobs: [b2, b1] } });
+    expect(adapter.opens).toHaveLength(5);
+    // A url is not the same source as a one-url list's neighbour.
+    await send({ type: "open", id: 8, source: { url: "u1\nu2" } });
+    expect(adapter.opens).toHaveLength(6);
+  });
+
+  it("a refused open is not cached: reopening the same source asks the adapter again", async () => {
+    const adapter = fakeAdapter([]);
+    adapter.admission = { code: "no-index", message: "refused" };
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send({ type: "open", id: 1, source: { url: "fake://x" } });
+    expect(adapter.opens).toHaveLength(2);
   });
 });
