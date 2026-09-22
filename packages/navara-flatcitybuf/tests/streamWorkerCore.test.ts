@@ -939,6 +939,49 @@ describe("streamWorkerCore — retained memory", () => {
     expect(posted.find(errorOf(5))).toBeUndefined();
   });
 
+  it("drops the LEAST recently used cell, and reading a cell keeps it alive", async () => {
+    // Discriminating case for the LRU order itself: with three cells resident
+    // and one to drop, the victim must be the one nobody has touched — not
+    // simply the oldest by arrival. `surfaces` (and `recolor`) count as a
+    // touch, or the cell the inspector is reading is the first to go.
+    const adapter = fakeAdapter([
+      feature("a", 100, 100), // 2/0/0
+      feature("b", 500, 100), // 2/1/0
+      feature("c", 900, 100), // 2/2/0
+      feature("d", 100, 500), // 2/0/1
+    ]);
+    const probe = harness(adapter);
+    await probe.send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await probe.send(fetchMsg(1, ["2/0/0"]));
+    const oneCell = probe.posted.filter(ofType("cell"))[0]!.retainedBytes;
+
+    const { posted, send } = harness(adapter, {
+      retainedByteBudget: oneCell * 3,
+    });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(fetchMsg(1, ["2/0/0"]));
+    await send(fetchMsg(2, ["2/1/0"]));
+    await send(fetchMsg(3, ["2/2/0"]));
+    // Read the OLDEST cell: that makes it the most recently used.
+    await send({ type: "surfaces", id: 4, objectId: "a" });
+    expect(posted.find(ofType("surfaceData"))?.objectId).toBe("a");
+
+    // A fourth cell pushes the cache over its cap by one.
+    await send(fetchMsg(5, ["2/0/1"]));
+    // The victim is the middle cell, not the one just read...
+    await send({ type: "surfaces", id: 6, objectId: "b" });
+    expect(posted.find(errorOf(6))?.code).toBe("not-found");
+    // ...and "a" is still here because reading it counted as a touch.
+    await send({ type: "surfaces", id: 7, objectId: "a" });
+    expect(
+      posted.filter(ofType("surfaceData")).filter((m) => m.id === 7),
+    ).toHaveLength(1);
+    await send({ type: "surfaces", id: 8, objectId: "d" });
+    expect(
+      posted.filter(ofType("surfaceData")).filter((m) => m.id === 8),
+    ).toHaveLength(1);
+  });
+
   it("never drops a cell the fetch in flight was asked for", async () => {
     const adapter = fakeAdapter([
       feature("a", 100, 100), // 2/0/0

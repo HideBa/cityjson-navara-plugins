@@ -739,6 +739,8 @@ export function installStreamWorker(
         for (const [key, cached] of cells) {
           const obj = cached.model.objects[msg.objectId];
           if (obj) {
+            // `cacheTouch` re-inserts (delete + set) DURING this iteration,
+            // which is only safe because the loop returns immediately below.
             cacheTouch(key);
             post({
               type: "surfaceData",

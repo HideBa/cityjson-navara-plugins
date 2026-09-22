@@ -135,9 +135,10 @@ export interface CityParquetStream {
    * index, `total_compressed_size` scaled by the fraction of the group's rows
    * the ranges select; without one, the whole `total_compressed_size`. A chunk
    * that declares no size at all is charged the group's own
-   * `total_compressed_size` divided by its column count, and a group that
-   * declares neither is charged the whole file — "unknown" must never read as
-   * "free".
+   * `total_compressed_size` divided by its column count, and when the GROUP
+   * declares no size either, each selected chunk of it is charged the whole
+   * file — so such a group costs a multiple of the file, not a fraction of it.
+   * Overshooting on purpose: "unknown" must never read as "free".
    *
    * It is an ESTIMATE, not a ceiling, and it is asymmetric — which is the
    * point:
