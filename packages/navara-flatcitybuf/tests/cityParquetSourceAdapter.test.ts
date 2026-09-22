@@ -16,6 +16,7 @@ import {
   type ReadBatch,
 } from "@cityjson/navara-cityparquet";
 import {
+  bakeLodSelection,
   createCityParquetSourceAdapter,
   familyModels,
   MAX_FETCH_READ_ROWS,
@@ -376,5 +377,39 @@ describe("bakeLod", () => {
     expect(adapter.bakeLod("2", [])).toEqual(["0"]);
     expect(adapter.bakeLod("2.2", [])).toEqual(["2.2", "0"]);
     expect(adapter.bakeLod(null, [])).toEqual(["2.2", "0"]);
+  });
+
+  it("a source with no unlabelled geometry never offers the unlabelled rung", async () => {
+    const adapter = createCityParquetSourceAdapter();
+    await adapter.open(openReq({ blob: await blobOf(MULTIGROUP) }));
+    expect(adapter.bakeLod(null, [])).not.toContain(null);
+  });
+});
+
+/**
+ * Codex milestone review (Important): a bare `geometry` column decodes to
+ * surfaces with `lod: null`, which no LoD-labelled selection can name — so a
+ * streamed legacy table reported loaded objects and drew nothing at all.
+ *
+ * The rule: unlabelled geometry is the LOWEST rung. It is in EVERY selection
+ * a source that has it produces (`null` included, which for CityParquet means
+ * "every known rung", never "all surfaces"), and the mesh builder picks it
+ * per object only when that object has no selected label.
+ */
+describe("bakeLodSelection — unlabelled geometry", () => {
+  it("draws everything when the source has only unlabelled geometry", () => {
+    expect(bakeLodSelection(null, [], [], true)).toEqual([null]);
+    expect(bakeLodSelection("2", [], [], true)).toEqual([null]);
+  });
+
+  it("keeps the unlabelled rung below the labelled ones in a mixed source", () => {
+    const lods = ["0", "2"];
+    expect(bakeLodSelection(null, [], lods, true)).toEqual(["2", "0", null]);
+    expect(bakeLodSelection("1", [], lods, true)).toEqual(["0", null]);
+  });
+
+  it("omits the rung entirely when the source has no unlabelled column", () => {
+    expect(bakeLodSelection(null, [], ["0", "2"], false)).toEqual(["2", "0"]);
+    expect(bakeLodSelection("2", [], [], false)).toEqual([]);
   });
 });

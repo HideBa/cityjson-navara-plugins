@@ -93,6 +93,20 @@ describe("sameLodGeometry", () => {
     expect(sameLodGeometry(nishitokyo, null, null)).toBe(true);
   });
 
+  it("treats null in a selection as the unlabelled rung, below every label", () => {
+    // Codex milestone review (Important): a source whose geometry column
+    // carries no LoD label (a bare `geometry` column) produced surfaces with
+    // `lod: null`, which no array selection could ever name — so a streamed
+    // legacy table reported loaded objects and drew nothing. `null` is now a
+    // rung of its own, and the LOWEST one: an object draws it only when it
+    // has no selected labelled surface.
+    const legacy = model({ bare: [null], labelled: ["1", null] });
+    expect(sameLodGeometry(legacy, [null], [])).toBe(false);
+    // The unlabelled rung never outranks a labelled one that is also selected.
+    expect(sameLodGeometry(legacy, ["1", null], ["1"])).toBe(false);
+    expect(sameLodGeometry(legacy, [null], ["1", null])).toBe(false);
+  });
+
   // Oracle: whenever the helper says "same", the real builder must emit
   // identical arrays — the promise a skipped rebuild relies on — and whenever
   // the builder's output differs, the helper must say "different".
@@ -120,6 +134,9 @@ describe("sameLodGeometry", () => {
       ["2", "1", "0"],
       ["2.2", "2", "1", "0"],
       ["2.2", "1"],
+      [null],
+      ["1", null],
+      ["2.2", "2", "1", "0", null],
     ];
     const signature = (lod: LodSelection) => {
       const arrays = buildCityMeshArrays(mixed, "t", [0, 0, 0], lod);

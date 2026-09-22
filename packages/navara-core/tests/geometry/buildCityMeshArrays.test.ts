@@ -543,4 +543,35 @@ describe("multiple selected LoDs", () => {
     expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], "1").triangleCount).toBe(2);
     expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], null).triangleCount).toBe(4);
   });
+
+  // Codex milestone review (Important): a CityParquet table whose geometry
+  // column carries no LoD label decodes to surfaces with `lod: null`, which
+  // no array selection could name — so a streamed legacy table reported
+  // loaded objects and drew nothing at all. `null` IN a selection is the
+  // unlabelled rung, ranked below every label.
+  const legacy = makeModel({
+    bare: makeObject("bare", [makeSurface("RoofSurface", ring, null)]),
+    both: makeObject("both", [
+      makeSurface("RoofSurface", ring, null),
+      makeSurface("RoofSurface", ring, "1"),
+    ]),
+  });
+  it("draws unlabelled surfaces when the selection includes null", () => {
+    const mesh = buildCityMeshArrays(legacy, "test", [0, 0, 0], [null]);
+    expect(mesh.triangleCount).toBe(2);
+    expect([...mesh.objectIndices]).toEqual([0, 0, 0, 1, 1, 1]);
+    expect([...mesh.surfaceIndices]).toEqual([0, 0, 0, 0, 0, 0]);
+  });
+  it("prefers a selected label over the unlabelled rung, per object", () => {
+    const mesh = buildCityMeshArrays(legacy, "test", [0, 0, 0], ["1", null]);
+    expect(mesh.triangleCount).toBe(2);
+    // `bare` falls back to its unlabelled surface 0; `both` draws its LoD 1.
+    expect([...mesh.objectIndices]).toEqual([0, 0, 0, 1, 1, 1]);
+    expect([...mesh.surfaceIndices]).toEqual([0, 0, 0, 1, 1, 1]);
+  });
+  it("still draws nothing of an unlabelled object when null is not selected", () => {
+    expect(
+      buildCityMeshArrays(legacy, "test", [0, 0, 0], ["1"]).triangleCount,
+    ).toBe(1);
+  });
 });

@@ -177,10 +177,14 @@ export function buildCityMeshArrays(
     // feature, parts included), so walking parents here would double-expand,
     // once per object, inside the hot pass-1 loop.
     if (visibleObjectIds !== null && !visibleObjectIds.has(id)) continue;
+    // `undefined` is "this selection draws nothing of this object"; `null` is
+    // a real answer — the object's UNLABELLED surfaces won, because the
+    // selection names the unlabelled rung and no labelled surface of this
+    // object is in it (`lodSelection.ts`).
     const objectLod = allowedLods
       ? selectedSurfaceLod(obj.surfaces, allowedLods)
-      : null;
-    if (allowedLods && objectLod === null) continue;
+      : undefined;
+    if (allowedLods && objectLod === undefined) continue;
     for (let surfaceIdx = 0; surfaceIdx < obj.surfaces.length; surfaceIdx++) {
       const surface = obj.surfaces[surfaceIdx]!;
       if (allowedLods && surface.lod !== objectLod) continue;

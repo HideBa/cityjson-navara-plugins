@@ -14,33 +14,51 @@ import type { CityModel, Surface } from "../citymodel/types";
  *  - a string draws exactly that LoD;
  *  - an array draws, per object, the highest selected LoD that object has
  *    (never two LoDs of one object); an empty array draws nothing.
+ *
+ * `null` AS AN ELEMENT of the array is the **unlabelled rung**: the surfaces
+ * of a source that names no LoD at all (a CityParquet `geometry` column, a
+ * CityJSON geometry without `lod`). It ranks BELOW every label, so an object
+ * draws its unlabelled surfaces only when none of its labelled ones is
+ * selected. Without it such an object is silently invisible under any array
+ * selection, which is how a streamed legacy CityParquet table came to report
+ * loaded objects and draw nothing (Codex milestone review, Important).
  */
-export type LodSelection = string | readonly string[] | null;
+export type LodSelection = string | readonly (string | null)[] | null;
 
-/** A non-null selection as the set of LoDs it allows. A string is the
- *  one-element set: its per-object winner is that LoD or nothing. */
-export function allowedLodSet(lod: string | readonly string[]): ReadonlySet<string> {
+/** A non-null selection as the set of rungs it allows (`null` = unlabelled).
+ *  A string is the one-element set: its per-object winner is that LoD or
+ *  nothing. */
+export function allowedLodSet(
+  lod: string | readonly (string | null)[],
+): ReadonlySet<string | null> {
   return new Set(typeof lod === "string" ? [lod] : lod);
 }
 
-/** The one LoD a non-null selection draws of `surfaces`: the numerically
- *  highest surface LoD in `allowed`, or `null` when none is. Unlabelled
- *  surfaces never win. */
+/** The one rung a non-null selection draws of `surfaces`: the numerically
+ *  highest surface LoD in `allowed`; `null` when only the unlabelled rung is
+ *  allowed and present; `undefined` when the selection draws nothing of these
+ *  surfaces at all. The tri-state is what lets `null` mean a real rung rather
+ *  than "no match". */
 export function selectedSurfaceLod(
   surfaces: ReadonlyArray<Surface>,
-  allowed: ReadonlySet<string>,
-): string | null {
-  let winner: string | null = null;
+  allowed: ReadonlySet<string | null>,
+): string | null | undefined {
+  let winner: string | undefined;
+  let unlabelled = false;
   for (const surface of surfaces) {
+    if (surface.lod === null) {
+      if (allowed.has(null)) unlabelled = true;
+      continue;
+    }
     if (
-      surface.lod !== null &&
       allowed.has(surface.lod) &&
-      (winner === null || Number(surface.lod) > Number(winner))
+      (winner === undefined || Number(surface.lod) > Number(winner))
     ) {
       winner = surface.lod;
     }
   }
-  return winner;
+  if (winner !== undefined) return winner;
+  return unlabelled ? null : undefined;
 }
 
 /**

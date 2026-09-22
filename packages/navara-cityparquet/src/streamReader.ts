@@ -91,6 +91,12 @@ export interface CityParquetStreamHeader {
   referenceSystem: string;
   /** Display LoDs of the geometry columns, ascending (`"0"`, `"2.2"`). */
   lods: string[];
+  /** Whether any table carries a geometry column with no LoD in its name (a
+   *  bare `geometry` column). Its surfaces decode with `lod: null`, so a
+   *  selection built only from {@link lods} would draw none of them — the
+   *  worker adapter folds this into its bake selection as the lowest rung
+   *  (Codex milestone review, Important). */
+  unlabelledGeometry: boolean;
   invalidBBoxRows: number;
 }
 
@@ -398,6 +404,10 @@ export async function openCityParquetStream(
     ),
   ].sort((a, b) => Number(a) - Number(b));
 
+  const unlabelledGeometry = schemas.some((s) =>
+    s.geometryColumns.some((g) => g.lod === null),
+  );
+
   const header: CityParquetStreamHeader = {
     version: schemas[0]!.footer.version,
     objectsCount: tables.reduce((n, t) => n + t.rowCount, 0),
@@ -405,6 +415,7 @@ export async function openCityParquetStream(
     epsg: target.epsg,
     referenceSystem: `https://www.opengis.net/def/crs/EPSG/0/${String(target.epsg)}`,
     lods,
+    unlabelledGeometry,
     invalidBBoxRows: index.invalidBBoxRows,
   };
 

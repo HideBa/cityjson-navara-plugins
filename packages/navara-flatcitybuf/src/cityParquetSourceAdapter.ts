@@ -135,6 +135,35 @@ export function familyModels(
   return out;
 }
 
+/**
+ * What a CityParquet fetch bakes for the requested rung: every known LoD at
+ * or below it, highest first, so `buildCityMeshArrays` draws each object at
+ * its own highest available one. Never the whole-selection `null`, which
+ * would draw EVERY LoD of every object at once.
+ *
+ * A source with an unlabelled geometry column (a bare `geometry`, no LoD in
+ * its name) ends the list with `null`, the builder's unlabelled rung. It is
+ * in every selection such a source produces, including the one for
+ * `lod === null` ("every known rung"), and it ranks below every label: an
+ * object draws its unlabelled surfaces only when it has no labelled surface
+ * at or below the rung. Without it, an object whose ONLY geometry is
+ * unlabelled was silently invisible while the layer counted it as loaded
+ * (Codex milestone review, Important).
+ */
+export function bakeLodSelection(
+  lod: string | null,
+  lodsSeen: ReadonlyArray<string>,
+  headerLods: ReadonlyArray<string>,
+  unlabelledGeometry: boolean,
+): readonly (string | null)[] {
+  const known = [...new Set([...headerLods, ...lodsSeen])];
+  const selected: (string | null)[] = known
+    .filter((l) => lod === null || Number(l) <= Number(lod))
+    .sort((a, b) => Number(b) - Number(a));
+  if (unlabelledGeometry) selected.push(null);
+  return selected;
+}
+
 /** An Error the worker core posts with its `code`. */
 function budgetError(cost: number, limit: number): Error {
   return Object.assign(
@@ -225,15 +254,13 @@ export function createCityParquetSourceAdapter(
 
     appearance: () => undefined,
 
-    // The highest available LoD ≤ the rung, per object: every known LoD at
-    // or below it, highest first (never `null`, which draws every surface).
-    bakeLod(lod, lodsSeen) {
-      const headerLods = stream?.header.lods ?? [];
-      const known = [...new Set([...headerLods, ...lodsSeen])];
-      return known
-        .filter((l) => lod === null || Number(l) <= Number(lod))
-        .sort((a, b) => Number(b) - Number(a));
-    },
+    bakeLod: (lod, lodsSeen) =>
+      bakeLodSelection(
+        lod,
+        lodsSeen,
+        stream?.header.lods ?? [],
+        stream?.header.unlabelledGeometry ?? false,
+      ),
 
     close(): void {
       openController?.abort();

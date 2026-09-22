@@ -86,10 +86,13 @@ export interface StreamSourceAdapter {
    *  `undefined` when the format carries none. */
   appearance(): CityAppearance | undefined;
   /** How `fetch` bakes `lod`: FlatCityBuf keeps today's exact-LoD filter
-   *  (`lod`), CityParquet bakes the highest available ≤ lod (an array). */
+   *  (`lod`), CityParquet bakes the highest available ≤ lod (an array). A
+   *  `null` ELEMENT of that array is the builder's unlabelled rung — the
+   *  surfaces of a geometry column that names no LoD — and ranks below every
+   *  label (`lodSelection.ts`). */
   bakeLod(
     lod: string | null,
     lodsSeen: ReadonlyArray<string>,
-  ): string | readonly string[] | null;
+  ): string | readonly (string | null)[] | null;
   close(): void;
 }
