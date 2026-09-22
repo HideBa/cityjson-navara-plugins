@@ -25,6 +25,12 @@ export interface StreamHeader {
   /** The source's known LoDs, when the format knows them up front. The core
    *  folds them into every posted cell's `lodsSeen`. */
   readonly lods?: ReadonlyArray<string>;
+  /** Rows of the source that carry no usable bounding box and therefore can
+   *  never be placed in a cell — counted by the format that indexes rows
+   *  (CityParquet's family index), `undefined` where the format has no such
+   *  notion. `objectsCount` counts them, so this is the difference between
+   *  "not loaded yet" and "will never load" behind an `N of M loaded`. */
+  readonly invalidBBoxRows?: number;
   /** In the stream's METRIC CRS. `undefined` exactly when the source carries
    *  no extent — callers must check the admission first; this model does not
    *  repeat that gate, so it never lies about having an extent it doesn't. */

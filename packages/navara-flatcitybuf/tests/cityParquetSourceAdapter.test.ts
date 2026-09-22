@@ -85,7 +85,21 @@ describe("createCityParquetSourceAdapter — open", () => {
       referenceSystem: "https://www.opengis.net/def/crs/EPSG/0/7415",
       epsg: 7415,
       lods: ["0", "2.2"],
+      invalidBBoxRows: 0,
     });
+  });
+
+  it("carries the index's unplaceable-row count onto the posted header", async () => {
+    // Codex milestone review (Minor): `invalidBBoxRows` was computed by the
+    // family index and then dropped at the worker boundary, so a source whose
+    // rows cannot all be placed showed "N of M loaded" with no way to learn
+    // why the remainder never arrives.
+    const blob = await blobOf(MULTIGROUP);
+    const direct = await openCityParquetStream([asyncBufferFromBlob(blob)]);
+    const adapter = createCityParquetSourceAdapter();
+    const opened = await adapter.open(openReq({ blob }));
+    expect(opened.header.invalidBBoxRows).toBe(direct.header.invalidBBoxRows);
+    expect(opened.header.invalidBBoxRows).not.toBeUndefined();
   });
 
   it("buckets by feature and carries no appearance", async () => {

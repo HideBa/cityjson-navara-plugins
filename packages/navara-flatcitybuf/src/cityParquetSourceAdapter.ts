@@ -196,6 +196,7 @@ export function createCityParquetSourceAdapter(
           referenceSystem: h.referenceSystem,
           epsg: h.epsg,
           lods: h.lods,
+          invalidBBoxRows: h.invalidBBoxRows,
         },
         admission: null,
       };
