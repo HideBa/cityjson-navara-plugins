@@ -17,8 +17,10 @@ import { asyncBufferFromBlob } from "../src/rangeSource";
 import type { ReadBatch } from "../src/streamReader";
 import {
   AdmissionRefusedError,
+  assertRowCount,
   openCityParquetStream,
 } from "../src/streamReader";
+import { CityParquetError } from "../src/footer";
 import { readCityParquetTable } from "../src/tableReader";
 
 const fixture = (dir: string) =>
@@ -220,5 +222,19 @@ describe("readRows", () => {
     );
     expect(again).toHaveLength(2);
     expect(Object.keys(again[1]!.objects)).toContain("NL.IMBAG.Pand.0001_10");
+  });
+});
+
+describe("assertRowCount", () => {
+  it("accepts a read that returned exactly its row range", () => {
+    expect(() => assertRowCount(8, 16, 24)).not.toThrow();
+  });
+
+  it.each([
+    ["short", 7],
+    ["long", 9],
+  ])("refuses a %s read as a CityParquetError naming the range", (_, n) => {
+    expect(() => assertRowCount(n, 16, 24)).toThrow(CityParquetError);
+    expect(() => assertRowCount(n, 16, 24)).toThrow(/rows 16..24/);
   });
 });

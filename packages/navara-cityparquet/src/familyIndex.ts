@@ -46,7 +46,8 @@ export interface FamilyIndex {
    *  given in (the stream's projected CRS). All-NaN when no row is valid. */
   readonly extent: BBox3;
   /** Ranges covering every family whose union bbox intersects `bbox`,
-   *  merged across gaps ≤ {@link MERGE_GAP_ROWS}, in table then row order. */
+   *  merged across gaps ≤ {@link MERGE_GAP_ROWS}, in table then row order.
+   *  A box with a non-finite corner or an inverted span hits nothing. */
   query(bbox: readonly [number, number, number, number]): FamilyRange[];
   /** Rows `query(bbox)` would read, gaps included — the probe's answer. */
   readCost(bbox: readonly [number, number, number, number]): number;
@@ -179,6 +180,10 @@ export function buildFamilyIndex(
   ): FamilyRange[] {
     const [qx0, qy0, qx1, qy1] = bbox;
     const out: FamilyRange[] = [];
+    // A NaN corner fails every comparison below, so it would hit EVERY
+    // family; an inverted span can still overlap a wide one. Neither names
+    // a region, so neither reads anything.
+    if (!bbox.every(Number.isFinite) || qx0 > qx1 || qy0 > qy1) return out;
     packed.forEach((families, table) => {
       let open: { start: number; end: number } | null = null;
       for (let f = 0; f < families.start.length; f++) {

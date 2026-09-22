@@ -196,6 +196,16 @@ describe("buildFamilyIndex", () => {
     expect(index.query(box)).toEqual([]);
     expect(index.readCost(box)).toBe(0);
   });
+
+  it.each([
+    ["a NaN corner", [Number.NaN, 0, 400, 400]],
+    ["an infinite corner", [0, 0, Number.POSITIVE_INFINITY, 400]],
+    ["an inverted x span", [400, 0, 0, 400]],
+    ["an inverted y span", [0, 400, 400, 0]],
+  ] as const)("returns nothing for a box with %s", (_, box) => {
+    expect(index.query(box)).toEqual([]);
+    expect(index.readCost(box)).toBe(0);
+  });
 });
 
 describe("family boundaries", () => {

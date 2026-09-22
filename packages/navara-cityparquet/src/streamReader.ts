@@ -101,7 +101,14 @@ export interface CityParquetStream {
    *  roadmap reuses them for attribute lookups). Each range must start at a
    *  family boundary (as `index.query` output does), or `familyRoot` labels
    *  its first row as a root. `maxLod` compares numerically (`"2"` excludes
-   *  `"2.2"`), so pass a value from `header.lods`; `null` reads every LoD. */
+   *  `"2.2"`), so pass a value from `header.lods`; `null` reads every LoD.
+   *
+   *  Callers must SERIALISE requests: `signal` is installed on every buffer
+   *  of the stream (`RangeBuffer.setSignal`), so a newer request's signal
+   *  supersedes the older one's for every slice read after it — the older
+   *  request's remaining reads then run under the newer signal. The stream
+   *  worker core already aborts the previous request before it starts the
+   *  next probe or fetch, which is the serialisation this relies on. */
   readRows(
     ranges: ReadonlyArray<FamilyRange>,
     maxLod: string | null,
@@ -120,6 +127,23 @@ interface OpenTable {
   /** First row of each row group, plus a final entry equal to `rowCount`. */
   readonly rowGroupStarts: ReadonlyArray<number>;
   readonly isRoot: Uint8Array;
+}
+
+/**
+ * Throws unless a row-range read returned exactly `rowEnd - rowStart` rows:
+ * every packed column and every row-number lookup (`isRoot`, `familyRoot`)
+ * indexes by `rowStart + i`, so a short or long read would silently shift
+ * rows onto the wrong entries.
+ */
+export function assertRowCount(
+  actual: number,
+  rowStart: number,
+  rowEnd: number,
+): void {
+  if (actual === rowEnd - rowStart) return;
+  throw new CityParquetError(
+    `This CityParquet table returned ${String(actual)} rows for rows ${String(rowStart)}..${String(rowEnd)} (expected ${String(rowEnd - rowStart)}); the file is inconsistent with its own row-group metadata.`,
+  );
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -199,6 +223,7 @@ async function packFamilyColumns(
       rowStart,
       rowEnd,
     });
+    assertRowCount(rows.length, rowStart, rowEnd);
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]!;
       const r = rowStart + i;
@@ -443,6 +468,7 @@ export async function openCityParquetStream(
           throwIfAborted(signal);
           throw error;
         }
+        assertRowCount(raw.length, piece.rowStart, piece.rowEnd);
         for (let off = 0; off < raw.length; off += DECODE_CHUNK_ROWS) {
           throwIfAborted(signal);
           const chunk = raw.slice(off, off + DECODE_CHUNK_ROWS);
