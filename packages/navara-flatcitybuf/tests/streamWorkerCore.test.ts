@@ -85,6 +85,10 @@ interface FakeAdapter extends StreamSourceAdapter {
   readonly opens: OpenRequest[];
   /** What the next `open` answers. */
   admission: AdmissionError | null;
+  /** Per-url extents; a url not listed opens with EXTENT. */
+  extents: Record<string, BBox3>;
+  /** Per-url gates: an `open` of a listed url awaits its gate first. */
+  openGates: Record<string, Promise<void>>;
   /** When set, the next `open` rejects with it. */
   openError: Error | null;
   /** When set, the header's up-front LoDs. */
@@ -102,22 +106,27 @@ function fakeAdapter(features: CityModel[]): FakeAdapter {
     opens: [],
     admission: null,
     openError: null,
+    extents: {},
+    openGates: {},
     lods: undefined,
     throwWhenAborted: false,
-    open(req): Promise<OpenedSource> {
+    async open(req): Promise<OpenedSource> {
       adapter.opens.push(req);
-      if (adapter.openError) return Promise.reject(adapter.openError);
-      return Promise.resolve({
+      const url = "url" in req.source ? req.source.url : "";
+      const gate = adapter.openGates[url];
+      if (gate) await gate;
+      if (adapter.openError) throw adapter.openError;
+      return {
         header: {
           version: "fake",
           featuresCount: features.length,
-          extent: EXTENT,
+          extent: adapter.extents[url] ?? EXTENT,
           referenceSystem: "EPSG:28992",
           epsg: 28992,
           ...(adapter.lods ? { lods: adapter.lods } : {}),
         },
         admission: adapter.admission,
-      });
+      };
     },
     probe(bbox): Promise<number> {
       return Promise.resolve(
@@ -507,30 +516,95 @@ describe("streamWorkerCore — reopening", () => {
     expect(positions(reopened)).not.toEqual(positions(unshifted));
   });
 
-  it("keys a url list by its urls, and a blob by its identity", async () => {
+  it("without a sourceKey, keys a url list by its urls, and never matches a Blob", async () => {
     const adapter = fakeAdapter([]);
     const { send } = harness(adapter);
     await send({ type: "open", id: 0, source: { urls: ["u1", "u2"] } });
     await send({ type: "open", id: 1, source: { urls: ["u1", "u2"] } });
     expect(adapter.opens).toHaveLength(1);
-
-    const blob = new Blob(["x"]);
-    await send({ type: "open", id: 2, source: { blob } });
-    await send({ type: "open", id: 3, source: { blob } });
+    // A url is not the same source as a url list whose urls join to it.
+    await send({ type: "open", id: 2, source: { url: "u1\nu2" } });
     expect(adapter.opens).toHaveLength(2);
-    await send({ type: "open", id: 4, source: { blob: new Blob(["x"]) } });
-    expect(adapter.opens).toHaveLength(3);
 
-    const b1 = new Blob(["1"]);
-    const b2 = new Blob(["2"]);
-    await send({ type: "open", id: 5, source: { blobs: [b1, b2] } });
-    await send({ type: "open", id: 6, source: { blobs: [b1, b2] } });
+    // postMessage structured-clones every request, so two opens of one file
+    // never deliver the same Blob object: with no key they are two sources.
+    await send({ type: "open", id: 3, source: { blob: new Blob(["x"]) } });
+    await send({ type: "open", id: 4, source: { blob: new Blob(["x"]) } });
     expect(adapter.opens).toHaveLength(4);
-    await send({ type: "open", id: 7, source: { blobs: [b2, b1] } });
-    expect(adapter.opens).toHaveLength(5);
-    // A url is not the same source as a one-url list's neighbour.
-    await send({ type: "open", id: 8, source: { url: "u1\nu2" } });
-    expect(adapter.opens).toHaveLength(6);
+  });
+
+  it("the same sourceKey is one source, even when each open delivers a new Blob", async () => {
+    const adapter = fakeAdapter([]);
+    const { send } = harness(adapter);
+    // What structured cloning does to the registry's two opens: equal
+    // bytes, distinct objects.
+    await send({
+      type: "open",
+      id: 0,
+      source: { blob: new Blob(["x"]) },
+      sourceKey: "L1",
+    });
+    await send({
+      type: "open",
+      id: 1,
+      source: { blob: new Blob(["x"]) },
+      sourceKey: "L1",
+      heightOffset: 40,
+    });
+    expect(adapter.opens).toHaveLength(1);
+    await send({
+      type: "open",
+      id: 2,
+      source: { blobs: [new Blob(["x"])] },
+      sourceKey: "L1",
+    });
+    expect(adapter.opens).toHaveLength(1);
+  });
+
+  it("a different sourceKey is another source, even under the same url", async () => {
+    const adapter = fakeAdapter([]);
+    const { send } = harness(adapter);
+    await send({
+      type: "open",
+      id: 0,
+      source: { url: "fake://x" },
+      sourceKey: "L1",
+    });
+    await send({
+      type: "open",
+      id: 1,
+      source: { url: "fake://x" },
+      sourceKey: "L2",
+    });
+    expect(adapter.opens).toHaveLength(2);
+    expect(adapter.closed).toBe(1);
+  });
+
+  it("overlapping opens of different sources end on the LATER one, whichever resolves first", async () => {
+    const OTHER: BBox3 = [10000, 10000, 0, 11000, 11000, 30];
+    const adapter = fakeAdapter([]);
+    adapter.extents["fake://y"] = OTHER;
+    let releaseX!: () => void;
+    adapter.openGates["fake://x"] = new Promise((r) => (releaseX = r));
+    const { posted, send } = harness(adapter);
+
+    // x is still being read when y is asked for; x resolves LAST.
+    const x = send({ type: "open", id: 0, source: { url: "fake://x" } });
+    const y = send({ type: "open", id: 1, source: { url: "fake://y" } });
+    await new Promise((r) => setTimeout(r, 0));
+    releaseX();
+    await Promise.all([x, y]);
+    expect(posted.filter(ofType("opened")).map((o) => o.id)).toEqual([0, 1]);
+
+    // The grid is y's...
+    await send(fetchMsg(2, ["2/0/0"]));
+    expect(adapter.selectBBoxes).toEqual([
+      unionOfCellBounds(makeGrid(OTHER), ["2/0/0"]),
+    ]);
+    // ...and so is the remembered source: reopening y reads nothing.
+    const opensBefore = adapter.opens.length;
+    await send({ type: "open", id: 3, source: { url: "fake://y" } });
+    expect(adapter.opens).toHaveLength(opensBefore);
   });
 
   it("a refused open is not cached: reopening the same source asks the adapter again", async () => {

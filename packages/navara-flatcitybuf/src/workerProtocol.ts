@@ -101,6 +101,12 @@ interface OpenExtras {
   /** The host's surface palette overrides (CSS hex, structured-cloneable),
    *  baked into every cell's base colours. Omitted means core's defaults. */
   readonly surfaceColors?: SurfacePalette;
+  /** Names the source across opens (the registry sends the layer id). Two
+   *  opens that both carry one are the same source exactly when the keys are
+   *  equal — the only way to recognise a Blob again, since postMessage
+   *  structured-clones it into a new object on every request. Without a key
+   *  the worker compares the sources themselves. */
+  readonly sourceKey?: string;
 }
 
 export type WorkerRequest =

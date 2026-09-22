@@ -26,6 +26,7 @@ import { bucketFeatures } from "./bucketFeatures";
 import { toObjectRecords } from "./objectRecords";
 import type {
   OpenedSource,
+  OpenRequest,
   StreamSourceAdapter,
 } from "./streamSourceAdapter";
 import {
@@ -143,8 +144,20 @@ function distinctLods(model: CityModel): string[] {
   return [...set];
 }
 
-/** Whether two opens name the same source: urls by value (a list element by
- *  element, in order), Blobs by identity. */
+/** Whether two opens name the same source. Both keyed: by key. Otherwise the
+ *  sources themselves: urls by value (a list element by element, in order),
+ *  Blobs by identity — which a structured-cloned request never repeats, so an
+ *  unkeyed Blob is always a new source. */
+function sameOpen(
+  a: { source: StreamSource; sourceKey?: string },
+  b: { source: StreamSource; sourceKey?: string },
+): boolean {
+  if (a.sourceKey !== undefined && b.sourceKey !== undefined) {
+    return a.sourceKey === b.sourceKey;
+  }
+  return sameSource(a.source, b.source);
+}
+
 function sameSource(a: StreamSource, b: StreamSource): boolean {
   if ("url" in a) return "url" in b && a.url === b.url;
   if ("blob" in a) return "blob" in b && a.blob === b.blob;
@@ -195,7 +208,13 @@ export function installStreamWorker(
    *  extent, once with the resolved geoid offset) re-establishes placement
    *  and palette without re-reading the source. Unset after a refused or
    *  failed open, so a retry asks the adapter again. */
-  let opened: { source: StreamSource; result: OpenedSource } | undefined;
+  let opened:
+    | { source: StreamSource; sourceKey?: string; result: OpenedSource }
+    | undefined;
+  /** Opens run one at a time, in arrival order: an open still reading its
+   *  source when the next arrives would otherwise land its result (and the
+   *  adapter's state) over the newer one. */
+  let openQueue: Promise<void> = Promise.resolve();
   /** Whether the adapter holds state from an `open` not yet closed. */
   let adapterOpen = false;
   /** The worker's own cell cache. Counts against the same memory budget as
@@ -208,6 +227,64 @@ export function installStreamWorker(
     ctx.postMessage(msg, transfer);
   }
 
+  /** One `open`, run through `openQueue` so opens never overlap. */
+  async function handleOpen(msg: OpenRequest): Promise<void> {
+    let result: OpenedSource;
+    const same = opened !== undefined && sameOpen(opened, msg);
+    if (opened && same) {
+      // Invariant: the registry never fetches between its two opens, so the
+      // cell cache is empty here and keeping it (and the grid) is safe.
+      result = opened.result;
+    } else {
+      // Another source: drop everything of the previous one FIRST, so an
+      // open that is refused or throws can never leave a stale grid serving
+      // fetches, or stale cells answering `surfaces`.
+      controller?.abort();
+      grid = undefined;
+      placement = undefined;
+      cells.clear();
+      opened = undefined;
+      if (adapterOpen) {
+        adapterOpen = false;
+        adapter.close();
+      }
+      adapterOpen = true;
+      result = await adapter.open(msg);
+    }
+    const { header, admission } = result;
+    // An admitted source guarantees header.extent is set and header.epsg is a
+    // metre-based code (the adapter's admission refuses anything else), but
+    // the two are independent as far as the type checker knows.
+    if (!admission && header.extent && header.epsg !== null) {
+      opened = {
+        source: msg.source,
+        ...(msg.sourceKey !== undefined ? { sourceKey: msg.sourceKey } : {}),
+        result,
+      };
+      // A new source always gets its own grid; the same source keeps its.
+      grid = same && grid ? grid : makeGrid(header.extent);
+      const epsg = header.epsg;
+      // Registers RD New and friends; built-in codes are a no-op. Without it
+      // proj4 cannot construct the converter below at all.
+      ensureProjDef(epsg);
+      const converter = proj4(`EPSG:${epsg}`, "WGS84") as {
+        forward(coords: [number, number]): [number, number];
+      };
+      placement = {
+        epsg,
+        // The plugin resolved the geoid undulation (or the caller's override)
+        // BEFORE sending `open`, precisely so the worker can bake every cell
+        // in the right frame from the first fetch — the worker never samples
+        // it itself and never needs network access. See Global Constraints
+        // -> Vertical datum.
+        heightOffset: msg.heightOffset ?? 0,
+        toLngLat: (coords) => converter.forward(coords),
+      };
+    }
+    surfaceColors = resolveSurfaceColorsLinear(msg.surfaceColors);
+    post({ type: "opened", id: msg.id, header, admission });
+  }
+
   ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     const msg = ev.data;
     /** THIS request's controller (probe/fetch only). The outer catch judges
@@ -216,53 +293,9 @@ export function installStreamWorker(
     let own: AbortController | null = null;
     try {
       if (msg.type === "open") {
-        let result: OpenedSource;
-        if (opened && sameSource(opened.source, msg.source)) {
-          result = opened.result;
-        } else {
-          // Another source: drop everything of the previous one FIRST, so an
-          // open that is refused or throws can never leave a stale grid
-          // serving fetches, or stale cells answering `surfaces`.
-          controller?.abort();
-          grid = undefined;
-          placement = undefined;
-          cells.clear();
-          opened = undefined;
-          if (adapterOpen) {
-            adapterOpen = false;
-            adapter.close();
-          }
-          adapterOpen = true;
-          result = await adapter.open(msg);
-        }
-        const { header, admission } = result;
-        // An admitted source guarantees header.extent is set and header.epsg
-        // is a metre-based code (the adapter's admission refuses anything
-        // else), but the two are independent as far as the type checker
-        // knows.
-        if (!admission && header.extent && header.epsg !== null) {
-          opened = { source: msg.source, result };
-          grid ??= makeGrid(header.extent);
-          const epsg = header.epsg;
-          // Registers RD New and friends; built-in codes are a no-op. Without
-          // it proj4 cannot construct the converter below at all.
-          ensureProjDef(epsg);
-          const converter = proj4(`EPSG:${epsg}`, "WGS84") as {
-            forward(coords: [number, number]): [number, number];
-          };
-          placement = {
-            epsg,
-            // The plugin resolved the geoid undulation (or the caller's
-            // override) BEFORE sending `open`, precisely so the worker can
-            // bake every cell in the right frame from the first fetch — the
-            // worker never samples it itself and never needs network access.
-            // See Global Constraints -> Vertical datum.
-            heightOffset: msg.heightOffset ?? 0,
-            toLngLat: (coords) => converter.forward(coords),
-          };
-        }
-        surfaceColors = resolveSurfaceColorsLinear(msg.surfaceColors);
-        post({ type: "opened", id: msg.id, header, admission });
+        const run = openQueue.then(() => handleOpen(msg));
+        openQueue = run.catch(() => undefined);
+        await run;
         return;
       }
 

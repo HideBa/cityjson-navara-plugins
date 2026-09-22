@@ -791,6 +791,9 @@ describe("StreamLayerRegistry.openStream", () => {
     expect(opens).toHaveLength(2);
     for (const open of opens) {
       expect(open.source).toEqual({ urls });
+      // One key for both opens, so the worker knows the second is the same
+      // source even when the source is a (re-cloned) Blob.
+      expect(open.sourceKey).toBe("L2");
       expect(open).not.toHaveProperty("url");
       expect(open).not.toHaveProperty("blob");
     }

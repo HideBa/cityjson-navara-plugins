@@ -605,6 +605,10 @@ export class StreamLayerRegistry {
     const resp = await client.send({
       type: "open",
       source: opts.source,
+      // The same key on both opens: the worker recognises the second as the
+      // same source (a Blob arrives as a new object each time) and does not
+      // read it again.
+      sourceKey: opts.id,
       heightOffset,
       surfaceColors,
     });
