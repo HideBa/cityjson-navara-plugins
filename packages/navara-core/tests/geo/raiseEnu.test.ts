@@ -49,7 +49,8 @@ function projected(heightOffset: number): Float32Array {
  *  as Float32 and stores Float32 again: two roundings, where a fresh
  *  projection has one. */
 function f32Step(x: number): number {
-  // Floored at 1e-8 m: a fresh projection is itself only exact to the double
+  // Floored at 1e-8 m per rounding (callers pass 2-3 roundings, so 2-3e-8 m
+  // at the origin): a fresh projection is itself only exact to the double
   // rounding of ECEF values (~6.4e6 m × 2⁻⁵² ≈ 1e-9 m), so a coordinate that
   // is "zero" at the origin comes out as ±1e-10.
   const step = x === 0 ? 0 : 2 ** (Math.floor(Math.log2(Math.abs(x))) - 23);

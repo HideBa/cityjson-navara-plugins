@@ -15,8 +15,10 @@
  *
  * `n` is the geodetic normal: the ellipsoid gradient at the vertex's foot
  * point, found without trigonometry (see the loop). Positions are read and
- * re-stored as Float32, so a raise lands within two Float32 roundings of a
- * fresh projection (≈1 mm at 10 km, ≈1e-7 m at 1 m).
+ * re-stored as Float32, so for terrestrial building heights a raise lands
+ * within two Float32 roundings of a fresh projection (≈1 mm at 10 km, ≈1e-7 m
+ * at 1 m); the foot-point approximation adds ~dh·e²·(h/a)² on top, which only
+ * reaches 1e-8 m around 5 km above the ellipsoid.
  */
 
 import type { EnuFrame } from "./enuFrame";
@@ -56,7 +58,8 @@ export function raisePositionsInEnu(
     // by dh, which is many Float32 steps near the origin; Codex review). So:
     // gradient at the vertex -> height from the ellipsoid equation
     // (f ≈ 2·h·|g|) -> step down to the foot -> gradient there. The residual
-    // angle is second order (~h·1e-7/a), far below Float32 anywhere.
+    // is second order, ~dh·e²·(h/a)²: < 1e-9 m for vertices within ~1 km of
+    // the ellipsoid, 4e-8 m at 5 km (Codex re-review).
     // sqrt, not Math.hypot: hypot's overflow guard is ~5x slower in V8, and
     // these magnitudes (~1e-7) cannot overflow.
     const px = X * INV_A2;
