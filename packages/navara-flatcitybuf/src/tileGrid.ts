@@ -39,6 +39,30 @@ export function cellBBox(
   return [x, y, x + s, y + s];
 }
 
+/**
+ * The bounding box of a set of cells, or `null` for none. Every key lies
+ * inside the grid (`keysCovering`/`ownerKey` clamp indices into the root
+ * cell), so the union is already clamped to the grid's extent.
+ */
+export function unionOfCellBounds(
+  grid: Grid,
+  keys: Iterable<CellKey>,
+): [number, number, number, number] | null {
+  let out: [number, number, number, number] | null = null;
+  for (const key of keys) {
+    const b = cellBBox(grid, key);
+    out = out
+      ? [
+          Math.min(out[0], b[0]),
+          Math.min(out[1], b[1]),
+          Math.max(out[2], b[2]),
+          Math.max(out[3], b[3]),
+        ]
+      : b;
+  }
+  return out;
+}
+
 export function cellCentre(grid: Grid, key: CellKey, z: number): Vec3 {
   const b = cellBBox(grid, key);
   return [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2, z];

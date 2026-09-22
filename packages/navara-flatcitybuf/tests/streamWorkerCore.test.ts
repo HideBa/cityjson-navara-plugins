@@ -18,6 +18,7 @@ import {
   type Rule,
 } from "@cityjson/navara-core";
 import { installStreamWorker } from "../src/streamWorkerCore";
+import { makeGrid, unionOfCellBounds } from "../src/tileGrid";
 import type {
   OpenedSource,
   StreamSourceAdapter,
@@ -289,6 +290,35 @@ describe("streamWorkerCore", () => {
       cell.geometry.triangleCount * 3 * 3,
     );
     expect(posted.at(-1)).toEqual({ type: "done", id: 2 });
+  });
+
+  it("a fetch bakes every requested cell complete, not only its part inside the view", async () => {
+    // Cell 2/1/0 spans x 400..800; the view reaches only x 600, so 'e'
+    // (centred at x 700, owned by 2/1/0) lies outside it.
+    const adapter = fakeAdapter([
+      feature("a", 100, 100),
+      feature("e", 700, 100),
+    ]);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, url: "fake://x" });
+    await send(fetchMsg(1, ["2/0/0", "2/1/0"], [0, 0, 600, 400]));
+
+    // The query is the union of the requested cells, not the view.
+    expect(adapter.selectBBoxes).toEqual([
+      unionOfCellBounds(makeGrid(EXTENT), ["2/0/0", "2/1/0"]),
+    ]);
+    expect(adapter.selectBBoxes[0]).toEqual([0, 0, 800, 400]);
+    const k = posted.filter(ofType("cell")).find((c) => c.key === "2/1/0");
+    expect(k?.objects.map((o) => o.id)).toEqual(["e"]);
+  });
+
+  it("a fetch for no cells answers 'done' without a traversal", async () => {
+    const adapter = fakeAdapter([feature("a", 100, 100)]);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, url: "fake://x" });
+    await send(fetchMsg(1, []));
+    expect(adapter.selectBBoxes).toEqual([]);
+    expect(posted.at(-1)).toEqual({ type: "done", id: 1 });
   });
 
   it("close closes the adapter and clears the cache", async () => {

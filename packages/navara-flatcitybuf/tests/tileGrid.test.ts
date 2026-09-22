@@ -6,6 +6,7 @@ import {
   cellCentre,
   keysCovering,
   ownerKey,
+  unionOfCellBounds,
 } from "../src/tileGrid";
 
 // 1000 m x 1000 m extent starting at (0,0) -> ROOT_CELL rounds to 1600
@@ -100,5 +101,16 @@ describe("tileGrid", () => {
     expect(grid.maxLevel).toBe(5);
     expect(cellSize(grid, 5)).toBe(50);
     expect(cellSize(grid, 6)).toBe(25);
+  });
+
+  it("unions the bounds of a set of cells", () => {
+    expect(unionOfCellBounds(grid, ["2/1/0"])).toEqual([400, 0, 800, 400]);
+    expect(unionOfCellBounds(grid, ["2/0/0", "2/1/1", "2/0/1"])).toEqual([
+      0, 0, 800, 800,
+    ]);
+  });
+
+  it("has no union for an empty set of cells", () => {
+    expect(unionOfCellBounds(grid, [])).toBeNull();
   });
 });

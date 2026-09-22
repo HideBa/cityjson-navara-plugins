@@ -25,7 +25,13 @@ import {
 import { bucketFeatures } from "./bucketFeatures";
 import { toObjectRecords } from "./objectRecords";
 import type { StreamSourceAdapter } from "./streamSourceAdapter";
-import { makeGrid, cellCentre, type CellKey, type Grid } from "./tileGrid";
+import {
+  makeGrid,
+  cellCentre,
+  unionOfCellBounds,
+  type CellKey,
+  type Grid,
+} from "./tileGrid";
 import type {
   CellGeometry,
   CellTexture,
@@ -239,12 +245,23 @@ export function installStreamWorker(
           }
         };
 
+        // Query the requested cells WHOLE, not the view: a cell's objects
+        // are owned by bbox centre, so a view that reaches only part of a
+        // boundary cell would otherwise bake that cell with the objects in
+        // its other part missing — and the cell, once resident, is never
+        // refetched to fill them in. `msg.bbox` stays a diagnostic.
+        const queryBBox = unionOfCellBounds(theGrid, msg.cells);
+        if (!queryBBox) {
+          post({ type: "done", id: msg.id }); // nothing requested
+          return;
+        }
+
         try {
           // Decode in chunks, yielding so a superseded fetch can be
           // cancelled.
           const models: CityModel[] = [];
           let sinceYield = 0;
-          for await (const model of adapter.select(msg.bbox, {
+          for await (const model of adapter.select(queryBBox, {
             lod: msg.lod,
             signal: my.signal,
           })) {
