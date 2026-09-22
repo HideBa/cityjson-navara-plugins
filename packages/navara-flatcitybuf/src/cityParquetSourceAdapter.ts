@@ -99,9 +99,14 @@ function countRingVertices(objects: ReadonlyArray<CityObject>): number {
  * A batch as one `CityModel` per family (`StreamRow.familyRoot`), keeping
  * only the families whose union bbox intersects `bbox`: a batch also holds
  * the rows of its merge gaps, which no viewport asked for. A family with no
- * object bbox cannot be placed and is dropped.
+ * object bbox cannot be placed and is dropped. `referenceSystem` (the
+ * stream header's) is carried as each model's metadata.
  */
-export function familyModels(batch: ReadBatch, bbox: Box2): CityModel[] {
+export function familyModels(
+  batch: ReadBatch,
+  bbox: Box2,
+  referenceSystem?: string,
+): CityModel[] {
   const families = new Map<string, CityObject[]>();
   for (const [id, object] of Object.entries(batch.objects)) {
     const root = batch.rows.get(id)?.familyRoot ?? id;
@@ -121,7 +126,7 @@ export function familyModels(batch: ReadBatch, bbox: Box2): CityModel[] {
     for (const object of members) objects[object.id] = object;
     out.push({
       sourceEncoding: "cityparquet",
-      metadata: {},
+      metadata: referenceSystem === undefined ? {} : { referenceSystem },
       bbox: union,
       objects,
       vertexCount: countRingVertices(members),
@@ -213,7 +218,7 @@ export function createCityParquetSourceAdapter(
       if (ranges.length === 0) return;
       for (const buffer of buffers) buffer.setSignal(signal);
       for await (const batch of s.readRows(ranges, lod, signal)) {
-        yield* familyModels(batch, bbox);
+        yield* familyModels(batch, bbox, s.header.referenceSystem);
       }
     },
 

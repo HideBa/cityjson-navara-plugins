@@ -228,7 +228,13 @@ describe("createCityParquetSourceAdapter — select", () => {
       ["NL.IMBAG.Pand.0001-part1_9", "NL.IMBAG.Pand.0001_9"],
       ["NL.IMBAG.Pand.0002_9"],
     ]);
-    for (const m of models) expect(m.sourceEncoding).toBe("cityparquet");
+    for (const m of models) {
+      expect(m.sourceEncoding).toBe("cityparquet");
+      // The stream's CRS rides on every cell model, as it does on the stub.
+      expect(m.metadata).toEqual({
+        referenceSystem: "https://www.opengis.net/def/crs/EPSG/0/7415",
+      });
+    }
     expect(models[0]!.bbox).toEqual([85450, 446000, 0, 85466, 446008, 8.4]);
     expect(models[1]!.bbox).toEqual([85470, 446000, 0, 85485, 446012, 12.1]);
     expect(models[0]!.vertexCount).toBeGreaterThan(0);
@@ -291,6 +297,16 @@ describe("createCityParquetSourceAdapter — select", () => {
         adapter.select(COPY_9_BOX, { lod: null, signal: controller.signal }),
       ),
     ).rejects.toThrow();
+  });
+});
+
+describe("package index", () => {
+  it("exports the adapter and its per-fetch row budget", async () => {
+    const index = await import("../src/index");
+    expect(index.createCityParquetSourceAdapter).toBe(
+      createCityParquetSourceAdapter,
+    );
+    expect(index.MAX_FETCH_READ_ROWS).toBe(MAX_FETCH_READ_ROWS);
   });
 });
 

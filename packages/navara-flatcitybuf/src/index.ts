@@ -39,6 +39,13 @@ export type {
   StreamSourceAdapter,
 } from "./streamSourceAdapter";
 export * from "./fcbSource";
+// The CityParquet adapter is engine-free too; the app reads its per-fetch
+// budget for the "zoom in" message.
+export {
+  createCityParquetSourceAdapter,
+  MAX_FETCH_READ_ROWS,
+  type CityParquetSourceAdapterOptions,
+} from "./cityParquetSourceAdapter";
 export * from "./viewportFootprint";
 export * from "./queryRegion";
 export * from "./streamLayer";

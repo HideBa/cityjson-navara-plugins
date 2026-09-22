@@ -89,6 +89,54 @@ describe("parseCityParquetManifest", () => {
     ]);
   });
 
+  it("keeps each object table's file:size, keyed by its normalised href", async () => {
+    const meta: unknown = JSON.parse(
+      await readFile(
+        fileURLToPath(
+          new URL(
+            "./fixtures/multigroup-cityparquet/metadata.json",
+            import.meta.url,
+          ),
+        ),
+        "utf8",
+      ),
+    );
+    expect(parseCityParquetManifest(meta).sizes).toEqual({
+      "building.parquet": 252640,
+    });
+    const item = {
+      type: "Feature",
+      assets: {
+        a: {
+          href: "./a/building.parquet",
+          roles: ["cityparquet-objects"],
+          "file:size": 610,
+        },
+        // Unusable sizes are left out, never guessed.
+        b: {
+          href: "./b/building.parquet",
+          roles: ["cityparquet-objects"],
+          "file:size": -1,
+        },
+        c: {
+          href: "./c/building.parquet",
+          roles: ["cityparquet-objects"],
+          "file:size": "12",
+        },
+        d: { href: "./d/building.parquet", roles: ["cityparquet-objects"] },
+        // A sidecar's size is not an object table's.
+        t: {
+          href: "./textures.parquet",
+          roles: ["cityparquet-sidecar"],
+          "file:size": 99,
+        },
+      },
+    };
+    expect(parseCityParquetManifest(item).sizes).toEqual({
+      "a/building.parquet": 610,
+    });
+  });
+
   it("names the three sidecar files a role-less package must skip", () => {
     expect([...CITYPARQUET_SIDECAR_NAMES].sort()).toEqual([
       "geometry_templates.parquet",

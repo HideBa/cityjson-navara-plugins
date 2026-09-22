@@ -28,6 +28,8 @@ export interface ColumnChunk {
 export interface RowGroup {
   num_rows: bigint | number;
   columns: ColumnChunk[];
+  /** Optional in the Thrift schema (field 6, i64). */
+  total_compressed_size?: bigint | number;
 }
 
 export interface FileMetaData {

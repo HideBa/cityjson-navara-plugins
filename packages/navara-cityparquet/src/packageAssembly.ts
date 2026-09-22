@@ -74,6 +74,13 @@ export interface CityParquetManifest {
   /** The appearance sidecars the manifest declares (hrefs, like
    *  `objectTables`), by kind — absent when not shipped. */
   sidecars: { textures?: string; materials?: string };
+  /**
+   * Each object table's declared byte size (STAC `file:size`), keyed by its
+   * href as in {@link objectTables}. Only finite, non-negative numbers are
+   * kept; a table whose size is missing or unusable has no entry. Any asset
+   * naming the href may carry it — writers list one file under two keys.
+   */
+  sizes: Readonly<Record<string, number>>;
 }
 
 /** Which sidecar a file name denotes, by its base name. */
@@ -137,6 +144,8 @@ interface ManifestAsset {
   href: string;
   mediaType: string | null;
   roles: ReadonlyArray<string>;
+  /** `file:size` when it is a finite, non-negative number. */
+  size: number | null;
 }
 
 /**
@@ -167,10 +176,15 @@ function readAssets(metadataJson: unknown): ManifestAsset[] {
     const roles = Array.isArray(value.roles)
       ? value.roles.filter((r: unknown): r is string => typeof r === "string")
       : [];
+    const size = value["file:size"];
     assets.push({
       href: normalizeHref(href),
       mediaType: typeof value.type === "string" ? value.type : null,
       roles,
+      size:
+        typeof size === "number" && Number.isFinite(size) && size >= 0
+          ? size
+          : null,
     });
   }
   return assets;
@@ -226,7 +240,13 @@ export function parseCityParquetManifest(
       sidecars[kind] ??= asset.href;
     }
   }
-  return { objectTables, sidecars };
+  // Keyed by hrefs a stranger wrote, so prototype-free like the object map.
+  const sizes = bareMap<number>();
+  for (const asset of assets) {
+    if (asset.size === null || !seen.has(asset.href)) continue;
+    if (!hasOwn(sizes, asset.href)) sizes[asset.href] = asset.size;
+  }
+  return { objectTables, sidecars, sizes };
 }
 
 // ---------------------------------------------------------------------------
