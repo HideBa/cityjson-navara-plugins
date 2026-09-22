@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  BufferAttribute,
   DoubleSide,
   LineSegments,
   Matrix4,
@@ -813,5 +814,127 @@ describe("CityModelMesh setLod skips no-op rebuilds", () => {
       .filter((hit) => hit?.objectId === "B2");
     expect(b2.map((hit) => hit?.surfaceIndex)).toEqual([0, 0]);
     m.dispose();
+  });
+});
+
+describe("CityModelMesh setHeightOffset re-places without rebuilding", () => {
+  // 10 km across, so the ellipsoid normals at the two ends differ enough that
+  // moving only the frame would be centimetres off (the 10 m `model` fixture
+  // cannot tell).
+  function quadAt(x: number, z: number, lod: string) {
+    return {
+      type: "RoofSurface" as const,
+      rings: [
+        [
+          [x, 446000, z],
+          [x + 10, 446000, z],
+          [x + 10, 446010, z],
+          [x, 446010, z],
+        ],
+      ] as const,
+      attributes: {},
+      lod,
+    };
+  }
+  const wide: CityModel = {
+    ...model,
+    bbox: [80000, 446000, 0, 90010, 446010, 30],
+    objects: {
+      W: {
+        ...model.objects.B1!,
+        id: "W",
+        surfaces: [quadAt(80000, 6, "2"), quadAt(80000, 3, "1")],
+        bbox: [80000, 446000, 0, 80010, 446010, 6],
+      },
+      E: {
+        ...model.objects.B1!,
+        id: "E",
+        surfaces: [quadAt(90000, 30, "2"), quadAt(90000, 20, "1")],
+        bbox: [90000, 446000, 0, 90010, 446010, 30],
+      },
+    },
+  };
+  const wideOpts = { id: "L1", model: wide, crs: 7415 };
+
+  function worldPositions(m: CityModelMesh): Vector3[] {
+    const attr = m.object3d.geometry.getAttribute("position");
+    const out: Vector3[] = [];
+    for (let i = 0; i < attr.count; i++) {
+      out.push(
+        new Vector3(attr.getX(i), attr.getY(i), attr.getZ(i)).applyMatrix4(
+          m.object3d.matrix,
+        ),
+      );
+    }
+    return out;
+  }
+
+  it("keeps the geometry object", () => {
+    const m = new CityModelMesh({ ...wideOpts, lod: ["2", "1"] });
+    const geometry = m.object3d.geometry;
+    let disposed = false;
+    geometry.addEventListener("dispose", () => (disposed = true));
+    m.setHeightOffset(43);
+    expect(m.object3d.geometry).toBe(geometry);
+    expect(disposed).toBe(false);
+    m.dispose();
+  });
+
+  it("places every vertex where a mesh built at that offset puts it", () => {
+    const m = new CityModelMesh({ ...wideOpts, lod: ["2", "1"] });
+    m.setHeightOffset(43);
+    const fresh = new CityModelMesh({
+      ...wideOpts,
+      lod: ["2", "1"],
+      heightOffset: 43,
+    });
+    const got = worldPositions(m);
+    const want = worldPositions(fresh);
+    expect(got.length).toBe(want.length);
+    // Millimetres in ECEF: two Float32 roundings of a ~5 km local coordinate.
+    for (let i = 0; i < want.length; i++) {
+      expect(got[i]!.distanceTo(want[i]!)).toBeLessThan(2e-3);
+    }
+    m.dispose();
+    fresh.dispose();
+  });
+
+  it("uploads the moved positions and refreshes the bounding sphere", () => {
+    const m = new CityModelMesh({ ...wideOpts, lod: ["2", "1"] });
+    const geometry = m.object3d.geometry;
+    const position = geometry.getAttribute("position") as BufferAttribute;
+    const version = position.version;
+    m.setHeightOffset(43);
+    expect(position.version).toBeGreaterThan(version);
+    const fresh = new CityModelMesh({
+      ...wideOpts,
+      lod: ["2", "1"],
+      heightOffset: 43,
+    });
+    const want = fresh.object3d.geometry.boundingSphere!;
+    expect(geometry.boundingSphere!.center.distanceTo(want.center)).toBeLessThan(
+      2e-3,
+    );
+    expect(geometry.boundingSphere!.radius).toBeCloseTo(want.radius, 2);
+    m.dispose();
+    fresh.dispose();
+  });
+
+  it("builds a later LoD change in the new frame", () => {
+    const m = new CityModelMesh({ ...wideOpts, lod: ["2"] });
+    m.setHeightOffset(43);
+    m.setLod(["1"]);
+    const fresh = new CityModelMesh({
+      ...wideOpts,
+      lod: ["1"],
+      heightOffset: 43,
+    });
+    const got = worldPositions(m);
+    const want = worldPositions(fresh);
+    for (let i = 0; i < want.length; i++) {
+      expect(got[i]!.distanceTo(want[i]!)).toBeLessThan(2e-3);
+    }
+    m.dispose();
+    fresh.dispose();
   });
 });

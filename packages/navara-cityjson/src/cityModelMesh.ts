@@ -28,6 +28,7 @@ import {
   buildCityMeshArrays,
   computeOriginOffset,
   projectPositionsToEnu,
+  raisePositionsInEnu,
   sameLodGeometry,
   type AppearanceTheme,
   type CityMeshArrays,
@@ -492,18 +493,34 @@ export class CityModelMesh {
    * The geoid sample is asynchronous (a network fetch), and blocking first
    * render on it would mean a blank viewport whenever the terrain service is
    * slow. So the mesh is built at offset 0 and re-placed the moment the
-   * sample lands — one extra geometry pass per layer, no ordering hazard, and
-   * a failed sample simply never calls this. See Global Constraints ->
-   * Vertical datum.
+   * sample lands — no ordering hazard, and a failed sample simply never calls
+   * this. See Global Constraints -> Vertical datum.
+   *
+   * NOT a rebuild: the vertices are moved in place (`raisePositionsInEnu`),
+   * which is what a re-projection at the new offset produces, to Float32
+   * storage precision, without proj4 or re-triangulation — a full rebuild on
+   * every load cost ~2.7 s on Nishitokyo (docs/performance/cityparquet-2026-09-21).
+   * The local move is not zero: the normals at vertex and origin fan out, so
+   * a vertex 10 km out shifts ~N·d/R (6 cm for N = 37 m). Normals, colours,
+   * picking indices, UVs and texture groups are unchanged; face normals turn
+   * by ~N/R (1e-5 rad), which no lighting shows.
    */
   setHeightOffset(metres: number): void {
     if (metres === this.placement.heightOffset) return;
+    const oldFrame = this.placement.frame;
+    const delta = metres - this.placement.heightOffset;
     this.placement = this.computePlacement(metres);
     this.applyPlacement();
-    // Vertices were expressed in the OLD frame, so re-project them into the
-    // new one. Their local values barely change (both the vertex and the
-    // origin rose by the same N); the visible movement comes from the frame.
-    this.rebuildGeometry();
+    const geometry = this.geometry;
+    const position = geometry.getAttribute("position");
+    // The attribute wraps `this.arrays.positions` (`cityMeshGeometry.ts`).
+    raisePositionsInEnu(position.array as Float32Array, oldFrame, delta);
+    position.needsUpdate = true;
+    // Navara frustum-culls on the sphere; a raycast may have cached the box.
+    geometry.computeBoundingSphere();
+    if (geometry.boundingBox) geometry.computeBoundingBox();
+    // The edge lines copied the old positions.
+    this.theme.geometryReplaced();
   }
 
   /** The frame/matrix/offset bundle this mesh is currently placed by — what
