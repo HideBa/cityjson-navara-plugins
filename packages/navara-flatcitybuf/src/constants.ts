@@ -54,6 +54,22 @@ export const MAX_FOOTPRINT_SPAN_M = 8000;
 export const VIEWPORT_FEATURE_BUDGET = 20000;
 export const RESIDENT_TRIANGLE_BUDGET = 4_000_000;
 export const RESIDENT_BYTE_BUDGET = 512 * 1024 * 1024;
+/**
+ * The worker's own residency cap. A backstop, not the primary mechanism: the
+ * main thread's `CellCache` is what normally decides what stays resident, and
+ * its `evict` message is what releases entries here. This bounds the damage
+ * when that conversation breaks down — a commit abandoned after cells were
+ * posted, a main thread whose budget is larger than this one's, a layer that
+ * is never closed.
+ *
+ * The same 512 MiB as `RESIDENT_BYTE_BUDGET`, deliberately: the two caches
+ * hold one entry per resident cell each, so a worker cap below the main
+ * thread's would drop cells the main thread still believes it can `recolor`
+ * or read `surfaces` from. Both degrade gracefully (`recolor` skips an
+ * unknown key, `surfaces` answers `not-found`), which is why this can be a
+ * hard cap at all.
+ */
+export const WORKER_RETAINED_BYTE_BUDGET = 512 * 1024 * 1024;
 export const MIN_COVER_CELLS = 9;
 export const MAX_COVER_CELLS = 64;
 export const MIN_CELL_M = 50;

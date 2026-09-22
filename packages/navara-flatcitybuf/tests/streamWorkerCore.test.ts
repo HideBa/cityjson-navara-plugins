@@ -162,7 +162,10 @@ function fakeAdapter(features: CityModel[]): FakeAdapter {
   return adapter;
 }
 
-function harness(adapter: StreamSourceAdapter) {
+function harness(
+  adapter: StreamSourceAdapter,
+  options?: { retainedByteBudget?: number },
+) {
   const posted: WorkerResponse[] = [];
   const ctx = {
     postMessage(m: WorkerResponse, t?: Transferable[]) {
@@ -170,7 +173,7 @@ function harness(adapter: StreamSourceAdapter) {
     },
     onmessage: null as ((ev: MessageEvent<WorkerRequest>) => void) | null,
   };
-  installStreamWorker(ctx, adapter);
+  installStreamWorker(ctx, adapter, options);
   const send = async (data: WorkerRequest): Promise<void> => {
     if (!ctx.onmessage) throw new Error("core did not install onmessage");
     await (ctx.onmessage({ data } as MessageEvent<WorkerRequest>) as unknown);
@@ -191,6 +194,7 @@ function fetchMsg(
   id: number,
   cells: string[],
   bbox: [number, number, number, number] = [0, 0, 1000, 1000],
+  hiddenTypes: string[] = [],
 ): WorkerRequest {
   return {
     type: "fetch",
@@ -199,7 +203,7 @@ function fetchMsg(
     level: 2,
     cells,
     lod: null,
-    hiddenTypes: [],
+    hiddenTypes,
     rules: [],
     rulesEnabled: false,
   };
@@ -848,5 +852,106 @@ describe("streamWorkerCore — with the CityParquet adapter", () => {
       code: "budget",
       aborted: false,
     });
+  });
+});
+
+/**
+ * Codex milestone review (Critical): the worker keeps a whole decoded
+ * `CityModel` per resident cell — geometry, attributes, object records — but
+ * the only number it reported was the geometry it transferred away. With
+ * every object type hidden, a cell bakes no triangles at all, so the main
+ * thread metered it at nearly nothing and never evicted it, while the worker
+ * held the decoded rows for as long as the tab lived.
+ */
+describe("streamWorkerCore — retained memory", () => {
+  it("reports the bytes it retains for a cell, even when every type is hidden", async () => {
+    const { posted, send } = harness(
+      fakeAdapter([feature("a", 100, 100), feature("b", 500, 100)]),
+    );
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(fetchMsg(1, ["2/0/0", "2/1/0"], [0, 0, 1000, 1000], ["Building"]));
+
+    const cells = posted.filter(ofType("cell"));
+    expect(cells).toHaveLength(2);
+    for (const cell of cells) {
+      // Nothing drawn...
+      expect(cell.geometry.triangleCount).toBe(0);
+      // ...but the model behind it is still resident here.
+      expect(cell.retainedBytes).toBeGreaterThan(0);
+    }
+  });
+
+  it("charges a cell with more geometry more retained bytes", async () => {
+    const small = harness(fakeAdapter([feature("a", 100, 100)]));
+    await small.send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await small.send(fetchMsg(1, ["2/0/0"]));
+
+    const many = harness(
+      fakeAdapter([
+        feature("a", 100, 100),
+        feature("a2", 110, 110),
+        feature("a3", 120, 120),
+      ]),
+    );
+    await many.send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await many.send(fetchMsg(1, ["2/0/0"]));
+
+    const bytesOf = (h: { posted: WorkerResponse[] }) =>
+      h.posted.filter(ofType("cell"))[0]!.retainedBytes;
+    expect(bytesOf(many)).toBeGreaterThan(bytesOf(small));
+  });
+
+  it("drops its least recently used cell once the retained estimate passes the cap", async () => {
+    const adapter = fakeAdapter([
+      feature("a", 100, 100), // 2/0/0
+      feature("b", 500, 100), // 2/1/0
+    ]);
+    // One cell's worth of budget: the second fetch must push the first out.
+    const probe = harness(adapter);
+    await probe.send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await probe.send(fetchMsg(1, ["2/0/0"]));
+    const oneCell = probe.posted.filter(ofType("cell"))[0]!.retainedBytes;
+
+    const { posted, send } = harness(adapter, {
+      retainedByteBudget: oneCell + 1,
+    });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(fetchMsg(1, ["2/0/0"]));
+    await send(fetchMsg(2, ["2/1/0"]));
+
+    // The newest cell still answers...
+    await send({ type: "surfaces", id: 3, objectId: "b" });
+    expect(posted.find(ofType("surfaceData"))?.objectId).toBe("b");
+    // ...and the oldest was dropped rather than retained forever.
+    await send({ type: "surfaces", id: 4, objectId: "a" });
+    expect(posted.find(errorOf(4))?.code).toBe("not-found");
+    // A recolor of the dropped key is skipped, not an error.
+    await send({
+      type: "recolor",
+      id: 5,
+      cells: ["2/0/0", "2/1/0"],
+      rules: [],
+      rulesEnabled: false,
+    });
+    expect(posted.filter(ofType("recolored")).map((r) => r.key)).toEqual([
+      "2/1/0",
+    ]);
+    expect(posted.find(errorOf(5))).toBeUndefined();
+  });
+
+  it("never drops a cell the fetch in flight was asked for", async () => {
+    const adapter = fakeAdapter([
+      feature("a", 100, 100), // 2/0/0
+      feature("b", 500, 100), // 2/1/0
+    ]);
+    // A budget below even one cell: the trim must still leave this commit's
+    // own cells alone, or the main thread adopts cells the worker has
+    // already forgotten.
+    const { posted, send } = harness(adapter, { retainedByteBudget: 1 });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(fetchMsg(1, ["2/0/0", "2/1/0"]));
+    expect(posted.filter(ofType("cell"))).toHaveLength(2);
+    await send({ type: "surfaces", id: 2, objectId: "a" });
+    expect(posted.find(ofType("surfaceData"))?.objectId).toBe("a");
   });
 });

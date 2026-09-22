@@ -97,10 +97,14 @@ export function hiddenTypesEqual(
  *  decode, not predicted" budget doc — `triangleCount` alone doesn't bound
  *  memory, and `ruleColors` is optional so it must be counted only when
  *  present. */
-export function cellStatsFromGeometry(g: CellGeometry): CellStats {
+export function cellStatsFromGeometry(
+  g: CellGeometry,
+  retainedBytes = 0,
+): CellStats {
   return {
     triangles: g.triangleCount,
     bytes:
+      retainedBytes +
       g.positions.byteLength +
       g.normals.byteLength +
       g.baseColors.byteLength +

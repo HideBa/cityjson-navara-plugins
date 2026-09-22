@@ -601,7 +601,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
                   builtWithRulesEnabled: rulesEnabled,
                   builtWithRules: rules,
                 },
-                stats: cellStatsFromGeometry(msg.geometry),
+                stats: cellStatsFromGeometry(msg.geometry, msg.retainedBytes),
               });
             } else if (msg.type === "error") {
               fetchError = msg.message;

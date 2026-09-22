@@ -206,6 +206,12 @@ interface FakeClientOpts {
   /** What a `surfaces` request resolves with. Absent = the worker's
    *  "not resident in any cached cell" error response. */
   readonly surfaces?: ReadonlyArray<unknown>;
+  /** Triangles in every delivered cell's geometry. 0 models the
+   *  every-type-hidden case: the worker still decoded and retained the cell,
+   *  but bakes no geometry for it. */
+  readonly trianglesPerCell?: number;
+  /** What the worker says it RETAINS for each delivered cell. */
+  readonly retainedBytes?: number;
 }
 
 function makeFakeClient(opts: FakeClientOpts) {
@@ -292,7 +298,8 @@ function makeFakeClient(opts: FakeClientOpts) {
             key,
             // A distinct object per cell: `resolvePick` must be provably
             // answering from the cell it says it is.
-            geometry: geom(1, `B_${key}`),
+            geometry: geom(opts.trianglesPerCell ?? 1, `B_${key}`),
+            retainedBytes: opts.retainedBytes ?? 0,
             objects: (opts.objectTypes ?? []).map((t, i) =>
               objectRecord(`${key}_o${i}`, t),
             ),
@@ -520,6 +527,8 @@ function makeHandle(
     /** Resident triangle budget. The real one is 4 M — set it low to make
      *  `evictToBudget` actually bite within a fixture-sized cover. */
     maxTriangles?: number;
+    /** Resident byte budget. The real one is 512 MiB. */
+    maxBytes?: number;
     /** A host's highlight/hover pair; omitted keeps the historical amber. */
     colors?: ResolvedCityColors;
   },
@@ -533,7 +542,7 @@ function makeHandle(
     header: HEADER,
     cache: new CellCache<CellEntry>({
       maxTriangles: opts.maxTriangles ?? RESIDENT_TRIANGLE_BUDGET,
-      maxBytes: RESIDENT_BYTE_BUDGET,
+      maxBytes: opts.maxBytes ?? RESIDENT_BYTE_BUDGET,
     }),
     frame: FRAME,
     toSourceXY: TO_SOURCE_XY,
@@ -730,6 +739,31 @@ describe("FcbStreamLayerHandle.commit", () => {
     for (const key of evicted) {
       expect(handle.cacheKeysForTest()).not.toContain(key);
     }
+  });
+
+  it("meters the bytes the worker RETAINS for a cell, not only the geometry it transferred", async () => {
+    // Codex milestone review (Critical): the worker keeps a whole decoded
+    // `CityModel` per cell — geometry, attributes, the lot — while the main
+    // thread's cache metered only the typed arrays that came over the wire.
+    // Hide every object type and pan: each cell costs zero triangles and
+    // almost no transferred bytes, so nothing is ever evicted, while the
+    // worker's own cache grows without bound. The worker now reports what it
+    // retains, and it counts against the same byte budget.
+    const RETAINED = 4 * 1024 * 1024;
+    const { handle, client } = makeHandle({
+      trianglesPerCell: 0,
+      retainedBytes: RETAINED,
+      maxBytes: RETAINED * 2,
+    });
+    await handle.commit(topDownRays());
+
+    const cover = coverFor(topDownRays());
+    expect(cover.length).toBeGreaterThan(2);
+    // Two cells' worth of retained bytes is the whole budget.
+    expect(handle.cacheKeysForTest()).toHaveLength(2);
+    const evicts = requestsOfType(client.notifyCalls, "evict");
+    expect(evicts).toHaveLength(1);
+    expect((evicts[0]!.cells as string[]).length).toBe(cover.length - 2);
   });
 
   it("discards a stale commit whose probe response arrives after abortInFlight() bumped the epoch", async () => {

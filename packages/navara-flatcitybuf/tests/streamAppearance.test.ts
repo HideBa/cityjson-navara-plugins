@@ -104,6 +104,7 @@ function fakeClient() {
         for (const key of msg.cells as string[]) {
           onMessage({
             type: "cell",
+            retainedBytes: 0,
             id: 0,
             key,
             geometry: texturedGeometry(),

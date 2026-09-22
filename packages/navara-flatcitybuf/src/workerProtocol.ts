@@ -155,6 +155,13 @@ export type WorkerResponse =
       /** Every appearance theme the worker has seen so far across the open
        *  file — learned like the LoD ladder, offered to the user as it grows. */
       appearanceThemes?: AppearanceTheme[];
+      /** What the WORKER retains for this cell (its decoded `CityModel` plus
+       *  the arrays it copied), estimated structurally — never what the
+       *  transferred geometry costs, which with every type hidden is zero
+       *  while the worker still holds the rows. The main thread adds it to
+       *  the geometry bytes it meters, so residency is bounded by what is
+       *  really held on both sides (Codex milestone review, Critical). */
+      retainedBytes: number;
     }
   | { type: "recolored"; id: number; key: CellKey; ruleColors: Float32Array }
   | { type: "surfaceData"; id: number; objectId: string; surfaces: unknown[] }

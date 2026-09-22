@@ -23,6 +23,7 @@ import {
   type CityModel,
 } from "@cityjson/navara-core";
 import { bucketFeatures } from "./bucketFeatures";
+import { WORKER_RETAINED_BYTE_BUDGET } from "./constants";
 import { toObjectRecords } from "./objectRecords";
 import type {
   OpenedSource,
@@ -64,6 +65,73 @@ interface CachedCell {
    *  back to them when `buildRuleColorsFromArrays` returns null (no rule
    *  matched) without needing to re-triangulate the cell to get them. */
   readonly colors: Float32Array;
+  /** What this entry costs the worker, by {@link estimateRetainedBytes}. */
+  readonly retainedBytes: number;
+}
+
+/** Per-entry costs of a decoded `CityObject` graph, in bytes. Shape-based
+ *  guesses at V8's layout, not measurements of it: an object's own fields and
+ *  its `attributes`/`bbox`/`parents`/`children`, a surface's fields and its
+ *  `rings` array, a ring's array header, and a `[x, y, z]` coordinate tuple
+ *  (a JSArray: header + elements backing store + three doubles). */
+const BYTES_PER_OBJECT = 320;
+const BYTES_PER_SURFACE = 160;
+const BYTES_PER_RING = 40;
+const BYTES_PER_VERTEX = 88;
+
+/**
+ * What the worker retains for one cell, estimated from its STRUCTURE — the
+ * typed arrays it copied, plus a per-object / per-surface / per-ring /
+ * per-vertex charge for the decoded `CityModel` it holds by reference.
+ *
+ * It exists because `CellGeometry`'s transferred arrays are not the cost: the
+ * worker keeps a whole decoded model per resident cell, and with every object
+ * type hidden a cell bakes NO geometry at all — zero triangles, zero
+ * transferred bytes — while still retaining every decoded row behind it. The
+ * main thread's byte budget metered only what came over the wire, so such
+ * cells were never evicted and the worker grew without bound (Codex milestone
+ * review, Critical).
+ *
+ * Accuracy: an order-of-magnitude figure, deliberately cheap (one pass over
+ * rings, never over vertices). It does NOT count attribute VALUES, so a
+ * source with long text attributes costs more than this says; V8's real
+ * per-object overhead varies with shape, so a source of tiny objects costs
+ * less. Treat it as ±50 % — enough to keep a pan bounded, not a heap figure.
+ */
+function estimateRetainedBytes(
+  model: CityModel,
+  objectIndices: Uint32Array,
+  surfaceIndices: Uint32Array,
+  colors: Float32Array,
+  objectKeys: ReadonlyArray<string>,
+): number {
+  let objects = 0;
+  let surfaces = 0;
+  let rings = 0;
+  let vertices = 0;
+  for (const obj of Object.values(model.objects)) {
+    if (!obj) continue;
+    objects += 1;
+    for (const surface of obj.surfaces) {
+      surfaces += 1;
+      for (const ring of surface.rings) {
+        rings += 1;
+        vertices += ring.length;
+      }
+    }
+  }
+  let keyBytes = 0;
+  for (const key of objectKeys) keyBytes += key.length * 2 + 24;
+  return (
+    objectIndices.byteLength +
+    surfaceIndices.byteLength +
+    colors.byteLength +
+    keyBytes +
+    objects * BYTES_PER_OBJECT +
+    surfaces * BYTES_PER_SURFACE +
+    rings * BYTES_PER_RING +
+    vertices * BYTES_PER_VERTEX
+  );
 }
 
 /**
@@ -191,10 +259,18 @@ function unionLods(
  * `adapter`. All state lives in this call's closure: one install is one
  * worker.
  */
+export interface StreamWorkerOptions {
+  /** Overrides {@link WORKER_RETAINED_BYTE_BUDGET} (tests). */
+  readonly retainedByteBudget?: number;
+}
+
 export function installStreamWorker(
   ctx: StreamWorkerContext,
   adapter: StreamSourceAdapter,
+  options: StreamWorkerOptions = {},
 ): void {
+  const retainedByteBudget =
+    options.retainedByteBudget ?? WORKER_RETAINED_BYTE_BUDGET;
   /** Set together with `placement` — both exist exactly when a source is open
    *  and admitted (see the `open` handler). */
   let grid: Grid | undefined;
@@ -230,6 +306,53 @@ export function installStreamWorker(
    *  releases entries here (see the `evict`/`close` handlers below). Without
    *  it, this map would grow without bound as the viewport pans. */
   const cells = new Map<CellKey, CachedCell>();
+  /** Running sum of `cells`' `retainedBytes`, kept by the helpers below —
+   *  every mutation of `cells` goes through one of them, or the total (and
+   *  therefore the cap) silently drifts. Map insertion order is the LRU
+   *  order: `cacheSet` and `cacheTouch` re-insert, so the oldest entry is
+   *  always first. */
+  let retainedBytes = 0;
+
+  function cacheSet(key: CellKey, cell: CachedCell): void {
+    const previous = cells.get(key);
+    if (previous) retainedBytes -= previous.retainedBytes;
+    cells.delete(key);
+    cells.set(key, cell);
+    retainedBytes += cell.retainedBytes;
+  }
+
+  function cacheDelete(key: CellKey): void {
+    const previous = cells.get(key);
+    if (!previous) return;
+    retainedBytes -= previous.retainedBytes;
+    cells.delete(key);
+  }
+
+  function cacheClear(): void {
+    cells.clear();
+    retainedBytes = 0;
+  }
+
+  /** Moves `key` to the most-recently-used end. */
+  function cacheTouch(key: CellKey): void {
+    const cell = cells.get(key);
+    if (!cell) return;
+    cells.delete(key);
+    cells.set(key, cell);
+  }
+
+  /** Drops least-recently-used entries until the worker is back inside its
+   *  own cap, never touching a key of the commit in flight (`keep`) — those
+   *  are about to be posted, and the main thread would then hold cells this
+   *  side had already forgotten. */
+  function cacheTrim(keep: ReadonlySet<CellKey>): void {
+    if (retainedBytes <= retainedByteBudget) return;
+    for (const key of [...cells.keys()]) {
+      if (retainedBytes <= retainedByteBudget) return;
+      if (keep.has(key)) continue;
+      cacheDelete(key);
+    }
+  }
 
   function post(msg: WorkerResponse, transfer: Transferable[] = []): void {
     ctx.postMessage(msg, transfer);
@@ -256,7 +379,7 @@ export function installStreamWorker(
       controller?.abort();
       grid = undefined;
       placement = undefined;
-      cells.clear();
+      cacheClear();
       opened = undefined;
       if (adapterOpen) {
         adapterOpen = false;
@@ -366,8 +489,8 @@ export function installStreamWorker(
         }[] = [];
         const rollbackTouchedKeys = (): void => {
           for (const { key, previous } of touchedKeys) {
-            if (previous) cells.set(key, previous);
-            else cells.delete(key);
+            if (previous) cacheSet(key, previous);
+            else cacheDelete(key);
           }
         };
 
@@ -513,14 +636,28 @@ export function installStreamWorker(
             // refetch of an already-resident cell must roll back to THIS, not
             // to nothing, if the call fails later.
             const previous = cells.get(key);
-            cells.set(key, {
+            const objectIndices = a.objectIndices.slice();
+            const surfaceIndices = a.surfaceIndices.slice();
+            const colors = a.colors.slice();
+            const retained = estimateRetainedBytes(
+              cellModel,
+              objectIndices,
+              surfaceIndices,
+              colors,
+              a.objectKeys,
+            );
+            cacheSet(key, {
               model: cellModel,
-              objectIndices: a.objectIndices.slice(),
-              surfaceIndices: a.surfaceIndices.slice(),
+              objectIndices,
+              surfaceIndices,
               objectKeys: a.objectKeys,
-              colors: a.colors.slice(),
+              colors,
+              retainedBytes: retained,
             });
             touchedKeys.push({ key, previous });
+            // Backstop only, and never at the expense of THIS commit: the
+            // main thread's evict is what normally frees entries here.
+            cacheTrim(resident);
 
             post(
               {
@@ -541,6 +678,11 @@ export function installStreamWorker(
                 // them, so the ladder is complete before every cell is seen.
                 lodsSeen: unionLods(cellLods, knownLods),
                 appearanceThemes,
+                // What this cell costs the WORKER, which is not what its
+                // transferred arrays cost: the main thread adds it to the
+                // geometry bytes it meters, so a cell that bakes nothing
+                // (every type hidden) still consumes residency budget.
+                retainedBytes: retained,
               },
               [
                 a.positions.buffer,
@@ -563,10 +705,11 @@ export function installStreamWorker(
       if (msg.type === "recolor") {
         for (const key of msg.cells) {
           const cached = cells.get(key);
-          // A recolor request can race a viewport move: the main thread may
-          // ask to recolor a key this worker has since evicted. Skip rather
-          // than error — the main thread has already dropped that cell too.
+          // A recolor request can race a viewport move (or this worker's own
+          // retained-byte trim): the main thread may ask to recolor a key
+          // this worker no longer holds. Skip rather than error.
           if (!cached) continue;
+          cacheTouch(key);
           // buildRuleColorsFromArrays returns null when no rule matched
           // anything (or rulesEnabled is false); ruleColors on the wire is
           // non-nullable, so fall back to a fresh copy of the cached base
@@ -593,9 +736,10 @@ export function installStreamWorker(
       }
 
       if (msg.type === "surfaces") {
-        for (const cached of cells.values()) {
+        for (const [key, cached] of cells) {
           const obj = cached.model.objects[msg.objectId];
           if (obj) {
+            cacheTouch(key);
             post({
               type: "surfaceData",
               id: msg.id,
@@ -616,7 +760,7 @@ export function installStreamWorker(
       }
 
       if (msg.type === "evict") {
-        for (const key of msg.cells) cells.delete(key);
+        for (const key of msg.cells) cacheDelete(key);
         return;
       }
 
@@ -632,7 +776,7 @@ export function installStreamWorker(
         adapter.close();
         grid = undefined;
         placement = undefined;
-        cells.clear();
+        cacheClear();
         return;
       }
     } catch (e) {
