@@ -107,7 +107,7 @@ function makeRegistry(
   over: Partial<ConstructorParameters<typeof StreamLayerRegistry>[0]> = {},
 ) {
   return new StreamLayerRegistry({
-    createClient: () => {
+    createClient: (_format) => {
       throw new Error("no worker client in this test");
     },
     createMeshFactory: () => noMeshes,
@@ -458,7 +458,7 @@ describe("StreamLayerRegistry.openStream", () => {
     const trace: string[] = [];
     const { client } = makeFakeClient({ trace });
     const r = makeRegistry({
-      createClient: () => client,
+      createClient: (_format) => client,
       getPickRays: () => topDownRays(),
       sampleGeoidHeight: async () => {
         trace.push("geoid");
@@ -500,7 +500,7 @@ describe("StreamLayerRegistry.openStream", () => {
     const { client } = makeFakeClient({ trace });
     const sample = vi.fn(async () => 999);
     const r = makeRegistry({
-      createClient: () => client,
+      createClient: (_format) => client,
       getPickRays: () => null,
       sampleGeoidHeight: sample,
     });
@@ -520,7 +520,7 @@ describe("StreamLayerRegistry.openStream", () => {
       const { client } = makeFakeClient({ trace });
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const r = makeRegistry({
-        createClient: () => client,
+        createClient: (_format) => client,
         getPickRays: () => null,
         // The failure this guards: core's sampler issues a bare `fetch` with
         // no AbortSignal, and browser fetch has no default timeout — an
@@ -563,7 +563,7 @@ describe("StreamLayerRegistry.openStream", () => {
     const { client } = makeFakeClient({ trace });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const r = makeRegistry({
-      createClient: () => client,
+      createClient: (_format) => client,
       getPickRays: () => null,
       sampleGeoidHeight: async () => {
         throw new Error("terrain service down");
@@ -586,7 +586,7 @@ describe("StreamLayerRegistry.openStream", () => {
     const { client } = makeFakeClient({ trace });
     let rays: PickRaySource | null = null;
     const r = makeRegistry({
-      createClient: () => client,
+      createClient: (_format) => client,
       getPickRays: () => rays,
       sampleGeoidHeight: async () => GEOID_M,
     });
@@ -610,7 +610,7 @@ describe("StreamLayerRegistry.openStream", () => {
       const trace: string[] = [];
       const { client, terminate } = makeFakeClient({ trace, epsg });
       const r = makeRegistry({
-        createClient: () => client,
+        createClient: (_format) => client,
         getPickRays: () => null,
       });
       await expect(r.openStream(openOpts)).rejects.toThrow(
@@ -635,7 +635,7 @@ describe("StreamLayerRegistry.openStream", () => {
       },
     });
     const r = makeRegistry({
-      createClient: () => client,
+      createClient: (_format) => client,
       getPickRays: () => null,
     });
     await expect(r.openStream(openOpts)).rejects.toThrow(
@@ -658,7 +658,7 @@ describe("StreamLayerRegistry.openStream", () => {
       }),
     );
     const r = makeRegistry({
-      createClient: () => client,
+      createClient: (_format) => client,
       getPickRays: () => null,
     });
     await expect(r.openStream(openOpts)).rejects.toThrow(
@@ -670,7 +670,7 @@ describe("StreamLayerRegistry.openStream", () => {
   it("refuses a duplicate layer id without opening a worker", async () => {
     const trace: string[] = [];
     const { client } = makeFakeClient({ trace });
-    const createClient = vi.fn(() => client);
+    const createClient = vi.fn((_format: string) => client);
     const r = makeRegistry({
       createClient,
       getPickRays: () => null,
@@ -687,7 +687,7 @@ describe("StreamLayerRegistry.openStream", () => {
     const trace: string[] = [];
     const { client } = makeFakeClient({ trace });
     const r = makeRegistry({
-      createClient: () => client,
+      createClient: (_format) => client,
       getPickRays: () => topDownRays(),
       sampleGeoidHeight: async () => GEOID_M,
     });
@@ -724,7 +724,7 @@ describe("StreamLayerRegistry.openStream", () => {
     const trace: string[] = [];
     const { client } = makeFakeClient({ trace });
     const r = makeRegistry({
-      createClient: () => client,
+      createClient: (_format) => client,
       getPickRays: () => topDownRays(),
       sampleGeoidHeight: async () => GEOID_M,
     });
@@ -747,12 +747,61 @@ describe("StreamLayerRegistry.openStream", () => {
     });
   });
 
+  it("creates a CityParquet client for format 'cityparquet'", async () => {
+    const trace: string[] = [];
+    const { client } = makeFakeClient({ trace });
+    const createClient = vi.fn((_format: string) => client);
+    const r = makeRegistry({
+      createClient,
+      getPickRays: () => null,
+      sampleGeoidHeight: async () => GEOID_M,
+    });
+    await r.openStream({ ...openOpts, format: "cityparquet" });
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(createClient).toHaveBeenCalledWith("cityparquet");
+  });
+
+  it("creates a FlatCityBuf client when no format is given", async () => {
+    const trace: string[] = [];
+    const { client } = makeFakeClient({ trace });
+    const createClient = vi.fn((_format: string) => client);
+    const r = makeRegistry({
+      createClient,
+      getPickRays: () => null,
+      sampleGeoidHeight: async () => GEOID_M,
+    });
+    await r.openStream(openOpts);
+    expect(createClient).toHaveBeenCalledWith("flatcitybuf");
+  });
+
+  it("sends the source as one 'source' field on every open", async () => {
+    const trace: string[] = [];
+    const { client } = makeFakeClient({ trace });
+    const r = makeRegistry({
+      createClient: (_format) => client,
+      getPickRays: () => null,
+      sampleGeoidHeight: async () => GEOID_M,
+    });
+    const urls = ["https://example/a.parquet", "https://example/b.parquet"];
+    await r.openStream({ id: "L2", source: { urls } });
+    const send = client.send as unknown as ReturnType<typeof vi.fn>;
+    const opens = send.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .filter((m) => m.type === "open");
+    expect(opens).toHaveLength(2);
+    for (const open of opens) {
+      expect(open.source).toEqual({ urls });
+      expect(open).not.toHaveProperty("url");
+      expect(open).not.toHaveProperty("blob");
+    }
+  });
+
   it("registers the layer under the settle loop, and a LoD change forces a commit", async () => {
     const trace: string[] = [];
     const view = new FakeView();
     const { client } = makeFakeClient({ trace });
     const r = makeRegistry({
-      createClient: () => client,
+      createClient: (_format) => client,
       getPickRays: () => topDownRays(),
       sampleGeoidHeight: async () => GEOID_M,
     });

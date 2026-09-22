@@ -14,9 +14,10 @@
  * `@cityjson/navara-cityjson/plugin` does; see Task B1's
  * NODE_IMPORT_SAFE = false verdict.
  *
- * `./fcb.worker.ts` is deliberately NOT re-exported: it is a worker entry
- * point whose module scope installs an `onmessage` handler, and it is reached
- * only through `WorkerClient`'s `new Worker(new URL(...))`.
+ * `./fcb.worker.ts` and `./cityparquet.worker.ts` are deliberately NOT
+ * re-exported: each is a worker entry point whose module scope installs an
+ * `onmessage` handler, and each is reached only through `WorkerClient`'s
+ * `new Worker(new URL(...))`.
  */
 import { NAVARA_CORE_VERSION } from "@cityjson/navara-core";
 
@@ -31,6 +32,12 @@ export * from "./bucketFeatures";
 export * from "./objectRecords";
 export * from "./workerProtocol";
 export * from "./workerClient";
+// AdmissionCode / AdmissionError already come through `./fcbSource`.
+export type {
+  OpenedSource,
+  StreamHeader,
+  StreamSourceAdapter,
+} from "./streamSourceAdapter";
 export * from "./fcbSource";
 export * from "./viewportFootprint";
 export * from "./queryRegion";

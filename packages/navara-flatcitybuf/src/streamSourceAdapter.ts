@@ -17,6 +17,14 @@ import type { WorkerRequest } from "./workerProtocol";
 export interface StreamHeader {
   readonly version: string;
   readonly featuresCount: number | undefined;
+  /** Individual CityObjects in the dataset, when the format knows it up
+   *  front. CityParquet sets it (the sum of its files' row counts);
+   *  FlatCityBuf leaves it undefined, because `featuresCount` counts
+   *  features (an object plus its parts), not objects. */
+  readonly objectsCount?: number;
+  /** The source's known LoDs, when the format knows them up front. The core
+   *  folds them into every posted cell's `lodsSeen`. */
+  readonly lods?: ReadonlyArray<string>;
   /** In the stream's METRIC CRS. `undefined` exactly when the source carries
    *  no extent — callers must check the admission first; this model does not
    *  repeat that gate, so it never lies about having an extent it doesn't. */
@@ -32,7 +40,11 @@ export type AdmissionCode =
   | "no-index"
   | "unknown-count"
   | "non-metric-crs"
-  | "non-finite";
+  | "non-finite"
+  | "unsupported"
+  | "multi-source"
+  | "mixed-crs"
+  | "no-range";
 
 /** Why a source cannot be streamed by viewport (`null` = admitted). */
 export interface AdmissionError {

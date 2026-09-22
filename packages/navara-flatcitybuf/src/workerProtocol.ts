@@ -72,6 +72,21 @@ export interface ResidentObjectRecord {
   readonly children: ReadonlyArray<string>;
 }
 
+/** Which worker entry a stream runs in: each format has its own worker chunk,
+ *  both speaking this protocol. */
+export type WorkerFormat = "flatcitybuf" | "cityparquet";
+
+/**
+ * What a stream reads from: one remote file, one local file, or a set of
+ * either (a dataset split across files). Structured-cloneable, so it travels
+ * to the worker as is. The FlatCityBuf worker admits exactly one source.
+ */
+export type StreamSource =
+  | { readonly url: string }
+  | { readonly blob: Blob }
+  | { readonly urls: ReadonlyArray<string> }
+  | { readonly blobs: ReadonlyArray<Blob> };
+
 /**
  * Metres added to every vertex's geodetic height, and to each cell's ENU frame
  * origin: the geoid undulation at the layer (CityJSON z is orthometric, the
@@ -89,8 +104,7 @@ interface OpenExtras {
 }
 
 export type WorkerRequest =
-  | ({ type: "open"; id: number; url: string } & OpenExtras)
-  | ({ type: "open"; id: number; blob: Blob } & OpenExtras)
+  | ({ type: "open"; id: number; source: StreamSource } & OpenExtras)
   | { type: "probe"; id: number; bbox: [number, number, number, number] }
   | {
       type: "fetch";

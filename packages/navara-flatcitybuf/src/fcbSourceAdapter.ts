@@ -28,6 +28,22 @@ import type {
   OpenRequest,
   StreamSourceAdapter,
 } from "./streamSourceAdapter";
+import type { StreamSource } from "./workerProtocol";
+
+/** The one file a FlatCityBuf stream reads: a single url or blob, or a list
+ *  of exactly one; `null` for a list of several (a `.fcb` is one file). */
+function singleSource(
+  source: StreamSource,
+): { url: string } | { blob: Blob } | null {
+  if ("url" in source) return { url: source.url };
+  if ("blob" in source) return { blob: source.blob };
+  const list = "urls" in source ? source.urls : source.blobs;
+  if (list.length === 0) throw new Error("the stream source list is empty");
+  if (list.length > 1) return null;
+  return "urls" in source
+    ? { url: source.urls[0]! }
+    : { blob: source.blobs[0]! };
+}
 
 /** A mutable copy of a readonly bbox, for the reader's query type. */
 function tuple(
@@ -54,9 +70,24 @@ export function createFcbSourceAdapter(): StreamSourceAdapter {
 
   return {
     async open(req: OpenRequest): Promise<OpenedSource> {
-      reader = await openFcb(
-        "url" in req ? { url: req.url } : { blob: req.blob },
-      );
+      const one = singleSource(req.source);
+      if (!one) {
+        return {
+          header: {
+            version: "",
+            featuresCount: undefined,
+            extent: undefined,
+            referenceSystem: undefined,
+            epsg: null,
+          },
+          admission: {
+            code: "multi-source",
+            message:
+              "A FlatCityBuf stream reads one file; open each file as its own layer.",
+          },
+        };
+      }
+      reader = await openFcb(one);
       appearance = new AppearanceMerger();
       return {
         header: headerModel(reader.header),

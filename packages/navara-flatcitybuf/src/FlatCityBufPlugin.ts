@@ -69,7 +69,7 @@ export class FlatCityBufPlugin extends Plugin<ThreeView, ViewContext> {
       // name, and both plugins register the same class from the same module
       // instance) and is what makes this plugin usable on its own.
       descriptors: [[CITY_MESH_ARRAYS_KEY, CityMeshArraysDesc]],
-      createClient: () => new WorkerClient(),
+      createClient: (format) => new WorkerClient(format),
       // The stamping (layerId / cellKey / pickStrategy) lives in an
       // engine-free module so it is provable in Node — see `cellMeshFactory`.
       createMeshFactory: (layerId, textures) =>

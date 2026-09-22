@@ -61,6 +61,7 @@ import { resolveCityColors, type CityColors } from "@cityjson/navara-cityjson";
 import { makeGrid } from "./tileGrid";
 import type { Ray } from "./viewportFootprint";
 import type { WorkerClient } from "./workerClient";
+import type { StreamSource, WorkerFormat } from "./workerProtocol";
 
 /**
  * The subset of Navara's `ThreeView` the registry uses: the descriptor
@@ -89,9 +90,10 @@ export interface StreamLayerRegistryDeps {
   /** `[descriptorKey, descriptorClass]` pairs, registered on {@link
    *  StreamLayerRegistry.attach}. Empty for a host that registers them itself. */
   readonly descriptors?: ReadonlyArray<readonly [string, unknown]>;
-  /** One worker per layer. Injected because `new WorkerClient()` reaches the
-   *  DOM `Worker` constructor, which Node does not have. */
-  readonly createClient: () => WorkerClient;
+  /** One worker per layer, of the stream's format. Injected because `new
+   *  WorkerClient()` reaches the DOM `Worker` constructor, which Node does
+   *  not have. */
+  readonly createClient: (format: WorkerFormat) => WorkerClient;
   /** Engine seam: builds one mesh per resident cell of the named layer. */
   /** `textures` is the layer's shared image cache, for cells built under a
    *  texture theme. */
@@ -124,7 +126,9 @@ export interface StreamLayerRegistryDeps {
 
 export interface OpenStreamOptions {
   readonly id: string;
-  readonly source: { readonly url: string } | { readonly blob: Blob };
+  readonly source: StreamSource;
+  /** Which worker reads `source`. Omitted means `"flatcitybuf"`. */
+  readonly format?: WorkerFormat;
   readonly rules?: ReadonlyArray<Rule>;
   readonly rulesEnabled?: boolean;
   readonly visible?: boolean;
@@ -371,7 +375,7 @@ export class StreamLayerRegistry {
         `FlatCityBufPlugin.openStream: a layer with id "${opts.id}" is already registered. Remove it first — otherwise its worker would be unreachable and never terminated.`,
       );
     }
-    const client = this.deps.createClient();
+    const client = this.deps.createClient(opts.format ?? "flatcitybuf");
     // Once per stream, before the worker opens: the worker needs the palette
     // in its `open`, the handle needs the highlight pair.
     const colors = resolveCityColors(this.deps.colors, opts.colors);
@@ -598,11 +602,12 @@ export class StreamLayerRegistry {
     heightOffset: number | undefined,
     surfaceColors: SurfacePalette | undefined,
   ): Promise<FcbHeaderModel> {
-    const resp = await client.send(
-      "url" in opts.source
-        ? { type: "open", url: opts.source.url, heightOffset, surfaceColors }
-        : { type: "open", blob: opts.source.blob, heightOffset, surfaceColors },
-    );
+    const resp = await client.send({
+      type: "open",
+      source: opts.source,
+      heightOffset,
+      surfaceColors,
+    });
     if (resp.type === "error") throw new Error(resp.message);
     if (resp.type !== "opened") {
       throw new Error(`Unexpected response opening "${opts.id}": ${resp.type}`);

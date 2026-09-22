@@ -129,7 +129,7 @@ describe("fcb.worker — single traversal per commit", () => {
     const handler = fakeSelf.onmessage;
     if (!handler) throw new Error("worker module did not register onmessage");
 
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",

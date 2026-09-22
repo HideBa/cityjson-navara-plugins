@@ -6,7 +6,11 @@
  * newer request was issued.
  */
 import { assertCellGeometry } from "./workerProtocol";
-import type { WorkerRequest, WorkerResponse } from "./workerProtocol";
+import type {
+  WorkerFormat,
+  WorkerRequest,
+  WorkerResponse,
+} from "./workerProtocol";
 
 /**
  * `Omit<WorkerRequest, "id">` does NOT do what it looks like it does: `Omit`
@@ -44,16 +48,23 @@ export class WorkerClient {
   private nextId = 0;
   private epoch = 0;
 
-  constructor() {
+  constructor(format: WorkerFormat = "flatcitybuf") {
     // URL form + Vite config validated by the Task C4b bundling spike (dev and
     // production preview): with this package consumed through the app's source
     // alias, Vite resolves the specifier relative to THIS module's real path
     // inside the submodule and emits the worker chunk with no config changes.
     // (tsup does not emit workers, so a published-dist consumer would need a
     // different packaging — recorded in the C4b findings, not needed here.)
-    this.worker = new Worker(new URL("./fcb.worker.ts", import.meta.url), {
-      type: "module",
-    });
+    // One literal `new Worker(new URL(...))` per format: Vite only rewrites a
+    // literal specifier into a worker chunk, so the URL cannot be computed.
+    this.worker =
+      format === "cityparquet"
+        ? new Worker(new URL("./cityparquet.worker.ts", import.meta.url), {
+            type: "module",
+          })
+        : new Worker(new URL("./fcb.worker.ts", import.meta.url), {
+            type: "module",
+          });
     this.worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
       const stream = this.streaming.get(ev.data.id);
       if (stream) {

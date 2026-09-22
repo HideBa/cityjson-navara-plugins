@@ -137,6 +137,25 @@ function sentId(worker: FakeWorker, callIndex = 0): number {
 }
 
 describe("WorkerClient", () => {
+  it("defaults to the FlatCityBuf worker entry", () => {
+    new WorkerClient();
+    expect(String(currentWorker().url)).toMatch(/\/fcb\.worker\.ts$/);
+    expect(currentWorker().options).toEqual({ type: "module" });
+  });
+
+  it("constructs the CityParquet worker entry for the cityparquet format", () => {
+    new WorkerClient("cityparquet");
+    expect(String(currentWorker().url)).toMatch(
+      /\/cityparquet\.worker\.ts$/,
+    );
+    expect(currentWorker().options).toEqual({ type: "module" });
+  });
+
+  it("constructs the FlatCityBuf worker entry for the flatcitybuf format", () => {
+    new WorkerClient("flatcitybuf");
+    expect(String(currentWorker().url)).toMatch(/\/fcb\.worker\.ts$/);
+  });
+
   it("send() resolves the promise matching the dispatched id", async () => {
     const client = new WorkerClient();
     const worker = currentWorker();

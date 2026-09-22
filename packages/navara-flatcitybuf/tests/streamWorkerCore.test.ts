@@ -172,7 +172,7 @@ const ofType =
 describe("streamWorkerCore", () => {
   it("open posts 'opened' with the adapter's header and admission", async () => {
     const { posted, send } = harness(fakeAdapter([]));
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
     const opened = posted.find(ofType("opened"));
     expect(opened).toMatchObject({
       id: 0,
@@ -185,7 +185,7 @@ describe("streamWorkerCore", () => {
     const { posted, send } = harness(
       fakeAdapter([feature("a", 100, 100), feature("b", 500, 100)]),
     );
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send({ type: "probe", id: 1, bbox: [0, 0, 1000, 1000] });
     expect(posted.find(ofType("probed"))).toEqual({
       type: "probed",
@@ -201,7 +201,7 @@ describe("streamWorkerCore", () => {
         feature("b", 500, 100), // 2/1/0
       ]),
     );
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send(fetchMsg(1, ["2/0/0", "2/1/0", "2/2/0"]));
 
     const cells = posted.filter(ofType("cell"));
@@ -223,7 +223,7 @@ describe("streamWorkerCore", () => {
       feature("b", 500, 100), // 2/1/0
     ]);
     const { posted, send } = harness(adapter);
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
 
     let release!: () => void;
     adapter.gate = new Promise((r) => (release = r));
@@ -254,7 +254,7 @@ describe("streamWorkerCore", () => {
 
   it("surfaces answers from the cache, and 'not-found' once the cell is evicted", async () => {
     const { posted, send } = harness(fakeAdapter([feature("a", 100, 100)]));
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send(fetchMsg(1, ["2/0/0"]));
 
     await send({ type: "surfaces", id: 2, objectId: "a" });
@@ -273,7 +273,7 @@ describe("streamWorkerCore", () => {
 
   it("recolor posts 'recolored' for cached cells only", async () => {
     const { posted, send } = harness(fakeAdapter([feature("a", 100, 100)]));
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send(fetchMsg(1, ["2/0/0"]));
     const cell = posted.find(ofType("cell"))!;
 
@@ -300,7 +300,7 @@ describe("streamWorkerCore", () => {
       feature("e", 700, 100),
     ]);
     const { posted, send } = harness(adapter);
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send(fetchMsg(1, ["2/0/0", "2/1/0"], [0, 0, 600, 400]));
 
     // The query is the union of the requested cells, not the view.
@@ -315,7 +315,7 @@ describe("streamWorkerCore", () => {
   it("a fetch for no cells answers 'done' without a traversal", async () => {
     const adapter = fakeAdapter([feature("a", 100, 100)]);
     const { posted, send } = harness(adapter);
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send(fetchMsg(1, []));
     expect(adapter.selectBBoxes).toEqual([]);
     expect(posted.at(-1)).toEqual({ type: "done", id: 1 });
@@ -335,7 +335,7 @@ describe("streamWorkerCore", () => {
       ownership: "feature" as const,
     });
     const { posted, send } = harness(adapter);
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send(fetchMsg(1, ["2/0/0", "2/1/0"]));
 
     const cells = posted.filter(ofType("cell"));
@@ -346,12 +346,12 @@ describe("streamWorkerCore", () => {
   it("close closes the adapter and clears the cache", async () => {
     const adapter = fakeAdapter([feature("a", 100, 100)]);
     const { posted, send } = harness(adapter);
-    await send({ type: "open", id: 0, url: "fake://x" });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send(fetchMsg(1, ["2/0/0"]));
     await send({ type: "close", id: 2 });
     expect(adapter.closed).toBe(1);
 
-    await send({ type: "open", id: 3, url: "fake://x" });
+    await send({ type: "open", id: 3, source: { url: "fake://x" } });
     await send({ type: "surfaces", id: 4, objectId: "a" });
     const err = posted.find(
       (m): m is Extract<WorkerResponse, { type: "error" }> =>

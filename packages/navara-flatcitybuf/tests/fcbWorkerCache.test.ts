@@ -242,7 +242,7 @@ const MATCH_ALL_RULE: Rule = {
 describe("fcb.worker cache — fetch populates records", () => {
   it("fills 'cell'.objects/surfaceAttrKeys from toObjectRecords instead of the [] placeholder", async () => {
     const { handler, posted } = await setupWorker([roofFeature("a", 100, 100)]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -277,7 +277,7 @@ describe("fcb.worker cache — lodsSeen (B1, 2026-07-28 final review)", () => {
     const { handler, posted } = await setupWorker([
       roofFeatureWithLod("a", 100, 100, "2"),
     ]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -307,7 +307,7 @@ describe("fcb.worker cache — lodsSeen (B1, 2026-07-28 final review)", () => {
       roofFeatureWithLod("b", 150, 150, "2.2"), // -> same cell 2/0/0 as 'a'
       roofFeatureWithLod("c", 120, 120, "1.3"), // duplicate label, same cell
     ]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -336,7 +336,7 @@ describe("fcb.worker cache — lodsSeen (B1, 2026-07-28 final review)", () => {
       roofFeatureWithLod("a", 100, 100, "1.3"),
       roofFeatureWithLod("b", 150, 150, "2.2"),
     ]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -369,7 +369,7 @@ describe("fcb.worker cache — recolor", () => {
       roofFeature("a", 100, 100), // -> cell 2/0/0
     ]);
 
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -426,7 +426,7 @@ describe("fcb.worker cache — recolor", () => {
 
   it("falls back to a fresh copy of the cached base colors when no rule matches, without exhausting the cache on repeat calls", async () => {
     const { handler, posted } = await setupWorker([roofFeature("a", 100, 100)]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -477,7 +477,7 @@ describe("fcb.worker cache — recolor", () => {
 
   it("skips a key that was never fetched — no crash, no recolored message, just done", async () => {
     const { handler, posted } = await setupWorker([]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "recolor",
@@ -499,7 +499,7 @@ describe("fcb.worker cache — on-demand surfaces", () => {
       roofFeature("a", 100, 100), // -> cell 2/0/0
       roofFeature("b", 500, 100), // -> cell 2/1/0
     ]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -535,7 +535,7 @@ describe("fcb.worker cache — on-demand surfaces", () => {
 
   it("reports a not-found error for an object id that was never fetched", async () => {
     const { handler, posted } = await setupWorker([roofFeature("a", 100, 100)]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -570,7 +570,7 @@ describe("fcb.worker cache — evict / close genuinely release memory", () => {
       roofFeature("a", 100, 100), // -> cell 2/0/0
       roofFeature("b", 500, 100), // -> cell 2/1/0
     ]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -620,7 +620,7 @@ describe("fcb.worker cache — evict / close genuinely release memory", () => {
 
   it("close clears the ENTIRE cache, not just the current fetch's cells", async () => {
     const { handler, posted } = await setupWorker([roofFeature("a", 100, 100)]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -639,7 +639,7 @@ describe("fcb.worker cache — evict / close genuinely release memory", () => {
 
     // Re-open (close tore down the reader too) and ask for the
     // now-supposedly-resident object — it must be gone.
-    await handler({ data: { type: "open", id: 3, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 3, source: { url: "fake://irrelevant" } } });
     await handler({ data: { type: "surfaces", id: 4, objectId: "a" } });
     const errMsg = posted.find(
       (m): m is Extract<WorkerResponse, { type: "error" }> =>
@@ -680,7 +680,7 @@ describe("fcb.worker cache — partial fetch failure discards its own cells (B3,
       roofFeature("a", 100, 100), // -> cell 2/0/0, processed FIRST (succeeds)
       roofFeature("b", 500, 100), // -> cell 2/1/0, processed SECOND (throws)
     ]);
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
     await handler({
       data: {
         type: "fetch",
@@ -769,7 +769,7 @@ describe("fcb.worker cache — partial fetch failure discards its own cells (B3,
         ],
       ],
     });
-    await handler({ data: { type: "open", id: 0, url: "fake://irrelevant" } });
+    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
 
     const fetchMsg = {
       type: "fetch" as const,
@@ -865,7 +865,7 @@ describe("fcb.worker — cells are baked into exact local ENU metres (Task C5 St
       data: {
         type: "open",
         id: 0,
-        url: "fake://irrelevant",
+        source: { url: "fake://irrelevant" },
         heightOffset,
       },
     });
@@ -985,7 +985,7 @@ describe("fcb.worker — cells are baked into exact local ENU metres (Task C5 St
       extent,
     });
     await handler({
-      data: { type: "open", id: 0, url: "fake://irrelevant", heightOffset },
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" }, heightOffset },
     });
     await handler({
       data: {
@@ -1109,7 +1109,7 @@ describe("fcb.worker — hiddenTypes", () => {
     ];
     const unfiltered = await setupWorker(features);
     await unfiltered.handler({
-      data: { type: "open", id: 0, url: "fake://irrelevant" },
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
     });
     await unfiltered.handler({ data: fetchMsg([]) });
     expect(cellOf(unfiltered.posted).geometry.triangleCount).toBe(4);
@@ -1117,7 +1117,7 @@ describe("fcb.worker — hiddenTypes", () => {
 
     const filtered = await setupWorker(features);
     await filtered.handler({
-      data: { type: "open", id: 0, url: "fake://irrelevant" },
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
     });
     // "Building", not "BuildingPart": the fold is what makes the toggle work
     // on real data, where the part carries all the geometry.
