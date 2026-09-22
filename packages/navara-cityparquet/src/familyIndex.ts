@@ -10,8 +10,9 @@
  * and picks through, its root.
  *
  * A family's box is the union of its VALID rows' boxes (all six coordinates
- * finite); a family with no valid row cannot be placed and is left out of the
- * index, its rows counted in `invalidBBoxRows`. Invalid rows are still read
+ * finite, and each span running min-to-max); a family with no valid row cannot
+ * be placed and is left out of the index, its rows counted in
+ * `invalidBBoxRows`. Invalid rows are still read
  * when they sit inside a family (or a merge gap) that a query returns.
  *
  * The index holds per-family typed arrays only — start, end and a 2D box —
@@ -40,7 +41,7 @@ export interface FamilyRange {
 export interface FamilyIndex {
   /** Rows with a valid bbox. */
   readonly rowCount: number;
-  /** Rows excluded from placement: a missing or non-finite bbox. */
+  /** Rows excluded from placement: a missing, non-finite or inverted bbox. */
   readonly invalidBBoxRows: number;
   /** Union of every valid row's box, in the coordinates the columns were
    *  given in (the stream's projected CRS). All-NaN when no row is valid. */
@@ -75,6 +76,11 @@ interface TableFamilies {
   readonly maxY: Float64Array;
 }
 
+/** A row is placeable when all six coordinates are finite AND each span runs
+ *  the right way. An inverted span (`xmin > xmax`) is not a small box, it is a
+ *  box no query can intersect through the place it describes: counting it as
+ *  valid inflated `rowCount` and let a source look fully indexed while part of
+ *  it was unreachable (Codex milestone review, Minor). */
 function isValidRow(cols: FamilyColumns, i: number): boolean {
   return (
     Number.isFinite(cols.minX[i]!) &&
@@ -82,7 +88,10 @@ function isValidRow(cols: FamilyColumns, i: number): boolean {
     Number.isFinite(cols.minZ[i]!) &&
     Number.isFinite(cols.maxX[i]!) &&
     Number.isFinite(cols.maxY[i]!) &&
-    Number.isFinite(cols.maxZ[i]!)
+    Number.isFinite(cols.maxZ[i]!) &&
+    cols.minX[i]! <= cols.maxX[i]! &&
+    cols.minY[i]! <= cols.maxY[i]! &&
+    cols.minZ[i]! <= cols.maxZ[i]!
   );
 }
 

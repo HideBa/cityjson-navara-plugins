@@ -245,6 +245,25 @@ describe("family boundaries", () => {
     ]);
   });
 
+  it("counts a row whose own box is inverted as invalid, not as valid", () => {
+    // Codex milestone review (Minor): validation checked finiteness only, so
+    // a row with xmin > xmax raised `rowCount` while being unreachable by any
+    // query through the place it meant to describe.
+    const cols = pack([
+      { root: true, at: [0, 0] },
+      { root: true, at: [100, 0] },
+    ]);
+    // Invert row 1's x span in place: minX 98 -> 102, maxX 102 -> 98.
+    cols.minX[1] = 102;
+    cols.maxX[1] = 98;
+    const index = buildFamilyIndex([cols]);
+    expect(index.invalidBBoxRows).toBe(1);
+    expect(index.rowCount).toBe(1);
+    expect(index.query([98, -1, 102, 1])).toEqual([]);
+    // ...and it never widens the extent it could not be queried through.
+    expect(index.extent[3]).toBe(2);
+  });
+
   it("merges families across a gap of MERGE_GAP_ROWS, not one row more", () => {
     const rows = (gap: number): SyntheticRow[] => [
       { root: true, at: [0, 0] },
