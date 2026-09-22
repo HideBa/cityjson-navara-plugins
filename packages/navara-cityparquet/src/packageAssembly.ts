@@ -61,6 +61,40 @@ export const CITYPARQUET_SIDECAR_NAMES: ReadonlySet<string> = new Set([
   "geometry_templates.parquet",
 ]);
 
+/**
+ * Asset keys that name an asset's ROLE rather than the family it holds, so the
+ * file name is the better label.
+ *
+ * Observed, not invented: the reference writer keys every table by its own file
+ * name AND lists the first one again under `data` (the STAC convention for "the
+ * data of this Item"), which is what every fixture and the published PLATEAU
+ * packages look like. Matched case-insensitively.
+ */
+const GENERIC_ASSET_KEYS: ReadonlySet<string> = new Set([
+  "data",
+  "objects",
+  ROLE_OBJECT_TABLE,
+]);
+
+/** One object table of a package, as a family the app can name and offer. */
+export interface CityParquetFamily {
+  /**
+   * The family's name for labels and for the Building default: the asset key
+   * when the manifest gave the table one of its own, else the href's base name
+   * — in both cases without the `.parquet` extension, so the reference writer's
+   * `"building.parquet"` key and a bare `building.parquet` file read the same.
+   *
+   * NOT an identity (ruling R-A′): two tables of one package can produce the
+   * same key (`east/building.parquet`, `west/building.parquet`), and the
+   * {@link href} is what tells them apart.
+   */
+  key: string;
+  /** The table's href, exactly as in {@link CityParquetManifest.objectTables}. */
+  href: string;
+  /** The table's declared byte size, or `null` when the manifest gave none. */
+  size: number | null;
+}
+
 /** What a package's manifest declares. */
 export interface CityParquetManifest {
   /**
@@ -81,6 +115,12 @@ export interface CityParquetManifest {
    * naming the href may carry it — writers list one file under two keys.
    */
   sizes: Readonly<Record<string, number>>;
+  /**
+   * One family per object table, in the order of {@link objectTables} and
+   * pairing one-to-one with it. What a streamed layer offers the user: its
+   * geometry is opened per family, and every family has its own table.
+   */
+  families: ReadonlyArray<CityParquetFamily>;
 }
 
 /** Which sidecar a file name denotes, by its base name. */
@@ -140,7 +180,24 @@ function baseName(href: string): string {
   return segments[segments.length - 1] ?? href;
 }
 
+/** A file or asset name without its `.parquet` extension (never empty). */
+function withoutParquet(name: string): string {
+  const stripped = name.replace(/\.parquet$/i, "");
+  return stripped === "" ? name : stripped;
+}
+
+/**
+ * The family key an asset KEY yields, or `null` when the key names the asset's
+ * role instead of its content and the file name should decide.
+ */
+function familyKeyOfAsset(key: string): string | null {
+  if (key === "" || GENERIC_ASSET_KEYS.has(key.toLowerCase())) return null;
+  return withoutParquet(key);
+}
+
 interface ManifestAsset {
+  /** The key this asset was listed under in `assets`. */
+  key: string;
   href: string;
   mediaType: string | null;
   roles: ReadonlyArray<string>;
@@ -169,7 +226,9 @@ function readAssets(metadataJson: unknown): ManifestAsset[] {
     );
   }
   const assets: ManifestAsset[] = [];
-  for (const value of Object.values(raw ?? {})) {
+  // Entries, not values: the KEY is a family's best name (see
+  // {@link CityParquetFamily.key}).
+  for (const [key, value] of Object.entries(raw ?? {})) {
     if (!isPlainObject(value)) continue;
     const href = value.href;
     if (typeof href !== "string" || href === "") continue;
@@ -178,6 +237,7 @@ function readAssets(metadataJson: unknown): ManifestAsset[] {
       : [];
     const size = value["file:size"];
     assets.push({
+      key,
       href: normalizeHref(href),
       mediaType: typeof value.type === "string" ? value.type : null,
       roles,
@@ -218,10 +278,19 @@ export function parseCityParquetManifest(
 
   const objectTables: string[] = [];
   const seen = new Set<string>();
+  /** Per href, the first descriptive asset key that named it. */
+  const assetKeys = new Map<string, string>();
   for (const asset of candidates) {
-    if (seen.has(asset.href)) continue;
-    seen.add(asset.href);
-    objectTables.push(asset.href);
+    if (!seen.has(asset.href)) {
+      seen.add(asset.href);
+      objectTables.push(asset.href);
+    }
+    // A table a writer listed twice is one family, named by whichever of its
+    // keys says something: `data` loses to `building.parquet`.
+    const key = familyKeyOfAsset(asset.key);
+    if (key !== null && !assetKeys.has(asset.href)) {
+      assetKeys.set(asset.href, key);
+    }
   }
 
   if (objectTables.length === 0) {
@@ -246,7 +315,14 @@ export function parseCityParquetManifest(
     if (asset.size === null || !seen.has(asset.href)) continue;
     if (!hasOwn(sizes, asset.href)) sizes[asset.href] = asset.size;
   }
-  return { objectTables, sidecars, sizes };
+  // One family per table, in manifest order. Two tables whose keys collide stay
+  // two families (ruling R-A′): the href is the identity, the key is a label.
+  const families: CityParquetFamily[] = objectTables.map((href) => ({
+    key: assetKeys.get(href) ?? withoutParquet(baseName(href)),
+    href,
+    size: hasOwn(sizes, href) ? sizes[href]! : null,
+  }));
+  return { objectTables, sidecars, sizes, families };
 }
 
 // ---------------------------------------------------------------------------

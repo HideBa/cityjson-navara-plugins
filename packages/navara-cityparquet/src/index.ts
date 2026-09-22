@@ -30,6 +30,7 @@ export { decodeTableObjects } from "./decodeTable";
 
 export type {
   AssembleOptions,
+  CityParquetFamily,
   CityParquetManifest,
   CityParquetPackageFile,
 } from "./packageAssembly";

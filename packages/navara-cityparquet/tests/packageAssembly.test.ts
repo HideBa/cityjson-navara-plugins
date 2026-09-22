@@ -137,6 +137,96 @@ describe("parseCityParquetManifest", () => {
     });
   });
 
+  it("names one family per object table, in manifest order, keyed by its asset", async () => {
+    const meta: unknown = JSON.parse(
+      await readFile(fileURLToPath(new URL("metadata.json", DIR)), "utf8"),
+    );
+    const parsed = parseCityParquetManifest(meta);
+    // The reference writer keys each table by its own FILE NAME (and lists it
+    // again under a generic `data` key): the family key is that name without
+    // the extension, so a PLATEAU package reads as `building`, `bridge`, …
+    expect(parsed.families).toEqual([
+      { key: "building", href: "building.parquet", size: 22930 },
+    ]);
+    // One family per object table, in the same order: the app pairs them up.
+    expect(parsed.families.map((f) => f.href)).toEqual(parsed.objectTables);
+  });
+
+  it("prefers a descriptive asset key over the file name, and skips a generic one", () => {
+    const item = {
+      type: "Feature",
+      assets: {
+        roofs: {
+          href: "./part-a.parquet",
+          roles: ["cityparquet-objects"],
+          "file:size": 7,
+        },
+        data: { href: "./bridge.parquet", roles: ["cityparquet-objects"] },
+      },
+    };
+    expect(parseCityParquetManifest(item).families).toEqual([
+      { key: "roofs", href: "part-a.parquet", size: 7 },
+      // `data` names the asset's role, not the family: the file name decides,
+      // and an unknown size is null rather than 0.
+      { key: "bridge", href: "bridge.parquet", size: null },
+    ]);
+  });
+
+  it("keeps two tables that produce the same key as distinct families", () => {
+    const item = {
+      type: "Feature",
+      assets: {
+        "building.parquet": {
+          href: "./east/building.parquet",
+          roles: ["cityparquet-objects"],
+        },
+        // A second copy of the same family name, keyed generically, so both
+        // tables end up on the key `building`.
+        data: {
+          href: "./west/building.parquet",
+          roles: ["cityparquet-objects"],
+        },
+      },
+    };
+    // Same key, distinct hrefs: the app disambiguates the LABELS later; the
+    // manifest must not collapse two real tables into one family.
+    expect(parseCityParquetManifest(item).families).toEqual([
+      { key: "building", href: "east/building.parquet", size: null },
+      { key: "building", href: "west/building.parquet", size: null },
+    ]);
+  });
+
+  it("never lists a sidecar as a family", () => {
+    const tagged = {
+      type: "Feature",
+      assets: {
+        "building.parquet": {
+          href: "./building.parquet",
+          roles: ["cityparquet-objects"],
+        },
+        "textures.parquet": {
+          href: "./textures.parquet",
+          roles: ["cityparquet-sidecar"],
+        },
+      },
+    };
+    expect(parseCityParquetManifest(tagged).families).toEqual([
+      { key: "building", href: "building.parquet", size: null },
+    ]);
+    const roleless = {
+      type: "Feature",
+      assets: {
+        data: { href: "./building.parquet" },
+        materials: { href: "./materials.parquet" },
+        textures: { href: "./textures.parquet" },
+        templates: { href: "./geometry_templates.parquet" },
+      },
+    };
+    expect(parseCityParquetManifest(roleless).families).toEqual([
+      { key: "building", href: "building.parquet", size: null },
+    ]);
+  });
+
   it("names the three sidecar files a role-less package must skip", () => {
     expect([...CITYPARQUET_SIDECAR_NAMES].sort()).toEqual([
       "geometry_templates.parquet",
