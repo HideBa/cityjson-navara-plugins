@@ -563,6 +563,34 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
 
       this.emitStatus("fetching", null);
       const fetched = new Map<CellKey, FetchedCell>();
+      /**
+       * Tell the worker to drop the cells THIS commit received but never
+       * adopted.
+       *
+       * The worker bakes and posts a commit's cells before it can process a
+       * `cancel` — the traversal runs to completion first — so a pan
+       * mid-fetch, a refused fetch or a thrown error all leave cells cached
+       * there that the main thread then walks away from. Nothing else can
+       * ever reach them: the main thread's `evict` only names keys its own
+       * cache holds, and this commit put none there (B3's original fix
+       * covered only the liveness timeout; Codex milestone review,
+       * Important).
+       *
+       * Only keys the cache does NOT hold: a same-cover refetch (a
+       * hidden-type or appearance change) receives keys that an EARLIER
+       * commit already made resident, and evicting those would blank cells
+       * still on screen and drop the worker's copy of models the main thread
+       * still believes it can recolor.
+       */
+      const evictAbandoned = (): void => {
+        if (this._deleted || fetched.size === 0) return;
+        const orphans = [...fetched.keys()].filter(
+          (key) => !this.cache.has(key),
+        );
+        if (orphans.length > 0) {
+          client.notify({ type: "evict", cells: orphans });
+        }
+      };
       let fetchError: string | null = null;
       // The worker's machine-readable refusal code, when it gave one. A
       // `"budget"` refusal (CityParquet's read budget) is not a failure of
@@ -671,16 +699,16 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       // the event loop (and a test process) open until it fires.
       if (livenessTimer !== null) clearTimeout(livenessTimer);
 
-      if (this.isStale(epoch)) return;
+      if (this.isStale(epoch)) {
+        evictAbandoned();
+        return;
+      }
 
       if (outcome === "timeout") {
         client.notify({ type: "cancel" });
-        if (fetched.size > 0) {
-          // Whatever DID arrive is abandoned by this commit, so the worker
-          // must not keep it either — otherwise those become worker-only
-          // entries the main thread's evict can never reach (B3).
-          client.notify({ type: "evict", cells: [...fetched.keys()] });
-        }
+        // Whatever DID arrive is abandoned by this commit, so the worker
+        // must not keep it either (B3).
+        evictAbandoned();
         this.emitStatus(
           "error",
           `Stopped waiting for the streaming fetch after ${Math.round(
@@ -701,6 +729,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
         return;
       }
       if (fetchError !== null) {
+        evictAbandoned();
         if (fetchErrorCode === "budget") {
           this.emitStatus("too-far", READ_BUDGET_TOO_FAR_MESSAGE);
         } else {

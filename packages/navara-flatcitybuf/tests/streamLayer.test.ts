@@ -766,6 +766,50 @@ describe("FcbStreamLayerHandle.commit", () => {
     expect((evicts[0]!.cells as string[]).length).toBe(cover.length - 2);
   });
 
+  it("evicts the cells of a commit it abandons, so the worker holds nothing the main thread cannot reach", async () => {
+    // Codex milestone review (Important): the worker bakes and posts its
+    // cells before it can process a `cancel`, so a pan mid-fetch leaves cells
+    // cached THERE while the main thread drops the stale commit without
+    // adopting — and without evicting. Repeat the pan and the worker's cache
+    // grows past every residency budget, reachable by nothing.
+    const { handle, client } = makeHandle({ fetchDelayMs: 20 });
+    const pending = handle.commit(topDownRays());
+    // Let the fetch be dispatched, then pan away before its cells land.
+    await flush();
+    handle.abortInFlight();
+    await pending;
+
+    expect(handle.cacheKeysForTest()).toEqual([]);
+    const requested = client.sendStreamingCalls[0]!.cells as string[];
+    const evicts = requestsOfType(client.notifyCalls, "evict");
+    expect(evicts).toHaveLength(1);
+    expect([...(evicts[0]!.cells as string[])].sort()).toEqual(
+      [...requested].sort(),
+    );
+  });
+
+  it("evicts only the abandoned commit's own cells, never ones already resident", async () => {
+    const opts = { fetchDelayMs: undefined as number | undefined };
+    const { handle, client } = makeHandle(opts);
+    await handle.commit(topDownRays());
+    const resident = handle.cacheKeysForTest();
+    expect(resident.length).toBeGreaterThan(0);
+    expect(requestsOfType(client.notifyCalls, "evict")).toHaveLength(0);
+
+    // A second commit of the SAME view, abandoned: every cell it receives is
+    // a key the first commit already made resident, and evicting those would
+    // blank cells that are still on screen.
+    opts.fetchDelayMs = 20;
+    handle.setHiddenTypes(["Building"]); // forces a refetch of the same cover
+    const pending = handle.commit(topDownRays());
+    await flush();
+    handle.abortInFlight();
+    await pending;
+
+    expect(handle.cacheKeysForTest()).toEqual(resident);
+    expect(requestsOfType(client.notifyCalls, "evict")).toHaveLength(0);
+  });
+
   it("discards a stale commit whose probe response arrives after abortInFlight() bumped the epoch", async () => {
     const { handle, client } = makeHandle({ probeDelayMs: 20 });
     const p = handle.commit(topDownRays());
