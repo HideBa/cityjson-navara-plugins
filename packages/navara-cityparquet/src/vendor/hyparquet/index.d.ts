@@ -19,7 +19,12 @@ export interface KeyValue {
 
 /** One column chunk of a row group, narrowed to what range planning reads. */
 export interface ColumnChunk {
-  meta_data?: { path_in_schema: string[]; statistics?: unknown };
+  meta_data?: {
+    path_in_schema: string[];
+    statistics?: unknown;
+    /** Bytes of this chunk on disk, pages and dictionary included. */
+    total_compressed_size?: bigint | number;
+  };
   /** Where the chunk's OffsetIndex (page locations) lives, when written. */
   offset_index_offset?: bigint;
   offset_index_length?: number;

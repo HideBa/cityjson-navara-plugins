@@ -242,3 +242,78 @@ describe("assertRowCount", () => {
     expect(() => assertRowCount(n, 16, 24)).toThrow(/rows 16..24/);
   });
 });
+
+/**
+ * Codex milestone review (Critical): the row gates (`MAX_FETCH_READ_ROWS`,
+ * `VIEWPORT_FEATURE_BUDGET`) bound rows, not bytes. `useOffsetIndex` was
+ * requested but never REQUIRED, so on a file without a page index hyparquet
+ * reads whole column chunks — a single-row-group table could pass a one-family
+ * fetch and download the lot. `estimateReadBytes` plans the physical cost from
+ * the footer alone, so a fetch can be refused before a single slice is read.
+ */
+describe("estimateReadBytes", () => {
+  /** Copy 9: rows 27..30, inside the fixture's 8-row row groups. */
+  const COPY_9_RANGE = [{ table: 0, start: 27, end: 30 }] as const;
+
+  it("charges only the selected fraction of an indexed chunk, and the whole of an unindexed one", async () => {
+    const indexed = await openCityParquetStream([
+      await bufferOf("multigroup-cityparquet"),
+    ]);
+    const unindexed = await openCityParquetStream([
+      await bufferOf("multigroup-noindex-cityparquet"),
+    ]);
+    const a = indexed.estimateReadBytes(COPY_9_RANGE, null);
+    const b = unindexed.estimateReadBytes(COPY_9_RANGE, null);
+    expect(a).toBeGreaterThan(0);
+    expect(b).toBeGreaterThan(a);
+  });
+
+  it("charges less for a lower LoD, which reads fewer columns", async () => {
+    const stream = await openCityParquetStream([
+      await bufferOf("multigroup-cityparquet"),
+    ]);
+    expect(stream.estimateReadBytes(COPY_9_RANGE, "0")).toBeLessThan(
+      stream.estimateReadBytes(COPY_9_RANGE, null),
+    );
+  });
+
+  it("charges nothing for no ranges, and never counts a row group twice", async () => {
+    const stream = await openCityParquetStream([
+      await bufferOf("multigroup-cityparquet"),
+    ]);
+    expect(stream.estimateReadBytes([], null)).toBe(0);
+    // Two ranges inside ONE row group cost no more than the whole group.
+    const split = stream.estimateReadBytes(
+      [
+        { table: 0, start: 24, end: 26 },
+        { table: 0, start: 26, end: 28 },
+      ],
+      null,
+    );
+    const whole = stream.estimateReadBytes([{ table: 0, start: 24, end: 32 }], null);
+    expect(split).toBeLessThanOrEqual(whole);
+  });
+
+  it.each(["multigroup-cityparquet", "multigroup-noindex-cityparquet"])(
+    "stays within a small factor of what %s actually fetches",
+    async (dir) => {
+      // The estimate is a PLANNING bound, not a hard ceiling: it charges a
+      // compressed chunk by its row fraction, while a real indexed read
+      // fetches whole pages and the offset index itself. On these fixtures
+      // (256-byte pages, 8-row groups) that overhead is the larger part; on a
+      // production file with megabyte pages it is noise. The bound this test
+      // pins is "the same order of magnitude", which is what a 96 MiB refusal
+      // gate needs.
+      const buffer = await bufferOf(dir);
+      const stream = await openCityParquetStream([buffer]);
+      const before = buffer.bytesRead();
+      const estimate = stream.estimateReadBytes(COPY_9_RANGE, null);
+      await collect(
+        stream.readRows(COPY_9_RANGE, null, new AbortController().signal),
+      );
+      const actual = buffer.bytesRead() - before;
+      expect(estimate).toBeGreaterThan(actual / 4);
+      expect(estimate).toBeLessThan(actual * 4);
+    },
+  );
+});

@@ -120,10 +120,50 @@ export interface CityParquetStream {
     maxLod: string | null,
     signal: AbortSignal,
   ): AsyncIterable<ReadBatch>;
+  /**
+   * What {@link readRows} would PLAN to fetch for `ranges` at `maxLod`, in
+   * bytes, from the footer alone — so a caller can refuse a fetch BEFORE a
+   * single slice is read.
+   *
+   * Row limits do not bound bytes: `useOffsetIndex` is requested, never
+   * required, and a chunk written without a page index is read WHOLE however
+   * few of its rows a range names. A single-row-group table can therefore
+   * serve hundreds of megabytes to a one-family fetch that passes every row
+   * gate (Codex milestone review, Critical).
+   *
+   * Per touched row group and per selected column chunk: with an offset
+   * index, `total_compressed_size` scaled by the fraction of the group's rows
+   * the ranges select; without one, the whole `total_compressed_size`. A chunk
+   * that declares no size at all is charged the group's own
+   * `total_compressed_size` divided by its column count, and a group that
+   * declares neither is charged the whole file — "unknown" must never read as
+   * "free".
+   *
+   * It is an ESTIMATE, not a ceiling. What it cannot see from the footer is
+   * page granularity: an indexed read fetches whole pages plus the offset
+   * index itself, so a 3-row range of an 8-row group costs more than 3/8 of
+   * that group. On the package's fixtures (256-byte pages, 8-row groups) that
+   * overhead dominates and the estimate runs about half the bytes actually
+   * fetched; on a production file, whose pages hold thousands of rows, the
+   * fraction is the whole story. Pinned both ways in `streamReader.test.ts`
+   * at a factor of 4. It is the right shape for the gate it feeds — refusing
+   * a fetch that would pull tens of megabytes — and deliberately NOT a
+   * guarantee about any individual read.
+   */
+  estimateReadBytes(
+    ranges: ReadonlyArray<FamilyRange>,
+    maxLod: string | null,
+  ): number;
 }
 
 /** Rows decoded between two abort checks. */
 const DECODE_CHUNK_ROWS = 256;
+
+/** The columns one table is read with at a given LoD ceiling. */
+interface TableProjection {
+  readonly columns: string[];
+  readonly geometryColumns: GeometryColumnRef[];
+}
 
 /** One opened table: its buffer, schema, row-group layout and root flags. */
 interface OpenTable {
@@ -419,16 +459,88 @@ export async function openCityParquetStream(
     invalidBBoxRows: index.invalidBBoxRows,
   };
 
+  /** The columns one table is read with at `maxLod`, memoised per call. */
+  function projectionsFor(
+    maxLod: string | null,
+  ): (index: number) => TableProjection {
+    const cache = new Map<number, TableProjection>();
+    return (index) => {
+      let projection = cache.get(index);
+      if (projection === undefined) {
+        const { schema } = tables[index]!;
+        const geometryColumns = streamGeometryColumns(schema, maxLod);
+        projection = {
+          geometryColumns,
+          columns: buildProjection(
+            schema.schemaColumns,
+            schema.footer,
+            geometryColumns,
+          ),
+        };
+        cache.set(index, projection);
+      }
+      return projection;
+    };
+  }
+
+  function estimateReadBytes(
+    ranges: ReadonlyArray<FamilyRange>,
+    maxLod: string | null,
+  ): number {
+    const projectionOf = projectionsFor(maxLod);
+    // Rows selected per (table, row group), so overlapping or adjacent ranges
+    // inside one group are charged for that group once.
+    const selected = new Map<string, number>();
+    for (const range of ranges) {
+      const table = tables[range.table];
+      if (table === undefined) continue;
+      for (let g = 0; g + 1 < table.rowGroupStarts.length; g++) {
+        const rowStart = Math.max(range.start, table.rowGroupStarts[g]!);
+        const rowEnd = Math.min(range.end, table.rowGroupStarts[g + 1]!);
+        if (rowStart >= rowEnd) continue;
+        const key = `${String(range.table)}:${String(g)}`;
+        selected.set(key, (selected.get(key) ?? 0) + (rowEnd - rowStart));
+      }
+    }
+
+    let total = 0;
+    for (const [key, rows] of selected) {
+      const [t, g] = key.split(":").map(Number) as [number, number];
+      const table = tables[t]!;
+      const group = table.schema.metadata.row_groups[g]!;
+      const groupRows = Number(group.num_rows);
+      const fraction = groupRows > 0 ? Math.min(1, rows / groupRows) : 1;
+      const wanted = new Set(projectionOf(t).columns);
+      // A group that declares no size of its own, and whose chunks declare
+      // none either, is charged the whole file: unknown is never free.
+      const perChunkFallback =
+        group.total_compressed_size === undefined
+          ? table.buffer.byteLength
+          : Number(group.total_compressed_size) /
+            Math.max(1, group.columns.length);
+      for (const chunk of group.columns) {
+        const meta = chunk.meta_data;
+        if (!meta || !wanted.has(meta.path_in_schema[0] ?? "")) continue;
+        const size =
+          meta.total_compressed_size === undefined
+            ? perChunkFallback
+            : Number(meta.total_compressed_size);
+        // `offset_index_offset` is what hyparquet's `useOffsetIndex` needs to
+        // skip pages; without it the chunk is read whole. A bigint 0 is a
+        // legal (if odd) offset, so the test is "declared", not "truthy".
+        total += chunk.offset_index_offset === undefined ? size : size * fraction;
+      }
+    }
+    return Math.ceil(total);
+  }
+
   async function* readRows(
     ranges: ReadonlyArray<FamilyRange>,
     maxLod: string | null,
     signal: AbortSignal,
   ): AsyncGenerator<ReadBatch> {
     for (const buffer of buffers) buffer.setSignal(signal);
-    const columnsByTable = new Map<
-      number,
-      { columns: string[]; geometryColumns: GeometryColumnRef[] }
-    >();
+    const projectionOf = projectionsFor(maxLod);
 
     for (const range of ranges) {
       throwIfAborted(signal);
@@ -445,20 +557,7 @@ export async function openCityParquetStream(
           `readRows: range ${JSON.stringify(range)} is outside the stream's tables.`,
         );
       }
-      let projection = columnsByTable.get(range.table);
-      if (projection === undefined) {
-        const { schema } = table;
-        const geometryColumns = streamGeometryColumns(schema, maxLod);
-        projection = {
-          geometryColumns,
-          columns: buildProjection(
-            schema.schemaColumns,
-            schema.footer,
-            geometryColumns,
-          ),
-        };
-        columnsByTable.set(range.table, projection);
-      }
+      const projection = projectionOf(range.table);
 
       const objects: Record<string, CityObject> = Object.create(null);
       const rows = new Map<string, StreamRow>();
@@ -507,5 +606,5 @@ export async function openCityParquetStream(
     }
   }
 
-  return { header, index, readRows };
+  return { header, index, readRows, estimateReadBytes };
 }

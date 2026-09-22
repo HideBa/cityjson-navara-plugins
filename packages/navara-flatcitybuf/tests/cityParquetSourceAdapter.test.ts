@@ -19,6 +19,7 @@ import {
   bakeLodSelection,
   createCityParquetSourceAdapter,
   familyModels,
+  MAX_FETCH_READ_BYTES,
   MAX_FETCH_READ_ROWS,
 } from "../src/cityParquetSourceAdapter";
 import type { OpenRequest } from "../src/streamSourceAdapter";
@@ -39,6 +40,7 @@ async function fixtureBytes(dir: string): Promise<Uint8Array<ArrayBuffer>> {
 }
 
 const MULTIGROUP = "multigroup-cityparquet";
+const NOINDEX = "multigroup-noindex-cityparquet";
 
 async function blobOf(dir: string): Promise<Blob> {
   return new Blob([await fixtureBytes(dir)]);
@@ -274,6 +276,56 @@ describe("createCityParquetSourceAdapter — select", () => {
     expect(lods).toEqual(new Set(["0"]));
   });
 
+  it("refuses a query whose PLANNED BYTES exceed the budget before reading anything", async () => {
+    // Codex milestone review (Critical): the row gates bound rows, not bytes.
+    // On a file written without a page index, hyparquet reads whole column
+    // chunks whatever the row range, so a handful of families can pull the
+    // entire table. The adapter now plans the physical cost from the footer
+    // and refuses the same way it refuses too many rows.
+    expect(MAX_FETCH_READ_BYTES).toBe(96 * 1024 * 1024);
+    const indexedBlob = new CountingBlob([await fixtureBytes(MULTIGROUP)]);
+    const plainBlob = new CountingBlob([await fixtureBytes(NOINDEX)]);
+
+    // A limit BETWEEN the two fixtures' estimates for the same query.
+    const estimateOf = async (blob: Blob): Promise<number> => {
+      const stream = await openCityParquetStream([asyncBufferFromBlob(blob)]);
+      return stream.estimateReadBytes(stream.index.query(COPY_9_BOX), null);
+    };
+    const indexedBytes = await estimateOf(indexedBlob);
+    const plainBytes = await estimateOf(plainBlob);
+    expect(plainBytes).toBeGreaterThan(indexedBytes);
+    const limit = Math.floor((indexedBytes + plainBytes) / 2);
+
+    const refused = createCityParquetSourceAdapter({
+      maxFetchReadBytes: limit,
+    });
+    await refused.open(openReq({ blob: plainBlob }));
+    const before = plainBlob.slices;
+    const error: unknown = await collect(
+      refused.select(COPY_9_BOX, {
+        lod: null,
+        signal: new AbortController().signal,
+      }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error & { code?: string }).code).toBe("budget");
+    expect((error as Error).message).toMatch(/MB/);
+    expect(plainBlob.slices).toBe(before);
+
+    // The very same query on the indexed fixture, under the same limit, reads.
+    const allowed = createCityParquetSourceAdapter({
+      maxFetchReadBytes: limit,
+    });
+    await allowed.open(openReq({ blob: indexedBlob }));
+    const models = await collect(
+      allowed.select(COPY_9_BOX, {
+        lod: null,
+        signal: new AbortController().signal,
+      }),
+    );
+    expect(models.length).toBeGreaterThan(0);
+  });
+
   it("refuses a query whose read cost exceeds the budget before reading anything", async () => {
     expect(MAX_FETCH_READ_ROWS).toBe(60_000);
     const blob = new CountingBlob([await fixtureBytes(MULTIGROUP)]);
@@ -322,6 +374,7 @@ describe("package index", () => {
       createCityParquetSourceAdapter,
     );
     expect(index.MAX_FETCH_READ_ROWS).toBe(MAX_FETCH_READ_ROWS);
+    expect(index.MAX_FETCH_READ_BYTES).toBe(MAX_FETCH_READ_BYTES);
   });
 });
 

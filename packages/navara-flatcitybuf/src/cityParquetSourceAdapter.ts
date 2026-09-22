@@ -43,9 +43,21 @@ import type { StreamSource } from "./workerProtocol";
  *  it. */
 export const MAX_FETCH_READ_ROWS = 60_000;
 
+/** A fetch whose planned PHYSICAL read exceeds this is refused before
+ *  anything is read. The row gate above does not bound bytes: hyparquet reads
+ *  a column chunk WHOLE unless that chunk carries an offset index, so a table
+ *  written without a page index (or with one enormous row group) can serve
+ *  hundreds of megabytes to a fetch of a handful of families. The plan comes
+ *  from the footer alone — `CityParquetStream.estimateReadBytes`, an estimate
+ *  rather than a ceiling; see its own note (Codex milestone review,
+ *  Critical). */
+export const MAX_FETCH_READ_BYTES = 96 * 1024 * 1024;
+
 export interface CityParquetSourceAdapterOptions {
   /** Overrides {@link MAX_FETCH_READ_ROWS} (tests). */
   readonly maxFetchReadRows?: number;
+  /** Overrides {@link MAX_FETCH_READ_BYTES} (tests). */
+  readonly maxFetchReadBytes?: number;
 }
 
 type Box2 = readonly [number, number, number, number];
@@ -174,10 +186,24 @@ function budgetError(cost: number, limit: number): Error {
   );
 }
 
+const mb = (bytes: number): string =>
+  `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+/** The same refusal, measured in bytes rather than rows. */
+function byteBudgetError(cost: number, limit: number): Error {
+  return Object.assign(
+    new Error(
+      `This view would read about ${mb(cost)} of the CityParquet source, over the per-fetch limit of ${mb(limit)}; zoom in to load it.`,
+    ),
+    { code: "budget" },
+  );
+}
+
 export function createCityParquetSourceAdapter(
   options: CityParquetSourceAdapterOptions = {},
 ): StreamSourceAdapter {
   const maxFetchReadRows = options.maxFetchReadRows ?? MAX_FETCH_READ_ROWS;
+  const maxFetchReadBytes = options.maxFetchReadBytes ?? MAX_FETCH_READ_BYTES;
   let stream: CityParquetStream | undefined;
   let buffers: RangeBuffer[] = [];
   /** Cancels the open in flight; `close` aborts it. */
@@ -246,6 +272,11 @@ export function createCityParquetSourceAdapter(
       if (cost > maxFetchReadRows) throw budgetError(cost, maxFetchReadRows);
       const ranges = s.index.query(bbox);
       if (ranges.length === 0) return;
+      // Rows are not bytes: a chunk without an offset index is read whole.
+      const bytes = s.estimateReadBytes(ranges, lod);
+      if (bytes > maxFetchReadBytes) {
+        throw byteBudgetError(bytes, maxFetchReadBytes);
+      }
       for (const buffer of buffers) buffer.setSignal(signal);
       for await (const batch of s.readRows(ranges, lod, signal)) {
         yield* familyModels(batch, bbox, s.header.referenceSystem);
