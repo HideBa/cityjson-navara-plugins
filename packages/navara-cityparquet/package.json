@@ -5,7 +5,9 @@
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -22,6 +24,9 @@
   "dependencies": {
     "@cityjson/navara-core": "file:../navara-core",
     "hyparquet-compressors": "1.1.1"
+  },
+  "peerDependencies": {
+    "proj4": ">=2.20.0"
   },
   "devDependencies": {
     "proj4": "2.21.0",
