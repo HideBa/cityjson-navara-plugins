@@ -164,6 +164,15 @@ function sameSource(a: StreamSource, b: StreamSource): boolean {
   );
 }
 
+/** A cell's own LoDs plus the source's up-front ones, each label once. */
+function unionLods(
+  own: string[],
+  known: ReadonlyArray<string> | undefined,
+): string[] {
+  if (!known || known.length === 0) return own;
+  return [...new Set([...own, ...known])];
+}
+
 /**
  * Installs the streaming worker protocol on `ctx`, reading features through
  * `adapter`. All state lives in this call's closure: one install is one
@@ -270,6 +279,7 @@ export function installStreamWorker(
         if (!grid || !placement) throw new Error("no file open");
         const theGrid = grid;
         const place = placement;
+        const knownLods = opened?.result.header.lods;
         controller?.abort();
         const my = new AbortController();
         own = my;
@@ -470,7 +480,9 @@ export function installStreamWorker(
                 // always `[]`, which left the ladder permanently empty and
                 // auto mode permanently selecting "all LoDs" (B1, 2026-07-28
                 // final review).
-                lodsSeen: cellLods,
+                // ...plus the source's up-front LoDs, when its format knows
+                // them, so the ladder is complete before every cell is seen.
+                lodsSeen: unionLods(cellLods, knownLods),
                 appearanceThemes,
               },
               [

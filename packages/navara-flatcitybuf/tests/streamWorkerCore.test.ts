@@ -339,6 +339,25 @@ describe("streamWorkerCore", () => {
     expect(posted.at(-1)).toEqual({ type: "done", id: 2 });
   });
 
+  it("folds the header's up-front LoDs into every cell's lodsSeen", async () => {
+    const adapter = fakeAdapter([feature("a", 100, 100)]);
+    adapter.lods = ["1.2", "2"];
+    const bakeLods: (readonly string[])[] = [];
+    const base = adapter.bakeLod;
+    adapter.bakeLod = (lod, seen) => {
+      bakeLods.push(seen);
+      return base(lod, seen);
+    };
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(fetchMsg(1, ["2/0/0"]));
+
+    const cell = posted.find(ofType("cell"))!;
+    expect([...cell.lodsSeen].sort()).toEqual(["1.2", "2"]);
+    // Baking still reads the cell's OWN LoDs.
+    expect(bakeLods).toEqual([["2"]]);
+  });
+
   it("a fetch bakes every requested cell complete, not only its part inside the view", async () => {
     // Cell 2/1/0 spans x 400..800; the view reaches only x 600, so 'e'
     // (centred at x 700, owned by 2/1/0) lies outside it.
