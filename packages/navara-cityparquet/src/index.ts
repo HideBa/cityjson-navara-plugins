@@ -34,3 +34,10 @@ export {
 
 export type { CityParquetSidecars, PackageAppearance } from "./sidecars";
 export { readPackageAppearance } from "./sidecars";
+
+export type { RangeBuffer } from "./rangeSource";
+export {
+  RangeNotSupportedError,
+  asyncBufferFromBlob,
+  asyncBufferFromHttp,
+} from "./rangeSource";

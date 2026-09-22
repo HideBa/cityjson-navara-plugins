@@ -1,0 +1,108 @@
+{
+  "type": "Feature",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://cityjson.github.io/stac-city3d/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
+    "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+  ],
+  "id": "multigroup-noindex-cityparquet",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          4.367885327613022,
+          51.997962107833125
+        ],
+        [
+          4.382228876169065,
+          51.997962107833125
+        ],
+        [
+          4.382228876169065,
+          51.99819329790567
+        ],
+        [
+          4.367885327613022,
+          51.99819329790567
+        ],
+        [
+          4.367885327613022,
+          51.997962107833125
+        ]
+      ]
+    ]
+  },
+  "bbox": [
+    4.367885327613022,
+    51.997962107833125,
+    0.0,
+    4.382228876169065,
+    51.99819329790567,
+    12.1
+  ],
+  "properties": {
+    "datetime": "2026-08-07T20:37:56Z",
+    "city3d:version": "2.0",
+    "city3d:city_objects": 60,
+    "city3d:lods": [
+      "0.0",
+      "2.2"
+    ],
+    "city3d:co_types": [
+      "Building",
+      "BuildingPart"
+    ],
+    "city3d:attributes": [
+      {
+        "name": "function",
+        "type": "String"
+      },
+      {
+        "name": "measuredHeight",
+        "type": "Number"
+      },
+      {
+        "name": "roofType",
+        "type": "String"
+      },
+      {
+        "name": "status",
+        "type": "String"
+      },
+      {
+        "name": "yearOfConstruction",
+        "type": "Number"
+      }
+    ],
+    "city3d:semantic_surfaces": true,
+    "city3d:textures": false,
+    "city3d:materials": false,
+    "cityparquet:version": "0.1.0-draft",
+    "proj:code": "EPSG:7415"
+  },
+  "links": [],
+  "assets": {
+    "data": {
+      "href": "./building.parquet",
+      "title": "3D city model data",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data"
+      ],
+      "file:size": 238764,
+      "file:checksum": "1220ae8e4aa3a9b096616d3686023d5416bc09b5292daa0b348a6a2dd613dd78a0fb"
+    },
+    "building.parquet": {
+      "href": "./building.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data",
+        "cityparquet-objects"
+      ],
+      "file:size": 238764,
+      "file:checksum": "1220ae8e4aa3a9b096616d3686023d5416bc09b5292daa0b348a6a2dd613dd78a0fb"
+    }
+  }
+}

@@ -6,8 +6,9 @@
   (the Node-only entry point; it imports `fs` and re-imports the `hyparquet`
   package by name, which would not resolve from here and which we never use).
   Upstream's `types/` is not vendored — see `index.d.ts`, hand-written for the
-  three entry points this package calls, and `convert.d.ts`, hand-written for
-  the one internal export we import (`DEFAULT_PARSERS`). Both are `.d.ts` files
+  entry points this package calls (plus `asyncBufferFromUrl`, declared but
+  deliberately unused — `rangeSource.ts` has its own HTTP buffer), and
+  `convert.d.ts`, hand-written for the one internal export we import (`DEFAULT_PARSERS`). Both are `.d.ts` files
   and the re-vendoring step below only copies `.js`, so an upgrade leaves them
   in place.
 
