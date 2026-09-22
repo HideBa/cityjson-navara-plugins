@@ -244,3 +244,113 @@ describe("asyncBufferFromHttp", () => {
     expect(Array.from(out)).toEqual(Array.from(bytes.slice(0, 10)));
   });
 });
+
+describe("asyncBufferFromHttp transport hardening", () => {
+  it("rejects with AbortError when the signal fires during an in-flight slice, and the fetch received that signal", async () => {
+    let received: AbortSignal | undefined;
+    let started!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => (started = resolve));
+    const pending = ((_url: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        received = init?.signal ?? undefined;
+        started();
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("The operation was aborted.", "AbortError")),
+        );
+      })) as typeof fetch;
+    const buf = await asyncBufferFromHttp("https://example.test/f.parquet", {
+      byteLength: 1000,
+      fetch: pending,
+    });
+    const controller = new AbortController();
+    buf.setSignal(controller.signal);
+    const slice = buf.slice(0, 10);
+    await fetchStarted;
+    controller.abort();
+    await expect(slice).rejects.toMatchObject({ name: "AbortError" });
+    expect(received).toBe(controller.signal);
+  });
+
+  it("rejects with AbortError when the signal fires while the body is being read, even if the body ignores it", async () => {
+    let bodyStarted!: () => void;
+    const bodyRead = new Promise<void>((resolve) => (bodyStarted = resolve));
+    const stalled = (async () => {
+      const body = new ReadableStream<Uint8Array>({
+        pull() {
+          bodyStarted();
+          return new Promise(() => {}); // never delivers
+        },
+      });
+      return new Response(body, {
+        status: 206,
+        headers: { "Content-Range": "bytes 0-9/1000" },
+      });
+    }) as typeof fetch;
+    const buf = await asyncBufferFromHttp("https://example.test/f.parquet", {
+      byteLength: 1000,
+      fetch: stalled,
+    });
+    const controller = new AbortController();
+    buf.setSignal(controller.signal);
+    const slice = buf.slice(0, 10);
+    await bodyRead;
+    controller.abort();
+    await expect(slice).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("refuses a 200 whose own Content-Length is over 4 MiB without reading the body, even when the caller claimed a small length", async () => {
+    const big = new Uint8Array(6 * 1024 * 1024);
+    let bodyPulled = false;
+    const server = (async () => {
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            bodyPulled = true;
+            controller.enqueue(big);
+            controller.close();
+          },
+        },
+        { highWaterMark: 0 },
+      ); // pull only when read, so "pulled" means "read"
+      return new Response(body, {
+        status: 200,
+        headers: { "Content-Length": String(big.byteLength) },
+      });
+    }) as typeof fetch;
+    const buf = await asyncBufferFromHttp("https://example.test/f.parquet", {
+      byteLength: 1000, // stale: the real resource is 6 MiB
+      fetch: server,
+    });
+    await expect(buf.slice(0, 10)).rejects.toBeInstanceOf(
+      RangeNotSupportedError,
+    );
+    expect(bodyPulled).toBe(false);
+    expect(buf.bytesRead()).toBe(0);
+  });
+
+  it("stops reading a 200 without Content-Length once it passes 4 MiB, even when the caller claimed a small length", async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let chunksPulled = 0;
+    const server = (async () => {
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            chunksPulled += 1;
+            if (chunksPulled > 64) controller.close();
+            else controller.enqueue(chunk);
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      return new Response(body, { status: 200 });
+    }) as typeof fetch;
+    const buf = await asyncBufferFromHttp("https://example.test/f.parquet", {
+      byteLength: 1000, // stale
+      fetch: server,
+    });
+    await expect(buf.slice(0, 10)).rejects.toBeInstanceOf(
+      RangeNotSupportedError,
+    );
+    expect(chunksPulled).toBeLessThanOrEqual(6);
+  });
+});

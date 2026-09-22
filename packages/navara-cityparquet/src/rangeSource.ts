@@ -40,12 +40,53 @@ export class RangeNotSupportedError extends Error {
  *  range-less. */
 const MAX_UNRANGED_BYTES = 4 * 1024 * 1024;
 
-/** Throws the signal's abort reason when it has already fired. */
-function throwIfAborted(signal: AbortSignal | undefined): void {
-  if (!signal?.aborted) return;
-  throw signal.reason instanceof Error
+/** The error an aborted signal rejects with: its reason when that is an
+ *  Error, else a plain `AbortError`. */
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
     ? signal.reason
     : new DOMException("The operation was aborted.", "AbortError");
+}
+
+/** Throws the signal's abort reason when it has already fired. */
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw abortReason(signal);
+}
+
+/**
+ * Settles with `promise`, or rejects with the abort reason as soon as `signal`
+ * fires — whichever comes first. A body stream is not guaranteed to honour the
+ * request's signal (a polyfill, a service-worker response, a test double), so
+ * the read is raced rather than trusted; `onAbort` releases whatever the
+ * losing promise was holding.
+ */
+function abortable<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+  onAbort: () => void,
+): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      onAbort();
+      reject(abortReason(signal));
+    };
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 /** Clamps a hyparquet slice request to the buffer. */
@@ -99,6 +140,53 @@ function discardBody(res: Response): void {
   res.body?.cancel().catch(() => {});
 }
 
+/** The response's own `Content-Length`, or `null` when absent or malformed. */
+function contentLengthOf(res: Response): number | null {
+  const header = res.headers.get("Content-Length");
+  return header !== null && /^\d+$/.test(header.trim()) ? Number(header) : null;
+}
+
+/**
+ * Reads a response body under `signal`, refusing (and cancelling) once it
+ * passes `cap` bytes when a cap is given. A `200` answer carries the whole
+ * resource, whose real size the caller's `byteLength` may not reflect (a
+ * stale value, a server without `Content-Length`), so the cap is enforced on
+ * the bytes as they arrive rather than on what anyone claimed up front.
+ */
+async function readBody(
+  res: Response,
+  signal: AbortSignal | undefined,
+  cap: { bytes: number; refusal: () => Error } | null,
+): Promise<ArrayBuffer> {
+  const body = res.body;
+  if (body === null) {
+    return abortable(res.arrayBuffer(), signal, () => {});
+  }
+  const reader = body.getReader();
+  const release = () => {
+    reader.cancel().catch(() => {});
+  };
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await abortable(reader.read(), signal, release);
+    if (done) break;
+    total += value.byteLength;
+    if (cap !== null && total > cap.bytes) {
+      release();
+      throw cap.refusal();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out.buffer;
+}
+
 /** The resource's byte length: `HEAD`'s Content-Length, else a one-byte
  *  ranged GET's Content-Range total. */
 async function probeByteLength(
@@ -129,8 +217,11 @@ async function probeByteLength(
  *  (fallback: `Range: bytes=0-0` and read `Content-Range`), then one ranged
  *  GET per slice; a `200` to a ranged GET of more than 4 MiB throws
  *  `RangeNotSupportedError` (measured on the file, which a `200` carries
- *  whole: a small slice of a large file answered `200` throws too); no slice
- *  is cached. */
+ *  whole: a small slice of a large file answered `200` throws too — by the
+ *  response's own Content-Length when it sends one, else by the claimed
+ *  length, and in every case by a 4 MiB cap on the body read); a signal that
+ *  fires mid-slice rejects the slice with its abort reason even when the
+ *  fetch or its body ignores it; no slice is cached. */
 export async function asyncBufferFromHttp(
   url: string,
   opts: { byteLength?: number; fetch?: typeof fetch } = {},
@@ -155,8 +246,13 @@ export async function asyncBufferFromHttp(
         headers: { Range: `bytes=${s}-${e - 1}` },
         signal: current,
       });
+      // A fetch that ignored the signal must not hand back an aborted read.
+      if (current?.aborted) {
+        discardBody(res);
+        throw abortReason(current);
+      }
       if (res.status === 206) {
-        const buf = await res.arrayBuffer();
+        const buf = await readBody(res, current, null);
         bytesRead += buf.byteLength;
         if (buf.byteLength !== e - s) {
           throw new Error(
@@ -168,15 +264,25 @@ export async function asyncBufferFromHttp(
       if (res.status === 200) {
         // A 200 carries the WHOLE resource, so the size that matters is the
         // file's, not the range's: a 1 KiB slice of a 335 MB file answered 200
-        // would otherwise download all of it. `byteLength >= e - s`, so this
-        // also refuses every range over the limit.
-        if (byteLength > MAX_UNRANGED_BYTES) {
-          discardBody(res);
-          throw new RangeNotSupportedError(
-            `The server for ${url} does not support range requests: it answered a ${e - s}-byte range with the whole ${byteLength}-byte file.`,
+        // would otherwise download all of it. The response's own
+        // Content-Length is the authority (the caller's `byteLength` may be
+        // stale); without one, the claimed length decides, and the body read
+        // is capped anyway so an understated claim still cannot pull in a
+        // large file.
+        const declared = contentLengthOf(res);
+        const size = declared ?? byteLength;
+        const refusal = () =>
+          new RangeNotSupportedError(
+            `The server for ${url} does not support range requests: it answered a ${e - s}-byte range with the whole ${size}-byte file.`,
           );
+        if (size > MAX_UNRANGED_BYTES) {
+          discardBody(res);
+          throw refusal();
         }
-        const whole = await res.arrayBuffer();
+        const whole = await readBody(res, current, {
+          bytes: MAX_UNRANGED_BYTES,
+          refusal,
+        });
         bytesRead += whole.byteLength;
         return whole.slice(s, e);
       }
