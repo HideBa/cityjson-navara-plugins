@@ -1,8 +1,5 @@
 /// <reference lib="webworker" />
-// Placeholder entry: refuses every source until the CityParquet adapter lands.
+// The CityParquet stream worker: the shared core over the CityParquet adapter.
+import { createCityParquetSourceAdapter } from "./cityParquetSourceAdapter";
 import { installStreamWorker } from "./streamWorkerCore";
-import { createUnsupportedSourceAdapter } from "./unsupportedSourceAdapter";
-installStreamWorker(
-  self as unknown as Worker,
-  createUnsupportedSourceAdapter("CityParquet streaming is not available yet"),
-);
+installStreamWorker(self as unknown as Worker, createCityParquetSourceAdapter());

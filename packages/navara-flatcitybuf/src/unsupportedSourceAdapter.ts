@@ -1,8 +1,9 @@
 /**
  * A source adapter that admits nothing: every `open` is refused with
  * `"unsupported"`, so the registry throws its message and terminates the
- * worker. The CityParquet worker entry runs on it until its real adapter
- * lands; nothing else can be asked of it.
+ * worker. No entry runs on it today (the CityParquet worker has its real
+ * adapter); it stays as the stand-in for a format whose streaming is not
+ * available yet. Nothing else can be asked of it.
  */
 import type { OpenedSource, StreamSourceAdapter } from "./streamSourceAdapter";
 

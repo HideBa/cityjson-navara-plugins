@@ -611,10 +611,16 @@ export function installStreamWorker(
         return;
       }
     } catch (e) {
+      // An adapter's machine-readable refusal (CityParquet's read budget:
+      // `code: "budget"`) reaches the main thread with the message.
+      const tagged: unknown =
+        e instanceof Error ? (e as Error & { code?: unknown }).code : undefined;
+      const code = typeof tagged === "string" ? tagged : undefined;
       post({
         type: "error",
         id: msg.id,
         message: e instanceof Error ? e.message : String(e),
+        ...(code !== undefined ? { code } : {}),
         aborted: own?.signal.aborted ?? false,
       });
     }

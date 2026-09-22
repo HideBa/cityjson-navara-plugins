@@ -112,6 +112,9 @@ importers:
       '@cityjson/navara-cityjson':
         specifier: file:../navara-cityjson
         version: link:../navara-cityjson
+      '@cityjson/navara-cityparquet':
+        specifier: file:../navara-cityparquet
+        version: link:../navara-cityparquet
       '@cityjson/navara-core':
         specifier: file:../navara-core
         version: link:../navara-core

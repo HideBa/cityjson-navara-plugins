@@ -44,6 +44,7 @@ export default defineConfig({
     "three",
     "@cityjson/navara-core",
     "@cityjson/navara-cityjson",
+    "@cityjson/navara-cityparquet",
     // The subpath must be listed separately: esbuild's `external` entries are
     // matched literally, so the bare package name above would not cover it and
     // `CityMeshArraysDesc` (and with it the whole engine) would be inlined
