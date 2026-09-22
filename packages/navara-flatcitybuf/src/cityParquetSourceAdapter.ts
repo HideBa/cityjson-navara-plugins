@@ -49,8 +49,11 @@ export const MAX_FETCH_READ_ROWS = 60_000;
  *  written without a page index (or with one enormous row group) can serve
  *  hundreds of megabytes to a fetch of a handful of families. The plan comes
  *  from the footer alone — `CityParquetStream.estimateReadBytes`, an estimate
- *  rather than a ceiling; see its own note (Codex milestone review,
- *  Critical). */
+ *  rather than a ceiling, and a tight one exactly where it matters: an
+ *  unindexed chunk is charged whole. Over an INDEXED read it runs low (5.2x on
+ *  Yokohama's 1 km viewport), so this is effectively a ~500 MB bound there —
+ *  which the row gates already cover. See `estimateReadBytes`'s own note
+ *  (Codex milestone review, Critical). */
 export const MAX_FETCH_READ_BYTES = 96 * 1024 * 1024;
 
 export interface CityParquetSourceAdapterOptions {

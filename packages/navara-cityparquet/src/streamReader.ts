@@ -139,16 +139,26 @@ export interface CityParquetStream {
    * declares neither is charged the whole file — "unknown" must never read as
    * "free".
    *
-   * It is an ESTIMATE, not a ceiling. What it cannot see from the footer is
-   * page granularity: an indexed read fetches whole pages plus the offset
-   * index itself, so a 3-row range of an 8-row group costs more than 3/8 of
-   * that group. On the package's fixtures (256-byte pages, 8-row groups) that
-   * overhead dominates and the estimate runs about half the bytes actually
-   * fetched; on a production file, whose pages hold thousands of rows, the
-   * fraction is the whole story. Pinned both ways in `streamReader.test.ts`
-   * at a factor of 4. It is the right shape for the gate it feeds — refusing
-   * a fetch that would pull tens of megabytes — and deliberately NOT a
-   * guarantee about any individual read.
+   * It is an ESTIMATE, not a ceiling, and it is asymmetric — which is the
+   * point:
+   *
+   * - A chunk WITHOUT an offset index is charged whole, which is what
+   *   hyparquet really reads. That is the case the gate exists for (one huge
+   *   row group, or a file written with no page index), and there the estimate
+   *   is tight.
+   * - A chunk WITH an offset index is charged its row fraction, and a real
+   *   indexed read fetches whole PAGES plus the offset index itself, so it
+   *   costs more than that fraction. Measured: the Yokohama 1 km viewport
+   *   (6 199 rows of 884 106) plans 2.45 MB and reads 12.83 MB — a factor of
+   *   5.2 low. The package's fixtures (256-byte pages, 8-row groups) run about
+   *   2x low, which is what `streamReader.test.ts` pins (a factor of 4 either
+   *   way, on both fixtures).
+   *
+   * So a 96 MiB gate over this number is roughly a 500 MB gate over an indexed
+   * read, and a 96 MiB gate over an unindexed one. Reads that skip pages are
+   * bounded by the row gates anyway; the unbounded case is the one this makes
+   * refusable. Tightening it would mean reading each chunk's offset index to
+   * count pages — a read of its own, on the path this is meant to protect.
    */
   estimateReadBytes(
     ranges: ReadonlyArray<FamilyRange>,
