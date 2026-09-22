@@ -98,7 +98,10 @@ export interface CityParquetStream {
   readonly header: CityParquetStreamHeader;
   readonly index: FamilyIndex;
   /** One batch per FamilyRange; `rows` keys are object ids (task 4 of the
-   *  roadmap reuses them for attribute lookups). */
+   *  roadmap reuses them for attribute lookups). Each range must start at a
+   *  family boundary (as `index.query` output does), or `familyRoot` labels
+   *  its first row as a root. `maxLod` compares numerically (`"2"` excludes
+   *  `"2.2"`), so pass a value from `header.lods`; `null` reads every LoD. */
   readRows(
     ranges: ReadonlyArray<FamilyRange>,
     maxLod: string | null,
@@ -426,12 +429,20 @@ export async function openCityParquetStream(
       let familyRoot = "";
       for (const piece of piecesOf(range, table.rowGroupStarts)) {
         throwIfAborted(signal);
-        const raw = await readCityParquetRows(
-          table.buffer,
-          table.schema.metadata,
-          projection.columns,
-          piece,
-        );
+        let raw: Record<string, unknown>[];
+        try {
+          raw = await readCityParquetRows(
+            table.buffer,
+            table.schema.metadata,
+            projection.columns,
+            piece,
+          );
+        } catch (error) {
+          // An abort whose reason is not named "AbortError" would reach here
+          // wrapped as a corrupt-file error; the signal is the authority.
+          throwIfAborted(signal);
+          throw error;
+        }
         for (let off = 0; off < raw.length; off += DECODE_CHUNK_ROWS) {
           throwIfAborted(signal);
           const chunk = raw.slice(off, off + DECODE_CHUNK_ROWS);
