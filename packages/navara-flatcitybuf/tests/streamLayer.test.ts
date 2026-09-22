@@ -197,6 +197,12 @@ interface FakeClientOpts {
   /** Every vertex component of the colours the fake worker bakes for a
    *  `recolor` (exactly representable, so `toEqual` is safe). */
   readonly recolorValue?: number;
+  /** The `fetch` answers with this worker 'error' response (after any
+   *  cells) instead of 'done' — e.g. CityParquet's read-budget refusal. */
+  readonly fetchErrorResponse?: {
+    readonly message: string;
+    readonly code?: string;
+  };
   /** What a `surfaces` request resolves with. Absent = the worker's
    *  "not resident in any cached cell" error response. */
   readonly surfaces?: ReadonlyArray<unknown>;
@@ -297,6 +303,15 @@ function makeFakeClient(opts: FakeClientOpts) {
       const finish = (): Promise<void> => {
         deliverCells();
         if (opts.stallFetch) return new Promise<void>(() => {});
+        if (opts.fetchErrorResponse) {
+          onMessage({
+            type: "error",
+            id: 0,
+            ...opts.fetchErrorResponse,
+            aborted: false,
+          });
+          return Promise.resolve();
+        }
         onMessage({ type: "done", id: 0 });
         return Promise.resolve();
       };
@@ -744,6 +759,33 @@ describe("FcbStreamLayerHandle.commit", () => {
     handle.onStatus((s, m) => statuses.push([s, m]));
     await expect(handle.commit(topDownRays())).resolves.toBeUndefined();
     expect(statuses.at(-1)).toEqual(["error", "WorkerClient terminated"]);
+  });
+
+  it("reports a fetch refused for the read budget (code 'budget') as too-far, not as an error", async () => {
+    const { handle } = makeHandle({
+      fetchErrorResponse: {
+        message: "reading 900 MB exceeds the 256 MB read budget",
+        code: "budget",
+      },
+    });
+    const statuses: Array<[StreamStatus, string | null]> = [];
+    handle.onStatus((s, m) => statuses.push([s, m]));
+    await handle.commit(topDownRays());
+    expect(statuses.at(-1)).toEqual([
+      "too-far",
+      "Zoom in — too many objects in view to load at once",
+    ]);
+    expect(handle.status).toBe("too-far");
+  });
+
+  it("still reports any other fetch error response as an error with its message", async () => {
+    const { handle } = makeHandle({
+      fetchErrorResponse: { message: "range read failed" },
+    });
+    const statuses: Array<[StreamStatus, string | null]> = [];
+    handle.onStatus((s, m) => statuses.push([s, m]));
+    await handle.commit(topDownRays());
+    expect(statuses.at(-1)).toEqual(["error", "range read failed"]);
   });
 
   it("builds one mesh per resident cell through the INJECTED factory, stamps the layer id on its picking index, and bumps the version once", async () => {

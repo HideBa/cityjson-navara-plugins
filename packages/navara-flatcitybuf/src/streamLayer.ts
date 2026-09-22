@@ -126,6 +126,11 @@ export function emptyCellEntry(
 export type StreamStatus =
   "idle" | "probing" | "fetching" | "too-far" | "error";
 
+/** The too-far message for a fetch the worker refused with `code: "budget"`
+ *  (the objects in view exceed what one read may pull at once). */
+export const READ_BUDGET_TOO_FAR_MESSAGE =
+  "Zoom in — too many objects in view to load at once";
+
 /** Every subscribe method returns its own unsubscribe. */
 export interface StreamLayerEvents {
   onStatus(
@@ -559,6 +564,11 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       this.emitStatus("fetching", null);
       const fetched = new Map<CellKey, FetchedCell>();
       let fetchError: string | null = null;
+      // The worker's machine-readable refusal code, when it gave one. A
+      // `"budget"` refusal (CityParquet's read budget) is not a failure of
+      // the source: the view simply holds more than one read may pull, so it
+      // is reported like the probe's own too-far below.
+      let fetchErrorCode: string | undefined;
       // Snapshot of what THIS fetch asks the worker to bake into
       // `geometry.ruleColors`. Read once, so every cell of this commit is
       // stamped identically even if the user edits a rule mid-flight (see
@@ -595,6 +605,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
               });
             } else if (msg.type === "error") {
               fetchError = msg.message;
+              fetchErrorCode = msg.code;
             }
           },
         )
@@ -690,7 +701,11 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
         return;
       }
       if (fetchError !== null) {
-        this.emitStatus("error", fetchError);
+        if (fetchErrorCode === "budget") {
+          this.emitStatus("too-far", READ_BUDGET_TOO_FAR_MESSAGE);
+        } else {
+          this.emitStatus("error", fetchError);
+        }
         return;
       }
 
