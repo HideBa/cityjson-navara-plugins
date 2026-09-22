@@ -180,6 +180,28 @@ describe("asyncBufferFromHttp", () => {
     expect(buf.bytesRead()).toBe(0);
   });
 
+  it("falls back to the ranged GET when the HEAD request itself rejects", async () => {
+    // Codex milestone review (Important): a HEAD that THROWS — CORS, a
+    // network refusal, a proxy that drops the method — escaped
+    // `probeByteLength` before the `bytes=0-0` fallback could run, so a
+    // source whose ranged GETs work perfectly failed to open at all.
+    const server = fakeFetch(bytes);
+    const headRejects = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "HEAD") throw new TypeError("Failed to fetch");
+      return server.fetch(url, init);
+    }) as typeof fetch;
+    const buf = await asyncBufferFromHttp("https://example.test/f.parquet", {
+      fetch: headRejects,
+    });
+    expect(buf.byteLength).toBe(1000);
+    expect(server.requests.at(-1)).toEqual({
+      method: "GET",
+      range: "bytes=0-0",
+    });
+    const out = new Uint8Array(await buf.slice(10, 20));
+    expect(Array.from(out)).toEqual(Array.from(bytes.slice(10, 20)));
+  });
+
   it("does not cache: the same slice twice is two requests", async () => {
     const server = fakeFetch(bytes);
     const buf = await asyncBufferFromHttp("https://example.test/f.parquet", {

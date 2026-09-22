@@ -188,13 +188,19 @@ async function readBody(
 }
 
 /** The resource's byte length: `HEAD`'s Content-Length, else a one-byte
- *  ranged GET's Content-Range total. */
+ *  ranged GET's Content-Range total.
+ *
+ *  A HEAD that REJECTS counts as a HEAD that answered nothing useful, not as
+ *  a failure of the source: CORS without `Access-Control-Allow-Methods: HEAD`,
+ *  a proxy that drops the method and a plain network refusal all surface as a
+ *  thrown `TypeError` here, while the ranged GET the rest of this module lives
+ *  on may work perfectly (Codex milestone review, Important). */
 async function probeByteLength(
   url: string,
   fetchImpl: typeof fetch,
 ): Promise<number> {
-  const head = await fetchImpl(url, { method: "HEAD" });
-  if (head.ok) {
+  const head = await fetchImpl(url, { method: "HEAD" }).catch(() => null);
+  if (head?.ok) {
     const length = head.headers.get("Content-Length");
     if (length !== null && /^\d+$/.test(length.trim())) return Number(length);
   }
