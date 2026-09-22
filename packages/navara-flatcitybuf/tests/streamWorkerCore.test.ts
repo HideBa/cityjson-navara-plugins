@@ -20,7 +20,9 @@ import {
 import { installStreamWorker } from "../src/streamWorkerCore";
 import { makeGrid, unionOfCellBounds } from "../src/tileGrid";
 import type {
+  AdmissionError,
   OpenedSource,
+  OpenRequest,
   StreamSourceAdapter,
 } from "../src/streamSourceAdapter";
 import {
@@ -79,6 +81,15 @@ interface FakeAdapter extends StreamSourceAdapter {
    *  test land a second request mid-traversal. */
   gate: Promise<void> | null;
   closed: number;
+  /** Every request that reached `open`. */
+  readonly opens: OpenRequest[];
+  /** What the next `open` answers. */
+  admission: AdmissionError | null;
+  /** When set, the header's up-front LoDs. */
+  lods: string[] | undefined;
+  /** When set, `select` throws (rather than returning) once its signal is
+   *  aborted — as a real range reader does. */
+  throwWhenAborted: boolean;
 }
 
 function fakeAdapter(features: CityModel[]): FakeAdapter {
@@ -86,7 +97,12 @@ function fakeAdapter(features: CityModel[]): FakeAdapter {
     selectBBoxes: [],
     gate: null,
     closed: 0,
-    open(): Promise<OpenedSource> {
+    opens: [],
+    admission: null,
+    lods: undefined,
+    throwWhenAborted: false,
+    open(req): Promise<OpenedSource> {
+      adapter.opens.push(req);
       return Promise.resolve({
         header: {
           version: "fake",
@@ -94,8 +110,9 @@ function fakeAdapter(features: CityModel[]): FakeAdapter {
           extent: EXTENT,
           referenceSystem: "EPSG:28992",
           epsg: 28992,
+          ...(adapter.lods ? { lods: adapter.lods } : {}),
         },
-        admission: null,
+        admission: adapter.admission,
       });
     },
     probe(bbox): Promise<number> {
@@ -103,12 +120,15 @@ function fakeAdapter(features: CityModel[]): FakeAdapter {
         features.filter((f) => intersects(f.bbox, bbox)).length + 100,
       );
     },
-    async *select(bbox) {
+    async *select(bbox, { signal }) {
       adapter.selectBBoxes.push(bbox);
       // Honours the bbox, like a real spatial index: only intersecting
       // features come back.
       for (const f of features) {
         if (adapter.gate) await adapter.gate;
+        if (adapter.throwWhenAborted && signal.aborted) {
+          throw new Error("read aborted");
+        }
         if (intersects(f.bbox, bbox)) yield f;
       }
     },
@@ -250,6 +270,29 @@ describe("streamWorkerCore", () => {
         m.type === "error" && m.id === 3,
     );
     expect(notFound?.code).toBe("not-found");
+  });
+
+  it("a superseded fetch whose read throws on its aborted signal reports aborted", async () => {
+    const adapter = fakeAdapter([feature("a", 100, 100)]);
+    adapter.throwWhenAborted = true;
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+
+    let release!: () => void;
+    adapter.gate = new Promise((r) => (release = r));
+    const first = send(fetchMsg(1, ["2/0/0"]));
+    adapter.gate = null;
+    const second = send(fetchMsg(2, ["2/0/0"]));
+    await second; // the newer request finishes; its controller is not aborted
+    release();
+    await first;
+
+    const err = posted.find(
+      (m): m is Extract<WorkerResponse, { type: "error" }> =>
+        m.type === "error" && m.id === 1,
+    );
+    // Judged by fetch 1's OWN signal, not by whichever request is current.
+    expect(err).toMatchObject({ message: "read aborted", aborted: true });
   });
 
   it("surfaces answers from the cache, and 'not-found' once the cell is evicted", async () => {

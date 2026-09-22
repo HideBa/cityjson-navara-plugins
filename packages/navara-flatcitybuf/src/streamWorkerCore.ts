@@ -168,6 +168,10 @@ export function installStreamWorker(
 
   ctx.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     const msg = ev.data;
+    /** THIS request's controller (probe/fetch only). The outer catch judges
+     *  `aborted` by it: `controller` may already belong to a newer request,
+     *  whose signal says nothing about why this one failed. */
+    let own: AbortController | null = null;
     try {
       if (msg.type === "open") {
         const { header, admission } = await adapter.open(msg);
@@ -202,8 +206,9 @@ export function installStreamWorker(
 
       if (msg.type === "probe") {
         controller?.abort();
-        controller = new AbortController();
-        const count = await adapter.probe(msg.bbox, controller.signal);
+        own = new AbortController();
+        controller = own;
+        const count = await adapter.probe(msg.bbox, own.signal);
         post({ type: "probed", id: msg.id, count });
         return;
       }
@@ -214,6 +219,7 @@ export function installStreamWorker(
         const place = placement;
         controller?.abort();
         const my = new AbortController();
+        own = my;
         controller = my;
 
         // Every key this call touches in the worker's OWN cache, paired with
@@ -509,7 +515,7 @@ export function installStreamWorker(
         type: "error",
         id: msg.id,
         message: e instanceof Error ? e.message : String(e),
-        aborted: controller?.signal.aborted ?? false,
+        aborted: own?.signal.aborted ?? false,
       });
     }
   };
