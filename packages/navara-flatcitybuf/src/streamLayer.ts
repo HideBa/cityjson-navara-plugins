@@ -841,8 +841,9 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    *
    * A footprint that cannot be projected back to lng/lat leaves the PREVIOUS
    * region standing rather than clearing it: the fetch itself is going ahead
-   * regardless (the source-CRS bbox is all the worker needs), so blanking the
-   * overlay would report "nothing is being queried" about a live query. The
+   * regardless (the index-space bbox — source-CRS metres, or bucket metres for
+   * a geographic source — is all the worker needs), so blanking the overlay
+   * would report "nothing is being queried" about a live query. The
    * only thing lost is that the outline is one commit stale, which is strictly
    * better than wrong.
    */
@@ -1130,11 +1131,15 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    * Full ring geometry for one object, on demand.
    *
    * `ResidentObjectRecord` deliberately excludes `Surface.rings`
-   * (workerProtocol.ts), so the consumers that need them — rooftop solar
-   * scoring, the Surfaces tab — fetch them for the one selected object rather
-   * than every cell shipping every ring. Rejects (rather than resolving empty)
-   * when the object is not resident in any cached cell, so the caller can tell
-   * "no rings" from "wrong object".
+   * (workerProtocol.ts), so a consumer that needs them fetches them for the
+   * one selected object rather than every cell shipping every ring. Rejects
+   * (rather than resolving empty) when the object is not resident in any
+   * cached cell, so the caller can tell "no rings" from "wrong object".
+   *
+   * It has NO production consumer yet — `useResidentSurfaces` is the app's
+   * wrapper and nothing renders it, and the processing toolbox's streaming
+   * branch reads `ResidentObjectRecord.roofMetrics` instead. Kept, and kept
+   * correct, for the first one; do not infer a caller from this comment.
    *
    * The result carries the SPACE its rings are in, because that is not a
    * property of the layer: a geographic source is baked per cell, so its rings

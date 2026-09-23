@@ -450,9 +450,6 @@ describe("streamWorkerCore", () => {
     const round = (a: Float32Array, dp: number) =>
       [...a].map((v) => Number(v.toFixed(dp)) + 0);
     // EPSG:28992 -> WGS84 -> ENU about the 2/0/0 cell centre (200, 200): the
-    // 10 m roof quad sits ~135 m west and ~104 m south of it, tilted by RD
-    // New's grid convergence at this (fixture) position.
-    // EPSG:28992 -> WGS84 -> ENU about the 2/0/0 cell centre (200, 200): the
     // 10 m roof quad sits ~97 m west and ~102 m south of it, and the ring is
     // wound so its normal points up-and-north.
     expect(round(cell.geometry.positions, 2)).toEqual([

@@ -465,9 +465,6 @@ export function installStreamWorker(
     }
     if (generation !== closeGeneration) return;
     const { header, admission } = result;
-    // An admitted source guarantees header.extent is set and header.epsg is a
-    // metre-based code (the adapter's admission refuses anything else), but
-    // the two are independent as far as the type checker knows.
     // An admitted source guarantees an index space: a metric EPSG, or — for a
     // geographic one — a bucket frame descriptor. `epsg: null` WITH a frame is
     // the positive contract for the second kind; `epsg: null` with no frame is

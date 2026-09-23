@@ -53,6 +53,18 @@ export interface ResidentObjectRecord {
   readonly id: string;
   readonly objectType: string;
   readonly attributes: Readonly<Record<string, unknown>>;
+  /**
+   * The object's box in the STREAM'S INDEX SPACE — the same space as
+   * `StreamHeader.extent`, every `probe`/`fetch` bbox and the tile grid, so
+   * the main thread can merge boxes across cells and fit a camera to them.
+   *
+   * Which space that is, is the HEADER's answer, not this record's: a
+   * projected source indexes in its source CRS's metres, a geographic one in
+   * the bucket metres of `StreamHeader.frame`. It is never the cell-ENU
+   * metres the cell's GEOMETRY (and `surfaceData`) is in — those differ per
+   * cell, and a box that changes meaning between two cells cannot be merged.
+   * Read it through the header, never by assuming a CRS.
+   */
   readonly bbox: BBox3;
   readonly lod: string | null;
   readonly surfaceCount: number;
@@ -158,6 +170,18 @@ export type WorkerRequest =
  *
  * `null` in its place means "the layer's source CRS", which is what a
  * projected source's cached rings have always been in.
+ *
+ * NOT the same thing as the OTHER `frame` on this protocol. Two tagged
+ * descriptors travel here and both read `{ lngDeg, latDeg, … }`:
+ *
+ *  - `kind: "local-metric"` ({@link LocalMetricFrameDescriptor}, on the header
+ *    and on every `cell`) — the dataset's ONE bucket index: record bboxes and
+ *    query boxes, never geometry.
+ *  - `kind: "enu"` (this one, on `surfaceData`) — ONE CELL's render frame:
+ *    geometry, never an index.
+ *
+ * Reading one as the other places a layer by the wrong scale, so `kind` is
+ * checked where a descriptor is consumed (`streamRegistry.georeference`).
  */
 export interface CellEnuFrameDescriptor {
   readonly kind: "enu";
