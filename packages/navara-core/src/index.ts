@@ -102,7 +102,18 @@ export {
   enuToEcef,
   geodeticToEcef,
   makeEnuFrame,
+  WGS84_A,
+  WGS84_E2,
+  WGS84_F,
 } from "./geo/enuFrame";
+export type {
+  LocalMetricFrame,
+  LocalMetricFrameDescriptor,
+} from "./geo/localMetricFrame";
+export {
+  localMetricFrameFromDescriptor,
+  makeLocalMetricFrame,
+} from "./geo/localMetricFrame";
 export type {
   SourceToEnuOptions,
   ProjectPositionsOptions,
