@@ -259,18 +259,57 @@ function bucketBoxOfRings(
 }
 
 /**
+ * Each object's FILE ROW box as geodetic lon/lat/h — the reference
+ * `buildCityMeshArrays` orients an exterior ring against, for the objects the
+ * source gave a box at all.
+ *
+ * It must be the FILE's box and not the box of the rings that arrived: a
+ * CityParquet read filters geometry columns by LoD (`lodAllowed`) while the
+ * `bbox` columns always state the whole object, so at LoD 0 the model holds a
+ * footprint whose own box is a near-plane. A box drawn tight around two
+ * footprint polygons a few centimetres apart in height sits BETWEEN them and
+ * inverts the upper one's normal (the fix round's N1). The file's box is the
+ * whole building, so every footprint polygon reads as below its centre.
+ *
+ * `object.bbox` here is BUCKET metres horizontally and raw file z vertically —
+ * `familyModels` runs `toBucketBBox` over every non-null row box — so the two
+ * horizontal corners go back through `toLngLat`, the index's own inverse, and z
+ * passes through as the rings' z does. Two corners, not four: the bucket
+ * transform is linear in lon/lat, and the tiny over-bound an axis-aligned
+ * round trip could leave is nothing to a centre reference.
+ */
+function geodeticExtentsOf(
+  model: CityModel,
+  toLngLat: (coords: [number, number]) => [number, number],
+): Map<string, BBox3> {
+  const out = new Map<string, BBox3>();
+  for (const object of Object.values(model.objects)) {
+    if (!object?.bbox) continue;
+    const box = object.bbox;
+    const [minLng, minLat] = toLngLat([box[0], box[1]]);
+    const [maxLng, maxLat] = toLngLat([box[3], box[4]]);
+    out.set(object.id, [minLng, minLat, box[2], maxLng, maxLat, box[5]]);
+  }
+  return out;
+}
+
+/**
  * A copy of `model` whose rings (and object bboxes) are local ENU metres in
  * `frame`, leaving the caller's geographic model untouched — the cell cache
  * keeps the ENU one, because `recolor` must see exactly the object and surface
  * ordering that built the arrays.
+ *
+ * `fileExtents` seeds each object's new box with its full file extent; see
+ * `geodeticExtentsOf` for why the rings alone will not do.
  */
 function toCellEnu(
   model: CityModel,
   frame: ReturnType<typeof makeEnuFrame>,
   heightOffset: number,
+  fileExtents: ReadonlyMap<string, BBox3>,
 ): CityModel {
   const objects: Record<string, CityObject> = { ...model.objects };
-  geodeticRingsToEnu(objects, frame, heightOffset);
+  geodeticRingsToEnu(objects, frame, heightOffset, fileExtents);
   return { ...model, objects };
 }
 
@@ -728,7 +767,16 @@ export function installStreamWorker(
                 : undefined;
             const cellModel =
               place.kind === "bucket"
-                ? toCellEnu(bareModel, frame, place.heightOffset)
+                ? toCellEnu(
+                    bareModel,
+                    frame,
+                    place.heightOffset,
+                    // The winding reference, taken BEFORE the conversion for the
+                    // same reason the reported boxes are: it is the file's own
+                    // row extent, which the rings that survived the LoD filter
+                    // no longer describe.
+                    geodeticExtentsOf(bareModel, place.toLngLat),
+                  )
                 : bareModel;
             const a = buildCityMeshArrays(
               cellModel,

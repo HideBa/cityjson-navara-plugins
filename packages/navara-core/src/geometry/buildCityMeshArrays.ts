@@ -520,6 +520,21 @@ function triangulateSurface(
  * roof baked alone from a geographic source came out with normal z = -1 where
  * the same roof with its ground surface present came out +1.
  *
+ * This is a BACKSTOP, not the reference. The reference an object is supposed to
+ * be judged against is its own FILE ROW box — the whole building, including the
+ * surfaces a LoD filter dropped before the bake — which is what
+ * `projectCityObjects` seeds on the projected path and what `geodeticRingsToEnu`
+ * seeds from `fileExtents` on the streamed geographic one. The floor below only
+ * covers the case where NO such box exists (a CityParquet child row whose bbox
+ * columns are null), and it covers exactly one shape: an object that is ONE
+ * planar face. It does NOT cover two or more faces in the same near-plane, which
+ * hand each other a reference far above the floor — a two-part LoD 0 footprint
+ * whose parts differ in height by more than 2.5e-4 of the box diagonal (2.2 cm
+ * over 40 m) still has its upper part inverted when no file extent is available.
+ * That residue is pinned by "still inverts the upper polygon with NO row box" in
+ * `tests/geo/geodeticRingsToEnu.test.ts`, and widening it means judging the
+ * box's degeneracy rather than one face's offset within it.
+ *
  * 2.5e-4 sits between the two populations with about an order of magnitude of
  * margin on each side, measured on the streamed geographic path:
  *
@@ -531,9 +546,13 @@ function triangulateSurface(
  * - real references: 1.0e-1 for a 30 m building, 1.0e-2 for a 3 m storey, and
  *   3.4e-3 for a deliberately pathological 1 m-tall slab 150 m across.
  *
- * Erring high is the safe direction: refusing a flip leaves the file's own
- * winding, which CityJSON already specifies as counter-clockwise seen from
- * outside, and the city material is double-sided either way.
+ * Erring high is the safe direction, in the sense of DETERMINISTIC and
+ * SPEC-CONFORMANT rather than of correct: refusing a flip leaves the file's own
+ * winding, which CityJSON specifies as counter-clockwise seen from outside — and
+ * real CityJSON does get that wrong on the faces this heuristic exists for
+ * (`docs/architecture-notes.md:21`). A refused flip is therefore the file's
+ * answer, right or wrong, not a correction of it. The city material is
+ * double-sided either way; what a wrong normal costs is the normal G-buffer.
  */
 const ORIENTATION_REFERENCE_TOLERANCE = 2.5e-4;
 

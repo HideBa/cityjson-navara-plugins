@@ -585,10 +585,13 @@ describe("multiple selected LoDs", () => {
  * bbox centre. That reference only carries information when the centre is off
  * the face's own plane; for an object that IS one planar face the centre lies
  * in it, the dot product is rounding noise, and the sign it happens to carry
- * decides the normal. `geodeticRingsToEnu` re-boxes TIGHT around whatever rings
- * survived the LoD filter, so a roof-only bake hits exactly that case (the
- * milestone review's Important 1: measured normal z = -1 against +1 for the
- * same input with a full-height box).
+ * decides the normal. A bake whose object has no file row box to seed from falls
+ * back to a box TIGHT around whatever rings survived the LoD filter, so a
+ * roof-only bake hits exactly that case (the milestone review's Important 1:
+ * measured normal z = -1 against +1 for the same input with a full-height box).
+ * These cases pin the FLOOR, which is that fallback's only protection; the file
+ * row box that keeps a multi-face bake right is
+ * `geodeticRingsToEnu`'s `fileExtents`.
  */
 describe("buildCityMeshArrays exterior orientation", () => {
   const upwardSquare: Vec3[] = [

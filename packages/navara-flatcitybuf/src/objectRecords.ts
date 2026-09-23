@@ -27,9 +27,11 @@ import type { ResidentObjectRecord } from "./workerProtocol";
  *
  * It also decides what is skippable: an object with no bbox is skipped (a
  * `ResidentObjectRecord.bbox` is non-nullable and fabricating one would be
- * worse), and for such a source the ENU conversion nulls the bbox of a
- * geometryless family parent — so the override is what keeps that parent's
- * record, which the inspector and the hidden-type lookup need.
+ * worse) — and for such a source the override is the only box in the right
+ * SPACE, including for a geometryless family parent, whose record the inspector
+ * and the hidden-type lookup need. What the ENU conversion leaves on such a
+ * parent is a box in the CELL's frame; publishing that as an index coordinate is
+ * the mistake this parameter exists to make impossible.
  *
  * When it is given, it is the ONLY source of a reported box: there is no
  * fall-back to `obj.bbox`, because an object the caller could not box is an

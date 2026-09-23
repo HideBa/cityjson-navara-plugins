@@ -11,7 +11,7 @@
  * arithmetic, which `enuFrame.test.ts` already owns.
  */
 import { describe, expect, it } from "vitest";
-import type { CityObject, Vec3 } from "../../src/citymodel/types";
+import type { BBox3, CityObject, Vec3 } from "../../src/citymodel/types";
 import {
   ecefToEnu,
   geodeticToEcef,
@@ -225,12 +225,14 @@ describe("geodeticRingsToEnu", () => {
 });
 
 /**
- * The milestone review's Important 1. A LoD-filtered bake sees only the rings
- * that survived, so `geodeticRingsToEnu`'s TIGHT re-box of a roof-only object
- * has its centre in the roof's own plane — and the sub-nanometre residue the
- * conversion leaves there is what `orientExteriorRing` was reading as an
- * inside/outside reference. Measured before the fix: normal z = -1 for the
- * roof-only bake against +1 for the same roof with its ground surface present.
+ * The milestone review's Important 1. With no `fileExtents` entry to seed from,
+ * `geodeticRingsToEnu` falls back to a box TIGHT around the rings it has — so a
+ * LoD-filtered roof-only object has its box centre in the roof's own plane, and
+ * the sub-nanometre residue the conversion leaves there is what
+ * `orientExteriorRing` was reading as an inside/outside reference. Measured
+ * before the magnitude floor: normal z = -1 for the roof-only bake against +1
+ * for the same roof with its ground surface present. The floor is what makes the
+ * fallback safe for ONE face; the seed below is what makes it safe for more.
  */
 describe("a roof-only bake's normals", () => {
   const roofRing = (h: number): Vec3[] => {
@@ -278,5 +280,149 @@ describe("a roof-only bake's normals", () => {
     };
     geodeticRingsToEnu(objects, frame, 0);
     expect(meshOf(objects).normals[2]).toBeGreaterThan(0.99);
+  });
+});
+
+/**
+ * The fix-round review's N1. The magnitude floor the previous round added to
+ * `orientExteriorRing` only covers an object that is literally ONE face: two
+ * polygons in the same near-plane hand EACH OTHER a reference far above the
+ * floor, and a box drawn tight around just those two inverts the upper one —
+ * where the object's own FILE ROW box, which the pre-milestone path handed the
+ * heuristic, gets both right. Measured with the real `buildCityMeshArrays`,
+ * `normals[2]` of the lower and the upper polygon of a two-part LoD 0
+ * footprint:
+ *
+ * | height step | tight ring box | file row box |
+ * |---|---|---|
+ * | 0.02 m | lo -1, hi -1 | lo -1, hi -1 |
+ * | 0.05 m | lo -1, hi +1 | lo -1, hi -1 |
+ * | 0.50 m | lo -1, hi +1 | lo -1, hi -1 |
+ * | 2.00 m | lo -1, hi +1 | lo -1, hi -1 |
+ *
+ * The trigger is ordinary data: `lodAllowed` in the CityParquet reader drops
+ * higher-LoD geometry at READ time, so at LoD 0 the object reaching the bake
+ * holds only its footprint polygons — and a terrain-following footprint, or one
+ * ground plane per wing, steps by centimetres.
+ */
+describe("a multi-face planar bake's normals", () => {
+  // The WGS84 radii at 35.5 deg N: the prime-vertical radius N = a / W and the
+  // meridional M = a(1-e^2) / W^3 with W^2 = 1 - e^2 sin^2 phi, so one degree
+  // spans N cos(phi) pi/180 = 90730 m east and M pi/180 = 110952 m north.
+  // Spelled in metres because the step sizes below ARE the measurement.
+  const M_PER_DEG_E = 90730;
+  const M_PER_DEG_N = 110952;
+  const east = (m: number) => CELL_LNG + m / M_PER_DEG_E;
+  const north = (m: number) => CELL_LAT + m / M_PER_DEG_N;
+
+  /** A quad wound CLOCKWISE seen from above, so Newell's normal points DOWN —
+   *  what CityJSON specifies for a GroundSurface, outward from the solid. */
+  const downQuad = (
+    e0: number,
+    e1: number,
+    n0: number,
+    n1: number,
+    z: number,
+  ): Vec3[] => [
+    [east(e0), north(n0), z],
+    [east(e0), north(n1), z],
+    [east(e1), north(n1), z],
+    [east(e1), north(n0), z],
+  ];
+
+  const upQuad = (
+    e0: number,
+    e1: number,
+    n0: number,
+    n1: number,
+    z: number,
+  ): Vec3[] => [...downQuad(e0, e1, n0, n1, z)].reverse();
+
+  /** `normals[2]` of the first vertex of each of the two surfaces: a quad
+   *  triangulates to two triangles, six vertices, so the second starts at 6. */
+  function bakeNormalZ(
+    rings: ReadonlyArray<ReadonlyArray<Vec3>>,
+    fileExtent: BBox3 | null,
+    heightOffset = 0,
+  ): { lo: number; hi: number } {
+    const frame = makeEnuFrame(CELL_LNG, CELL_LAT, heightOffset);
+    const objects: Record<string, CityObject> = {
+      f: objectWith("f", rings, null),
+    };
+    geodeticRingsToEnu(
+      objects,
+      frame,
+      heightOffset,
+      fileExtent ? new Map([["f", fileExtent]]) : undefined,
+    );
+    const arrays = buildCityMeshArrays(
+      {
+        sourceEncoding: "cityparquet",
+        metadata: {},
+        bbox: null,
+        objects,
+        vertexCount: 0,
+      },
+      "cell",
+      [0, 0, 0],
+    );
+    return { lo: arrays.normals[2]!, hi: arrays.normals[20]! };
+  }
+
+  /** Two 20 m x 20 m ground polygons side by side over a 20 m depth, the
+   *  eastern one `step` metres higher. */
+  const footprint = (step: number): Vec3[][] => [
+    downQuad(0, 20, 0, 20, 0),
+    downQuad(20, 40, 0, 20, step),
+  ];
+
+  /** The file's own row box for that building: the same 40 m x 20 m plan, but
+   *  10 m tall, because the file box covers the LoD 2 shell the read dropped. */
+  const rowBox = (top = 10): BBox3 => [
+    east(0),
+    north(0),
+    0,
+    east(40),
+    north(20),
+    top,
+  ];
+
+  it.each([0.02, 0.05, 0.5, 2])(
+    "points both polygons of a %s m-stepped footprint DOWN, given the file's row box",
+    (step) => {
+      const n = bakeNormalZ(footprint(step), rowBox());
+      expect(n.lo).toBeLessThan(-0.99);
+      expect(n.hi).toBeLessThan(-0.99);
+    },
+  );
+
+  it("points two stepped roof planes UP, given the file's row box", () => {
+    // 3 m apart over the same 40 m footprint. The tight box puts its centre
+    // between them and inverts the LOWER plane; the row box is below both.
+    const n = bakeNormalZ(
+      [upQuad(0, 20, 0, 20, 10), upQuad(20, 40, 0, 20, 13)],
+      rowBox(13),
+    );
+    expect(n.lo).toBeGreaterThan(0.99);
+    expect(n.hi).toBeGreaterThan(0.99);
+  });
+
+  it("reads the row box's heights through the SAME datum offset as the rings", () => {
+    // The geoid undulation at Nagoya. The rings get `z + heightOffset`; a row
+    // box seeded WITHOUT it would sit 37 m below the geometry, put every ground
+    // polygon above the box centre, and flip all of them up — a worse fault
+    // than the one this test is here for, and invisible at offset 0.
+    const n = bakeNormalZ(footprint(0.5), rowBox(), 37.25);
+    expect(n.lo).toBeLessThan(-0.99);
+    expect(n.hi).toBeLessThan(-0.99);
+  });
+
+  it("still inverts the upper polygon with NO row box, above the floor's reach", () => {
+    // The honest residue: a CityParquet child row whose bbox columns are null
+    // has no file extent, and `orientExteriorRing`'s 2.5e-4 magnitude floor
+    // only reaches a step of 2.5e-4 x 44.7 m x 2 = 2.2 cm over this diagonal.
+    // Pinned so a future widening of the fix flips a test, not a sentence.
+    expect(bakeNormalZ(footprint(0.5), null).hi).toBeGreaterThan(0.99);
+    expect(bakeNormalZ(footprint(0.02), null).hi).toBeLessThan(-0.99);
   });
 });

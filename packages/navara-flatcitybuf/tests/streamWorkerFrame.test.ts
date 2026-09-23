@@ -938,3 +938,79 @@ describe("rings fetched for one object", () => {
     }
   });
 });
+
+/**
+ * The fix-round review's N1, at the level that makes it production. A
+ * CityParquet read filters geometry columns by LoD (`lodAllowed`), so at LoD 0
+ * the object reaching the bake is its FOOTPRINT and nothing else — while its
+ * `bbox` columns still state the whole building, which is the inside/outside
+ * reference the winding heuristic needs. If the worker boxes the object from the
+ * rings it happens to hold instead, a footprint of more than one polygon with
+ * more than ~2 cm of height variation gets its highest polygon's normal flipped
+ * to point UP, into the building, poisoning the normal G-buffer for that face.
+ */
+describe("a LoD-filtered footprint's winding", () => {
+  /** A building as a CityParquet LoD 0 read yields it: two GroundSurface quads
+   *  stepped in height, and a row bbox covering the 10 m shell the read
+   *  dropped. Both quads are wound CLOCKWISE seen from above, so their outward
+   *  normals point DOWN, as CityJSON specifies for a GroundSurface. */
+  function steppedFootprint(step: number): CityObject {
+    const e = 0.0002; // ~18 m east per span, ~36 m overall
+    const n = 0.0002; // ~22 m north
+    const vertices: Vec3[] = [
+      [LNG, LAT, 0],
+      [LNG, LAT + n, 0],
+      [LNG + e, LAT + n, 0],
+      [LNG + e, LAT, 0],
+      [LNG + e, LAT, step],
+      [LNG + e, LAT + n, step],
+      [LNG + 2 * e, LAT + n, step],
+      [LNG + 2 * e, LAT, step],
+    ];
+    const raw = {
+      type: "Building",
+      attributes: {},
+      geometry: [
+        {
+          type: "MultiSurface",
+          lod: "0",
+          boundaries: [[[0, 1, 2, 3]], [[4, 5, 6, 7]]],
+          semantics: {
+            surfaces: [{ type: "GroundSurface" }, { type: "GroundSurface" }],
+            values: [0, 1],
+          },
+        },
+      ],
+    } as unknown as CityJSONObject;
+    const parsed = parseCityObject(
+      "stepped",
+      raw,
+      dequantizeAll(vertices, { scale: [1, 1, 1], translate: [0, 0, 0] }),
+    );
+    // The FILE's row box: the whole 10 m building, which the `bbox` columns
+    // carry whatever the geometry columns the read kept.
+    return {
+      ...parsed,
+      bbox: [LNG, LAT, 0, LNG + 2 * e, LAT + n, 10],
+    };
+  }
+
+  it("points every polygon DOWN, taking its reference from the row bbox", async () => {
+    const { frame, extent, grid, descriptor } = syntheticSpace([LNG, LAT]);
+    const family = geoFamily([steppedFootprint(0.5)], frame);
+
+    const { posted, send } = harness(
+      fakeAdapter([family], { extent, epsg: null, frame: descriptor }),
+    );
+    await send(openReq());
+    await send(fetchMsg(1, keysCovering(grid, box2(extent), 2), box2(extent)));
+
+    const cells = posted.filter(ofType("cell"));
+    expect(cells).toHaveLength(1);
+    const { normals, triangleCount } = cells[0]!.geometry;
+    expect(triangleCount).toBe(4); // two quads, two triangles each
+    // The first vertex of each quad: six vertices per quad, three floats each.
+    expect(normals[2]).toBeLessThan(-0.99);
+    expect(normals[20]).toBeLessThan(-0.99);
+  });
+});

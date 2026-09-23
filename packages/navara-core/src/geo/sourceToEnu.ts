@@ -34,7 +34,7 @@
  */
 import proj4 from "proj4";
 import { ensureProjDef } from "../citymodel/crsProjDefs";
-import type { CityObject, Vec3 } from "../citymodel/types";
+import type { BBox3, CityObject, Vec3 } from "../citymodel/types";
 import { geodeticToEcef, type EnuFrame } from "./enuFrame";
 
 /** Just the half of proj4's `Converter` this module uses. */
@@ -197,6 +197,42 @@ function extend(
 }
 
 /**
+ * A geodetic box's eight corners in `frame`'s ENU metres, re-boxed — `null` for
+ * no box, and for one holding a value the frame cannot place. All eight, and not
+ * two: the conversion is not linear, and the box is a reference for a winding
+ * decision, so under-bounding it is the one thing it must not do.
+ *
+ * The heights take `heightOffset` exactly as a vertex does. Without that a box
+ * seeded from a file whose z is orthometric sits a whole geoid undulation — 37 m
+ * at Nagoya — below the geometry it is supposed to bound, and every ground
+ * polygon then reads as ABOVE the object's centre.
+ *
+ * A non-finite corner is dropped rather than thrown on: the box is a reference,
+ * the RINGS are the coordinate gate, and a source with one bad bbox column
+ * should lose a winding hint, not a cell.
+ */
+function enuBoxOfGeodeticBox(
+  bbox: BBox3 | undefined,
+  frame: EnuFrame,
+  heightOffset: number,
+): MutableBBox | null {
+  if (!bbox) return null;
+  let box: MutableBBox | null = null;
+  for (const lng of [bbox[0], bbox[3]]) {
+    for (const lat of [bbox[1], bbox[4]]) {
+      for (const z of [bbox[2], bbox[5]]) {
+        const h = z + heightOffset;
+        if (!Number.isFinite(lng) || !Number.isFinite(lat) || !Number.isFinite(h)) {
+          return null;
+        }
+        box = extend(box, geodeticToEnu(lng, lat, h, frame));
+      }
+    }
+  }
+  return box;
+}
+
+/**
  * In place over `objects`: every ring's lon/lat/h becomes local ENU metres in
  * `frame`, and every object's bbox is re-boxed in the SAME space.
  *
@@ -210,24 +246,37 @@ function extend(
  * {@link projectPositionsToEnu} adds it — and `frame` must have been built
  * with the same offset in its origin, or the whole cell floats by it.
  *
- * The bbox is re-boxed FROM THE CONVERTED RINGS, because it is not decoration:
+ * The bbox is re-boxed in the same space, because it is not decoration:
  * `buildCityMeshArrays` orients an exterior ring against the object's bbox
  * CENTRE, so a bbox left in the source's (or an index's) space flips roughly
- * half the surfaces. The re-boxed value is TIGHT around the rings actually
- * present: where the old path handed `orientExteriorRing` the file's own row
- * box, a LoD-FILTERED bake here sees only the surviving rings. For a bake that
- * kept ONE planar surface the tight box then has its centre in that surface's
- * own plane, which used to leave the winding to rounding noise — a measured
- * sign flip, not a borderline case. `orientExteriorRing` now refuses a
- * reference below 2.5e-4 of the object's diagonal and keeps the file's
- * winding, so a tight box is safe here. An object with no rings
- * therefore comes out with
- * `bbox: null` — this function reads only rings, so it never has to trust, or
- * be told, which space the incoming bbox was in. (The stream worker hands the
- * adapter's BUCKET-space boxes straight to `toObjectRecords`, which is where a
- * geometryless family parent's box comes from; bucket metres look exactly like
- * a plausible lon/lat pair, so a fallback that converted the incoming box would
- * be silently wrong for one.)
+ * half the surfaces.
+ *
+ * `fileExtents`, when given, is that reference: per object id, the object's
+ * FULL extent in geodetic lon/lat/h as the SOURCE FILE's own row box states it
+ * — including the surfaces a LoD filter removed before the bake. It seeds the
+ * box, which the converted rings then extend, exactly as `projectCityObjects`
+ * seeds from `projectBBox(object.bbox)` on the projected path. It has to be the
+ * file's extent and not the rings', because the rings alone are no
+ * inside/outside reference for the object: a CityParquet read filters geometry
+ * columns by LoD, so at LoD 0 the object arriving here is its footprint and
+ * nothing else, and a box drawn tight around two footprint polygons a few
+ * centimetres apart in height sits BETWEEN them and inverts the upper one (the
+ * fix round's N1, measured at every step from 5 cm up). The file's row box is
+ * the whole building, so both polygons read as below its centre and both keep
+ * the downward normal CityJSON gives a GroundSurface.
+ *
+ * It is the CALLER that says which space the incoming boxes are in, and it says
+ * it by converting them to lon/lat first: this function never reads
+ * `object.bbox`. The stream worker's own index boxes are BUCKET metres, which
+ * look exactly like a plausible lon/lat pair, so a silent fallback to
+ * `object.bbox` would be wrong for one with nothing able to tell.
+ *
+ * An id with no entry (a CityParquet child row whose bbox columns are null) —
+ * or a whole call with no map — keeps the TIGHT box of its own rings, and
+ * `orientExteriorRing`'s magnitude floor is then the only protection: it holds
+ * for a single planar face and for a step below 2.5e-4 of the box diagonal, and
+ * not above that. An object with neither rings nor an extent comes out with
+ * `bbox: null`.
  *
  * Objects are replaced, not mutated (a `CityObject` is immutable), so a caller
  * that must keep the geographic model passes a shallow copy of the record.
@@ -242,10 +291,15 @@ export function geodeticRingsToEnu(
   objects: Record<string, CityObject>,
   frame: EnuFrame,
   heightOffset = 0,
+  fileExtents?: ReadonlyMap<string, BBox3>,
 ): void {
   for (const id of Object.keys(objects)) {
     const object = objects[id]!;
-    let box: MutableBBox | null = null;
+    let box: MutableBBox | null = enuBoxOfGeodeticBox(
+      fileExtents?.get(id),
+      frame,
+      heightOffset,
+    );
     const surfaces = object.surfaces.map((surface) => ({
       ...surface,
       rings: surface.rings.map((ring) =>
