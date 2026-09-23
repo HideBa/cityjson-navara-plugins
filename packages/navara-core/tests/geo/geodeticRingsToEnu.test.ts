@@ -175,6 +175,98 @@ describe("geodeticRingsToEnu", () => {
     expect(objects.a!.bbox).not.toBeNull();
   });
 
+  it("boxes all EIGHT corners of a file extent, not just its diagonal pair", () => {
+    // lon/lat -> ENU is not linear, so a box's own corners do not sit on one
+    // plane: its east extent shrinks with latitude (cos phi), which puts the
+    // corner (lngMax, latMin) further east than the (lngMax, latMax) end of the
+    // diagonal. The seed is a REFERENCE for a winding decision, so
+    // under-bounding it is the one thing it must not do — hence eight
+    // conversions per box rather than two.
+    const frame = makeEnuFrame(CELL_LNG, CELL_LAT, 0);
+    // ~900 m east x ~1100 m north: a plausible span for a parent or family row
+    // box, and the scale at which the non-linearity is centimetres.
+    const extent: BBox3 = [
+      CELL_LNG,
+      CELL_LAT,
+      0,
+      CELL_LNG + 0.01,
+      CELL_LAT + 0.01,
+      10,
+    ];
+    // One small ring in the middle, so what comes out is the SEED's box.
+    const objects: Record<string, CityObject> = {
+      a: objectWith("a", [quad(0.005, 0.005, 2)], null),
+    };
+
+    geodeticRingsToEnu(objects, frame, 0, new Map([["a", extent]]));
+
+    const box = objects.a!.bbox!;
+    const cornerEnu = (lng: number, lat: number, z: number) =>
+      ecefToEnu(frame, geodeticToEcef(lng, lat, z));
+    for (const lng of [extent[0], extent[3]]) {
+      for (const lat of [extent[1], extent[4]]) {
+        for (const z of [extent[2], extent[5]]) {
+          const p = cornerEnu(lng, lat, z);
+          expect(box[0]).toBeLessThanOrEqual(p[0]);
+          expect(box[1]).toBeLessThanOrEqual(p[1]);
+          expect(box[2]).toBeLessThanOrEqual(p[2]);
+          expect(box[3]).toBeGreaterThanOrEqual(p[0]);
+          expect(box[4]).toBeGreaterThanOrEqual(p[1]);
+          expect(box[5]).toBeGreaterThanOrEqual(p[2]);
+        }
+      }
+    }
+    // And the miss is measurable rather than float noise: the diagonal pair
+    // alone stops about 0.11 m short of the box's true eastern edge.
+    const diagonalEast = Math.max(
+      cornerEnu(extent[0], extent[1], extent[2])[0],
+      cornerEnu(extent[3], extent[4], extent[5])[0],
+    );
+    expect(box[3] - diagonalEast).toBeGreaterThan(0.05);
+  });
+
+  it("drops a file extent with a non-finite corner, keeping the rings' own box", () => {
+    // The reader refuses a non-finite bbox column before this point, so no
+    // CityParquet row reaches the guard; it is this EXPORTED function's own gate
+    // on caller-supplied extents. It matters because `extend` compares with
+    // `<`/`>`, which are false against NaN: a NaN seed would swallow every ring
+    // that follows and the object would publish an all-NaN bbox, which silently
+    // disables the winding heuristic (`dot < -floor` is never true) and travels
+    // on into `ResidentObjectRecord.bbox`. A bad extent costs a winding hint.
+    const frame = makeEnuFrame(CELL_LNG, CELL_LAT, 0);
+    const rings = [quad(0.001, 0.001, 5)];
+    const objects: Record<string, CityObject> = {
+      a: objectWith("a", rings, null),
+    };
+    const control: Record<string, CityObject> = {
+      a: objectWith("a", rings, null),
+    };
+
+    geodeticRingsToEnu(
+      objects,
+      frame,
+      0,
+      new Map([
+        [
+          "a",
+          [
+            CELL_LNG,
+            CELL_LAT,
+            Number.NaN,
+            CELL_LNG + 0.001,
+            CELL_LAT + 0.001,
+            10,
+          ] as BBox3,
+        ],
+      ]),
+    );
+    geodeticRingsToEnu(control, frame, 0);
+
+    const box = objects.a!.bbox!;
+    expect(box.every((v) => Number.isFinite(v))).toBe(true);
+    expect(box).toEqual(control.a!.bbox);
+  });
+
   it("refuses a non-finite vertex, naming the object", () => {
     // Task 2 took the per-vertex `validateLonLat` out of the READ path, so
     // this conversion is the first gate a bad row meets: without it a NaN
