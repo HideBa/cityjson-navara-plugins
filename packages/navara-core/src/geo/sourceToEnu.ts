@@ -34,6 +34,7 @@
  */
 import proj4 from "proj4";
 import { ensureProjDef } from "../citymodel/crsProjDefs";
+import type { CityObject, Vec3 } from "../citymodel/types";
 import { geodeticToEcef, type EnuFrame } from "./enuFrame";
 
 /** Just the half of proj4's `Converter` this module uses. */
@@ -50,8 +51,14 @@ function makeWgs84Converter(epsg: number): SourceToWgs84 {
   return proj4(`EPSG:${epsg}`, "WGS84") as SourceToWgs84;
 }
 
-/** Shared tail of both public entry points: lng/lat/height -> local ENU. */
-function geodeticToEnu(
+/**
+ * Shared tail of every entry point here: lng/lat/height -> local ENU.
+ *
+ * Exported because a GEOGRAPHIC source (EPSG:6697) needs only this half: its
+ * coordinates are already geodetic, so the proj4 step above it does not exist
+ * and a vertex reaches its frame by arithmetic alone.
+ */
+export function geodeticToEnu(
   lng: number,
   lat: number,
   height: number,
@@ -132,4 +139,105 @@ export function projectPositionsToEnu(
     positions[i + 2] = enu[2];
   }
   return positions;
+}
+
+// ---------------------------------------------------------------------------
+// The geographic path: no projection at all
+// ---------------------------------------------------------------------------
+
+/**
+ * The range a longitude/latitude pair must lie in. Wider than the UTM zones'
+ * (`geographicToProjected.ts`'s `validateLonLat`) because an ENU frame has no
+ * zones — it is defined wherever the globe is.
+ */
+function assertGeographic(lng: number, lat: number, objectId: string): void {
+  if (
+    !Number.isFinite(lng) ||
+    !Number.isFinite(lat) ||
+    lng < -180 ||
+    lng > 180 ||
+    lat < -90 ||
+    lat > 90
+  ) {
+    throw new RangeError(
+      `Cannot place object "${objectId}": expected a longitude/latitude pair, got longitude ${String(lng)}, latitude ${String(lat)}.`,
+    );
+  }
+}
+
+type MutableBBox = [number, number, number, number, number, number];
+
+function extend(
+  box: MutableBBox | null,
+  p: readonly [number, number, number],
+): MutableBBox {
+  if (box === null) return [p[0], p[1], p[2], p[0], p[1], p[2]];
+  if (p[0] < box[0]) box[0] = p[0];
+  if (p[1] < box[1]) box[1] = p[1];
+  if (p[2] < box[2]) box[2] = p[2];
+  if (p[0] > box[3]) box[3] = p[0];
+  if (p[1] > box[4]) box[4] = p[1];
+  if (p[2] > box[5]) box[5] = p[2];
+  return box;
+}
+
+/**
+ * In place over `objects`: every ring's lon/lat/h becomes local ENU metres in
+ * `frame`, and every object's bbox is re-boxed in the SAME space.
+ *
+ * This is the streamed geographic path's ONE placement step. A geographic
+ * source's coordinates are already geodetic, so there is no projection to
+ * undo: `lon/lat/h -> ECEF -> frame` is arithmetic, and running it per CELL
+ * (50-400 m) rather than per dataset keeps the frame level under every
+ * analysis that reads z as up (see the milestone plan's Architecture).
+ *
+ * `heightOffset` is added to every vertex's geodetic height, exactly as
+ * {@link projectPositionsToEnu} adds it — and `frame` must have been built
+ * with the same offset in its origin, or the whole cell floats by it.
+ *
+ * The bbox is re-boxed FROM THE CONVERTED RINGS, because it is not decoration:
+ * `buildCityMeshArrays` orients an exterior ring against the object's bbox
+ * CENTRE, so a bbox left in the source's (or an index's) space flips roughly
+ * half the surfaces. An object with no rings therefore comes out with
+ * `bbox: null` — this function reads only rings, so it never has to trust, or
+ * be told, which space the incoming bbox was in. (The stream worker hands the
+ * adapter's BUCKET-space boxes straight to `toObjectRecords`, which is where a
+ * geometryless family parent's box comes from; bucket metres look exactly like
+ * a plausible lon/lat pair, so a fallback that converted the incoming box would
+ * be silently wrong for one.)
+ *
+ * Objects are replaced, not mutated (a `CityObject` is immutable), so a caller
+ * that must keep the geographic model passes a shallow copy of the record.
+ *
+ * Throws a `RangeError` naming the object for a vertex that is not a
+ * longitude/latitude pair. This is the read path's only coordinate gate: the
+ * per-vertex check the projected path did in proj4 is gone, and an unchecked
+ * NaN would become NaN geometry — a cell that silently draws nothing.
+ */
+export function geodeticRingsToEnu(
+  objects: Record<string, CityObject>,
+  frame: EnuFrame,
+  heightOffset = 0,
+): void {
+  for (const id of Object.keys(objects)) {
+    const object = objects[id]!;
+    let box: MutableBBox | null = null;
+    const surfaces = object.surfaces.map((surface) => ({
+      ...surface,
+      rings: surface.rings.map((ring) =>
+        ring.map((point): Vec3 => {
+          assertGeographic(point[0], point[1], id);
+          const enu = geodeticToEnu(
+            point[0],
+            point[1],
+            point[2] + heightOffset,
+            frame,
+          );
+          box = extend(box, enu);
+          return enu;
+        }),
+      ),
+    }));
+    objects[id] = { ...object, surfaces, bbox: box };
+  }
 }

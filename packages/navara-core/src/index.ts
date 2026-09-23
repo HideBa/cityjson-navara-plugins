@@ -118,7 +118,12 @@ export type {
   SourceToEnuOptions,
   ProjectPositionsOptions,
 } from "./geo/sourceToEnu";
-export { sourceToEnuPoint, projectPositionsToEnu } from "./geo/sourceToEnu";
+export {
+  sourceToEnuPoint,
+  projectPositionsToEnu,
+  geodeticToEnu,
+  geodeticRingsToEnu,
+} from "./geo/sourceToEnu";
 export { raisePositionsInEnu } from "./geo/raiseEnu";
 export type { RasterPixels, GeoidSampleDeps } from "./geo/geoidHeight";
 export {
