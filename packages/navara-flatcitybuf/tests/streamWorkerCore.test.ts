@@ -329,6 +329,9 @@ describe("streamWorkerCore", () => {
     const data = posted.find(ofType("surfaceData"));
     expect(data?.objectId).toBe("a");
     expect(data?.surfaces.length).toBeGreaterThan(0);
+    // A PROJECTED source's cached rings are still in its source CRS, so there
+    // is no local frame to name. `null` says exactly that.
+    expect(data?.frame).toBeNull();
 
     await send({ type: "evict", id: 3, cells: ["2/0/0"] });
     await send({ type: "surfaces", id: 4, objectId: "a" });

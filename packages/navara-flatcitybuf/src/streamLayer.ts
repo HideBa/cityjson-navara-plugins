@@ -15,6 +15,7 @@
 import {
   toplevelCityObjectType,
   type AppearanceTheme,
+  type BBox3,
   type EnuFrame,
   type Rule,
   type Surface,
@@ -42,6 +43,7 @@ import type {
 import {
   emptyCellGeometry,
   type CellGeometry,
+  type CellEnuFrameDescriptor,
   type ResidentObjectRecord,
 } from "./workerProtocol";
 import type { WorkerResponse } from "./workerProtocol";
@@ -125,6 +127,20 @@ export function emptyCellEntry(
 
 export type StreamStatus =
   "idle" | "probing" | "fetching" | "too-far" | "error";
+
+/**
+ * One object's rings, and the space they are measured in — the result of
+ * {@link FcbStreamLayerHandle.fetchSurfaces}.
+ *
+ * The space is a property of the CELL, not of the layer, which is why it
+ * travels with the geometry: a geographic source's rings are the owning cell's
+ * ENU metres (`frame` names that origin), a projected source's are still its
+ * source CRS (`frame` is `null`). See `CellEnuFrameDescriptor`.
+ */
+export interface ObjectSurfaces {
+  readonly surfaces: ReadonlyArray<Surface>;
+  readonly frame: CellEnuFrameDescriptor | null;
+}
 
 /** The too-far message for a fetch the worker refused with `code: "budget"`
  *  (the objects in view exceed what one read may pull at once). */
@@ -835,6 +851,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       layerId: this.id,
       footprint,
       epsg: this.header.epsg,
+      frame: this.header.frame ?? null,
       heightM: this.options.heightOffsetM,
       toLngLat: this.options.toLngLat,
     });
@@ -1118,8 +1135,15 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    * than every cell shipping every ring. Rejects (rather than resolving empty)
    * when the object is not resident in any cached cell, so the caller can tell
    * "no rings" from "wrong object".
+   *
+   * The result carries the SPACE its rings are in, because that is not a
+   * property of the layer: a geographic source is baked per cell, so its rings
+   * are the owning cell's ENU metres and `frame` names that origin, while a
+   * projected source's are still its source CRS and `frame` is `null`. A
+   * consumer measuring area, slope or azimuth can ignore it (those are
+   * frame-independent); one placing a ring cannot.
    */
-  async fetchSurfaces(objectId: string): Promise<readonly Surface[]> {
+  async fetchSurfaces(objectId: string): Promise<ObjectSurfaces> {
     if (this._deleted) {
       throw new Error(
         `FcbStreamLayerHandle("${this.id}"): fetchSurfaces after delete()`,
@@ -1130,7 +1154,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       // The wire type is `unknown[]` because postMessage carries no static
       // type; fcb.worker.ts builds it from `obj.surfaces`, so this cast
       // documents that contract rather than asserting something unverified.
-      return r.surfaces as Surface[];
+      return { surfaces: r.surfaces as Surface[], frame: r.frame };
     }
     throw new Error(
       r.type === "error"
@@ -1208,32 +1232,23 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   }
 
   /**
-   * The layer's geodetic extent, from the FCB header's source-CRS extent.
+   * Any box of this layer's INDEX SPACE, as geodetic bounds — the one place
+   * that knows what a streamed bbox means.
    *
-   * Available from the moment the layer is open — NOT gated on the first
-   * commit. That gate used to exist ("don't frame a layer that has not proven
-   * it has data") and it deadlocked the only workspace that needs it: cells
-   * become resident only when the camera is already close enough for the cover
-   * to fit the budget, so in an FCB-only workspace "Fit all" was a no-op and
-   * the data was unreachable — the browser smoke in Task C14 could not get to
-   * Delft at all. The header extent is known and trustworthy at open time (a
-   * file without one never passes admission), so reporting it is what makes
-   * "fly to this layer" the way IN rather than a reward for already being
-   * there.
+   * A layer's index space is a metric EPSG for a projected source and bucket
+   * metres about the header's frame for a geographic one, and the resident
+   * records' bboxes are in it too. A caller that reprojected a record bbox
+   * through the layer's `referenceSystem` instead would be right for the first
+   * kind and wrong for the second (EPSG:6697 is degrees; the bbox is metres),
+   * so zoom-to-selection asks HERE rather than guessing from a CRS string.
    *
-   * Null only for a DELETED layer (its meshes are gone and it must drop out of
-   * any fit union) or a header with no extent at all — the latter is defence,
-   * not a supported path.
-   *
-   * The whole header extent, not the resident cells' union: the resident set
-   * is a function of where the camera happens to be, so framing it would make
-   * `fitLayer` a no-op that re-frames what you are already looking at.
+   * The vertical offset is applied, exactly as {@link getBoundsGeodetic} does:
+   * these bounds are where the geometry is DRAWN, not what the file said.
+   * Null for a deleted layer.
    */
-  getBoundsGeodetic(): GeodeticBounds | null {
+  geodeticBoundsOf(bbox: BBox3): GeodeticBounds | null {
     if (this._deleted) return null;
-    const extent = this.header.extent;
-    if (!extent) return null;
-    const [minX, minY, minZ, maxX, maxY, maxZ] = extent;
+    const [minX, minY, minZ, maxX, maxY, maxZ] = bbox;
     const corners: Array<readonly [number, number]> = [
       [minX, minY],
       [maxX, minY],
@@ -1262,6 +1277,34 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
       minHeight: minZ + this.options.heightOffsetM,
       maxHeight: maxZ + this.options.heightOffsetM,
     };
+  }
+
+  /**
+   * The layer's geodetic extent, from the stream header's index-space extent.
+   *
+   * Available from the moment the layer is open — NOT gated on the first
+   * commit. That gate used to exist ("don't frame a layer that has not proven
+   * it has data") and it deadlocked the only workspace that needs it: cells
+   * become resident only when the camera is already close enough for the cover
+   * to fit the budget, so in an FCB-only workspace "Fit all" was a no-op and
+   * the data was unreachable — the browser smoke in Task C14 could not get to
+   * Delft at all. The header extent is known and trustworthy at open time (a
+   * file without one never passes admission), so reporting it is what makes
+   * "fly to this layer" the way IN rather than a reward for already being
+   * there.
+   *
+   * Null only for a DELETED layer (its meshes are gone and it must drop out of
+   * any fit union) or a header with no extent at all — the latter is defence,
+   * not a supported path.
+   *
+   * The whole header extent, not the resident cells' union: the resident set
+   * is a function of where the camera happens to be, so framing it would make
+   * `fitLayer` a no-op that re-frames what you are already looking at.
+   */
+  getBoundsGeodetic(): GeodeticBounds | null {
+    const extent = this.header.extent;
+    if (!extent) return null;
+    return this.geodeticBoundsOf(extent);
   }
 
   /**

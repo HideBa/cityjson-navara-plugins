@@ -23,6 +23,7 @@ import {
   enuToEcef,
   geodeticToEcef,
   localMetricFrameFromDescriptor,
+  makeEnuFrame,
   makeLocalMetricFrame,
   parseCityObject,
   type BBox3,
@@ -707,5 +708,71 @@ describe("the coordinate gate", () => {
     expect(posted.filter(ofType("error")).find((e) => e.id === 2)?.code).toBe(
       "not-found",
     );
+  });
+});
+
+describe("rings fetched for one object", () => {
+  it("come back in the OWNING CELL's ENU frame, and name it", async () => {
+    // Task 3 moved the bake in front of the projection, so a geographic
+    // source's cached rings are the owning cell's ENU metres — not the source
+    // lon/lat/h, and not a dataset-wide space either. The message carries the
+    // frame those metres are measured in, because a consumer cannot recover it
+    // (the cell an object landed in is the worker's business) and metres about
+    // an unknown origin are not usable geometry.
+    const blob = await fixtureBlob();
+    const { batches, extent, frame: descriptor } = await fixtureBatches(blob);
+    const bucket = localMetricFrameFromDescriptor(descriptor);
+    const grid = makeGrid(extent);
+    const cells = keysCovering(grid, box2(extent), 2);
+    const { posted, send } = harness(createCityParquetSourceAdapter());
+    await send(openReq({ source: { blob } }));
+    await send(fetchMsg(1, cells, box2(extent)));
+
+    const cell = posted.filter(ofType("cell")).find((c) => c.objects.length > 0);
+    expect(cell).toBeDefined();
+    const objectId = cell!.objects[0]!.id;
+    posted.length = 0;
+    await send({ type: "surfaces", id: 2, objectId });
+    const data = posted.find(ofType("surfaceData"));
+    expect(data?.objectId).toBe(objectId);
+
+    // The SAME frame the bake used — `cellMeshes.cellFrame`, the one the main
+    // thread places the cell's mesh with.
+    const expected = cellFrame(
+      grid,
+      cell!.key,
+      (x, y) => bucket.toLngLat(x, y),
+      0,
+    );
+    expect(data?.frame).toEqual({
+      kind: "enu",
+      lngDeg: expected.lngDeg,
+      latDeg: expected.latDeg,
+      heightM: expected.heightM,
+    });
+
+    // And they are metres a consumer can USE: put back through the named
+    // frame, every ring vertex lands on the source vertex it came from.
+    const reference = referenceEcef(allObjects(batches));
+    const frame = makeEnuFrame(
+      data!.frame!.lngDeg,
+      data!.frame!.latDeg,
+      data!.frame!.heightM,
+    );
+    const rings = (data!.surfaces as ReadonlyArray<{ rings: Vec3[][] }>).flatMap(
+      (s) => s.rings.flat(),
+    );
+    expect(rings.length).toBeGreaterThan(3);
+    for (const point of rings) {
+      const ecef = enuToEcef(frame, point);
+      let best = Infinity;
+      for (const r of reference) {
+        best = Math.min(
+          best,
+          Math.hypot(ecef[0] - r[0], ecef[1] - r[1], ecef[2] - r[2]),
+        );
+      }
+      expect(best).toBeLessThan(0.01);
+    }
   });
 });

@@ -18,7 +18,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import proj4 from "proj4";
-import { ensureProjDef, makeEnuFrame, enuToEcef } from "@cityjson/navara-core";
+import {
+  ensureProjDef,
+  makeEnuFrame,
+  enuToEcef,
+  localMetricFrameFromDescriptor,
+  type LocalMetricFrameDescriptor,
+} from "@cityjson/navara-core";
 import { StreamLayerRegistry } from "../src/streamRegistry";
 import type { StreamLayerLike } from "../src/streamRegistry";
 import type { CellMeshFactory } from "../src/cellMeshes";
@@ -354,6 +360,19 @@ describe("StreamLayerRegistry — camera driver", () => {
 const EXTENT = [84000, 446000, 0, 86000, 448000, 30] as const;
 const EPSG = 28992;
 
+/**
+ * Yokohama, as a GEOGRAPHIC source (EPSG:6697) indexes since task 2: no metric
+ * EPSG at all, and a bucket frame descriptor in its place. The extent, the tile
+ * grid and every record bbox are BUCKET METRES about this origin.
+ */
+const BUCKET_FRAME = {
+  kind: "local-metric",
+  lngDeg: 139.6,
+  latDeg: 35.46,
+} as const;
+/** A 2 km square in bucket metres — the same size as {@link EXTENT}'s. */
+const BUCKET_EXTENT = [-1000, -1000, 0, 1000, 1000, 30] as const;
+
 function centreLngLat(): readonly [number, number] {
   ensureProjDef(EPSG);
   const converter = proj4(`EPSG:${EPSG}`, "WGS84") as {
@@ -371,6 +390,12 @@ const GEOID_M = 43;
  *  origin, so a commit produces a real footprint and reaches `fetch`. */
 function topDownRays(): PickRaySource {
   const [lng, lat] = centreLngLat();
+  return topDownRaysAt(lng, lat);
+}
+
+/** {@link topDownRays}, aimed at an arbitrary origin — the bucket-frame layer's
+ *  centre is not Delft's. */
+function topDownRaysAt(lng: number, lat: number): PickRaySource {
   const frame = makeEnuFrame(lng, lat, GEOID_M);
   const corners: Array<[number, number]> = [
     [-400, -400],
@@ -394,11 +419,17 @@ function topDownRays(): PickRaySource {
 
 interface FakeClientOpts {
   readonly epsg?: number | null;
+  /** A bucket frame descriptor on the header, as a geographic source carries
+   *  instead of a metric EPSG. Absent (not null) is a FlatCityBuf header. */
+  readonly frame?: LocalMetricFrameDescriptor;
   readonly extent?: readonly number[] | undefined;
   readonly admission?: { code: string; message: string } | null;
   /** Every request/side effect, in order — the timeline the geoid ordering
    *  assertion reads. */
   readonly trace: string[];
+  /** Every `probe`/`fetch` bbox, in order — what `toSourceXY` produced from the
+   *  camera rays, in the layer's INDEX space. */
+  readonly boxes?: Array<readonly number[]>;
 }
 
 function makeFakeClient(opts: FakeClientOpts) {
@@ -420,11 +451,13 @@ function makeFakeClient(opts: FakeClientOpts) {
               extent: opts.extent === undefined ? EXTENT : opts.extent,
               referenceSystem: `https://www.opengis.net/def/crs/EPSG/0/${opts.epsg ?? EPSG}`,
               epsg: opts.epsg === undefined ? EPSG : opts.epsg,
+              ...(opts.frame ? { frame: opts.frame } : {}),
             },
             admission: opts.admission ?? null,
           };
         }
         opts.trace.push(String(msg.type));
+        if (Array.isArray(msg.bbox)) opts.boxes?.push(msg.bbox as number[]);
         if (msg.type === "probe") return { type: "probed", id: 0, count: 5 };
         return { type: "done", id: 0 };
       },
@@ -435,6 +468,7 @@ function makeFakeClient(opts: FakeClientOpts) {
         onMessage: (r: WorkerResponse) => void,
       ): Promise<void> => {
         opts.trace.push(String(msg.type));
+        if (Array.isArray(msg.bbox)) opts.boxes?.push(msg.bbox as number[]);
         onMessage({ type: "done", id: 0 });
         return Promise.resolve();
       },
@@ -605,6 +639,66 @@ describe("StreamLayerRegistry.openStream", () => {
     expect(trace).toContain("fetch");
   });
 
+  it("admits a header with no EPSG that carries a bucket frame, and georeferences it through that frame", async () => {
+    // Task 4: `epsg: null` WITH a frame descriptor is the positive contract
+    // for a geographic source. Before this, the CRS gate refused it outright
+    // and a PLATEAU stream could not be opened at all.
+    const trace: string[] = [];
+    const boxes: Array<readonly number[]> = [];
+    const { client } = makeFakeClient({
+      trace,
+      boxes,
+      epsg: null,
+      frame: BUCKET_FRAME,
+      extent: BUCKET_EXTENT,
+    });
+    const r = makeRegistry({
+      createClient: (_format) => client,
+      getPickRays: () =>
+        topDownRaysAt(BUCKET_FRAME.lngDeg, BUCKET_FRAME.latDeg),
+      sampleGeoidHeight: async () => GEOID_M,
+    });
+
+    const handle = await r.openStream(openOpts);
+    await flush();
+
+    const frame = localMetricFrameFromDescriptor(BUCKET_FRAME);
+    // `toLngLat`: the header's bucket-metre extent read back as degrees.
+    const bounds = handle.getBoundsGeodetic();
+    const [west, south] = frame.toLngLat(BUCKET_EXTENT[0], BUCKET_EXTENT[1]);
+    const [east, north] = frame.toLngLat(BUCKET_EXTENT[3], BUCKET_EXTENT[4]);
+    expect(bounds?.west).toBeCloseTo(west, 12);
+    expect(bounds?.south).toBeCloseTo(south, 12);
+    expect(bounds?.east).toBeCloseTo(east, 12);
+    expect(bounds?.north).toBeCloseTo(north, 12);
+    // ONE TRANSFORM. `toSourceXY` put the camera footprint into the same
+    // bucket space the index and the cell grid live in, so a camera centred on
+    // the frame origin asks for a box centred on (0, 0) — and `toLngLat` of
+    // that centre lands back on the camera. If the footprint and the index
+    // disagreed, every commit would fetch the wrong cells.
+    expect(boxes.length).toBeGreaterThan(0);
+    const [minX, minY, maxX, maxY] = boxes[0]!;
+    const cx = (minX! + maxX!) / 2;
+    const cy = (minY! + maxY!) / 2;
+    // Within a centimetre of the frame origin. Not exact, and not meant to be:
+    // the residual is the four rays' intersection with the layer's ENU ground
+    // plane, not the transform.
+    expect(Math.hypot(cx, cy)).toBeLessThan(0.01);
+    // And the transform itself round-trips to the last bit, so the footprint,
+    // the cell centres and the index cannot drift apart.
+    const [lng, lat] = frame.toLngLat(cx, cy);
+    const [rx, ry] = frame.toMetric(lng, lat);
+    expect(rx).toBeCloseTo(cx, 9);
+    expect(ry).toBeCloseTo(cy, 9);
+    // The rays span +-400 m, so the box is ~800 m on a side in BUCKET metres —
+    // metres, not degrees, which is what makes the readout's units honest.
+    expect(maxX! - minX!).toBeCloseTo(800, 0);
+    expect(maxY! - minY!).toBeCloseTo(800, 0);
+  });
+
+  // `epsg: null` with NO frame is no contract at all — neither a metric CRS
+  // nor a local frame names where the extent is — and 424242 is a code proj4
+  // has no definition for. Both are still refused after task 4.
   it("refuses an unsupported CRS and terminates the worker", async () => {
     for (const epsg of [null, 424242]) {
       const trace: string[] = [];
@@ -623,6 +717,33 @@ describe("StreamLayerRegistry.openStream", () => {
         "open:undefined",
       ]);
     }
+  });
+
+  it("still refuses a foot-based CRS, frame descriptor or not", async () => {
+    // EPSG:2263 (NY Long Island, US survey feet) HAS a proj4 definition, so
+    // the code gate alone would admit it; the adapter's admission is what
+    // refuses a non-metric CRS, and a frame on the header must not smuggle one
+    // past it. A geographic source is admitted on its FRAME, never on a CRS
+    // whose units are not metres.
+    const trace: string[] = [];
+    const { client, terminate } = makeFakeClient({
+      trace,
+      epsg: 2263,
+      frame: BUCKET_FRAME,
+      admission: {
+        code: "non-metric-crs",
+        message: "EPSG:2263 is not a metre-based CRS, so it cannot be streamed.",
+      },
+    });
+    const r = makeRegistry({
+      createClient: (_format) => client,
+      getPickRays: () => null,
+    });
+    await expect(r.openStream(openOpts)).rejects.toThrow(
+      "not a metre-based CRS",
+    );
+    expect(terminate).toHaveBeenCalledTimes(1);
+    expect(r.handles()).toEqual([]);
   });
 
   it("refuses an admission failure with the worker's own message, and terminates", async () => {

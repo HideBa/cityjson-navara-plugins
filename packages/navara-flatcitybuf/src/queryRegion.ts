@@ -9,9 +9,10 @@
  * diagnostic overlay can never drift from the region actually queried.
  *
  * Two coordinate systems, because the two consumers need different ones:
- *   - `bbox` stays in the layer's SOURCE CRS, which is what a bbox readout has
- *     to show (it is the CRS the file, the worker's spatial index and every
- *     `select()` speak).
+ *   - `bbox` stays in the layer's INDEX SPACE, which is what a bbox readout has
+ *     to show (it is the space the worker's spatial index and every `select()`
+ *     speak): a metric EPSG for a projected source, bucket metres about
+ *     `frame`'s origin for a geographic one.
  *   - `ring` is the same rectangle in lng/lat degrees, which is what a globe
  *     renderer can place. The edges are DENSIFIED before projection (see
  *     {@link RING_POINTS_PER_EDGE}): a straight line in a projected CRS is a
@@ -23,6 +24,7 @@
  * projection is injected as `toLngLat`, so this module never imports proj4 nor
  * `@navaramap/*`, and every assertion about it runs in plain Node.
  */
+import type { LocalMetricFrameDescriptor } from "@cityjson/navara-core";
 import type { Footprint } from "./viewportFootprint";
 
 /**
@@ -39,15 +41,21 @@ export interface QueryRegion {
   /** Which layer asked. Carried on the event so a subscriber that watches
    *  several layers needs no closure per handle. */
   readonly layerId: string;
-  /** `[minX, minY, maxX, maxY]` in the layer's SOURCE CRS — byte-for-byte the
+  /** `[minX, minY, maxX, maxY]` in the layer's INDEX SPACE — byte-for-byte the
    *  bbox the `probe`/`fetch` messages carried. */
   readonly bbox: readonly [number, number, number, number];
-  /** The source CRS of {@link bbox}, from the FCB header. `null` only for a
-   *  header that named no EPSG, which `openStream`'s CRS gate already refuses
-   *  — carried anyway so a readout can say "unknown" instead of lying. */
+  /** The metric CRS of {@link bbox}, from the stream header. `null` for a
+   *  GEOGRAPHIC source, which indexes in {@link frame} instead — no EPSG code
+   *  names a local metric frame. Exactly one of the two is set; a header with
+   *  neither never gets past `openStream`'s CRS gate. */
   readonly epsg: number | null;
-  /** The longer of the two bbox sides, in source-CRS units (metres: the CRS
-   *  gate admits metric CRSs only). `Footprint.span`, unchanged. */
+  /** The bucket frame {@link bbox} is metres about, for a geographic source.
+   *  `null` when {@link epsg} names the space instead. A readout that has this
+   *  can say WHERE those metres are measured from rather than "unknown". */
+  readonly frame: LocalMetricFrameDescriptor | null;
+  /** The longer of the two bbox sides, in metres — index space is metric
+   *  either way (the CRS gate admits metric CRSs only, and a bucket frame is
+   *  metres by construction). `Footprint.span`, unchanged. */
   readonly span: number;
   /** Ellipsoidal height of the layer's ground plane, i.e. its
    *  `heightOffsetM` — the plane `viewportFootprint` intersected the camera
@@ -66,9 +74,10 @@ export interface QueryRegionInput {
   readonly layerId: string;
   readonly footprint: Footprint;
   readonly epsg: number | null;
+  readonly frame: LocalMetricFrameDescriptor | null;
   /** The layer's `heightOffsetM`. */
   readonly heightM: number;
-  /** Source CRS -> geodetic degrees. The handle's own `toLngLat`, so the ring
+  /** Index space -> geodetic degrees. The handle's own `toLngLat`, so the ring
    *  and the layer's cells are projected by the same converter. */
   readonly toLngLat: (x: number, y: number) => readonly [number, number];
 }
@@ -112,6 +121,7 @@ export function queryRegionFrom(input: QueryRegionInput): QueryRegion | null {
     layerId: input.layerId,
     bbox: input.footprint.bbox,
     epsg: input.epsg,
+    frame: input.frame,
     span: input.footprint.span,
     heightM: input.heightM,
     ring,

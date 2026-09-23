@@ -142,6 +142,32 @@ export type WorkerRequest =
   | { type: "cancel"; id: number }
   | { type: "close"; id: number };
 
+/**
+ * A cell's own ENU frame, as plain `structuredClone`-able data: the origin
+ * `makeEnuFrame` was called with.
+ *
+ * What it is FOR: a GEOGRAPHIC source is baked in front of the projection
+ * (Task 3), so the rings the worker caches for a cell — and therefore the ones
+ * `surfaces` answers with — are that CELL's local ENU metres, not the source
+ * lon/lat/h and not a dataset-wide space. Which cell an object landed in is the
+ * worker's business, so the main thread cannot recover the origin; without it,
+ * the rings are metres measured from somewhere unnamed. Frame-independent
+ * scalars (area, slope, azimuth) need no origin at all and are in fact BETTER
+ * measured here than in a projected CRS — no scale factor, no convergence —
+ * but a consumer that wants a POSITION has to be told where zero is.
+ *
+ * `null` in its place means "the layer's source CRS", which is what a
+ * projected source's cached rings have always been in.
+ */
+export interface CellEnuFrameDescriptor {
+  readonly kind: "enu";
+  readonly lngDeg: number;
+  readonly latDeg: number;
+  /** The frame origin's ellipsoidal height: the layer's geoid offset, the same
+   *  value the cell's vertices were raised by. */
+  readonly heightM: number;
+}
+
 export type WorkerResponse =
   | { type: "opened"; id: number; header: unknown; admission: unknown }
   | { type: "probed"; id: number; count: number }
@@ -172,7 +198,15 @@ export type WorkerResponse =
       retainedBytes: number;
     }
   | { type: "recolored"; id: number; key: CellKey; ruleColors: Float32Array }
-  | { type: "surfaceData"; id: number; objectId: string; surfaces: unknown[] }
+  | {
+      type: "surfaceData";
+      id: number;
+      objectId: string;
+      surfaces: unknown[];
+      /** The frame {@link surfaces}' ring coordinates are in, or `null` for the
+       *  layer's source CRS. See {@link CellEnuFrameDescriptor}. */
+      frame: CellEnuFrameDescriptor | null;
+    }
   | { type: "done"; id: number }
   | {
       type: "error";

@@ -30,6 +30,7 @@ import proj4 from "proj4";
 import {
   ensureProjDef,
   geoidHeightAt,
+  localMetricFrameFromDescriptor,
   makeEnuFrame,
   type AppearanceTheme,
   type SurfacePalette,
@@ -162,6 +163,78 @@ const defaultTimers: TimerApi = {
 interface Proj4Converter {
   forward(coords: [number, number]): [number, number];
   inverse(coords: [number, number]): [number, number];
+}
+
+/** The pair every main-thread consumer of a stream's INDEX SPACE needs: the
+ *  camera footprint goes in through `toSourceXY`, cell centres and the layer's
+ *  own frame come out through `toLngLat`. */
+interface Georeference {
+  readonly toLngLat: (x: number, y: number) => readonly [number, number];
+  readonly toSourceXY: (
+    lng: number,
+    lat: number,
+  ) => readonly [number, number] | null;
+}
+
+/**
+ * How a stream's index space maps to and from WGS84 — the CRS gate (spec
+ * §4.3), in the two flavours a header can declare.
+ *
+ * A PROJECTED source names a metric EPSG and is converted with proj4. A
+ * GEOGRAPHIC one names no EPSG at all (no code describes a local metric frame)
+ * and carries a bucket frame descriptor instead: its index, its tile grid and
+ * its record bboxes are metres about that frame's origin, so the conversion is
+ * the frame's own two multiplications — and it has to be THE SAME frame the
+ * worker rebuilds, which is why the descriptor travels rather than a centre.
+ *
+ * Branch order mirrors `streamWorkerCore`'s placement init exactly: `epsg`
+ * first, the frame second, refusal last. A header with neither — `epsg: null`
+ * and no frame — states nothing about where its extent is and is refused with
+ * the same message an unknown code gets.
+ */
+function georeference(layerId: string, header: FcbHeaderModel): Georeference {
+  const epsg = header.epsg;
+  if (epsg !== null) {
+    if (!ensureProjDef(epsg)) {
+      throw new Error(
+        `Cannot georeference "${layerId}": unsupported CRS (EPSG:${epsg})`,
+      );
+    }
+    // Built once: proj4's three-argument call re-parses both CRS definitions
+    // on every invocation, and this pair runs per footprint corner per commit.
+    const converter = proj4(`EPSG:${epsg}`, "WGS84") as Proj4Converter;
+    return {
+      toLngLat: (x, y) => converter.forward([x, y]),
+      toSourceXY: (lng, lat) => {
+        try {
+          const [x, y] = converter.inverse([lng, lat]);
+          // A ray that missed the globe, or a point outside the projection's
+          // domain, comes back non-finite rather than throwing. Either way
+          // `viewportFootprint` reads it as "no usable footprint".
+          return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
+        } catch {
+          return null;
+        }
+      },
+    };
+  }
+  if (header.frame) {
+    const frame = localMetricFrameFromDescriptor(header.frame);
+    return {
+      toLngLat: (x, y) => frame.toLngLat(x, y),
+      // `toMetric` is two multiplications and cannot throw, but a ray that
+      // missed the globe arrives as NaN degrees and would propagate NaN
+      // metres into the footprint — the same "no usable footprint" the
+      // projected branch reports, and for the same reason.
+      toSourceXY: (lng, lat) => {
+        const [x, y] = frame.toMetric(lng, lat);
+        return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
+      },
+    };
+  }
+  throw new Error(
+    `Cannot georeference "${layerId}": unsupported CRS (EPSG:unknown)`,
+  );
 }
 
 export class StreamLayerRegistry {
@@ -394,32 +467,12 @@ export class StreamLayerRegistry {
       }
 
       // --- CRS gate (spec §4.3) -------------------------------------------
-      const epsg = header.epsg;
-      if (epsg === null || !ensureProjDef(epsg)) {
-        throw new Error(
-          `Cannot georeference "${opts.id}": unsupported CRS (EPSG:${epsg ?? "unknown"})`,
-        );
-      }
-      // Built once: proj4's three-argument call re-parses both CRS definitions
-      // on every invocation, and this pair runs per footprint corner per
-      // commit.
-      const converter = proj4(`EPSG:${epsg}`, "WGS84") as Proj4Converter;
-      const toLngLat = (x: number, y: number): readonly [number, number] =>
-        converter.forward([x, y]);
-      const toSourceXY = (
-        lng: number,
-        lat: number,
-      ): readonly [number, number] | null => {
-        try {
-          const [x, y] = converter.inverse([lng, lat]);
-          // A ray that missed the globe, or a point outside the projection's
-          // domain, comes back non-finite rather than throwing. Either way
-          // `viewportFootprint` reads it as "no usable footprint".
-          return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
-        } catch {
-          return null;
-        }
-      };
+      // Branch on `epsg` FIRST and fall back to the frame, in exactly the
+      // order `streamWorkerCore`'s placement init uses: a header that somehow
+      // carried both would otherwise be georeferenced one way here and another
+      // way in the worker, and the footprint would ask for cells the bake put
+      // somewhere else.
+      const { toLngLat, toSourceXY } = georeference(opts.id, header);
 
       // --- Vertical datum, before any cell exists --------------------------
       const [minX, minY, , maxX, maxY] = header.extent;

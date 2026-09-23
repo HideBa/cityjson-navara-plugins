@@ -242,6 +242,8 @@ function makeFakeClient(opts: FakeClientOpts) {
             id: 0,
             objectId: msg.objectId as string,
             surfaces: opts.surfaces as unknown[],
+            // A projected layer's rings are still its source CRS.
+            frame: null,
           } satisfies WorkerResponse)
         : ({
             type: "error",
@@ -1640,9 +1642,12 @@ describe("FcbStreamLayerHandle lifecycle", () => {
 
   it("fetchSurfaces resolves the worker's rings, and rejects with its message when the object is not resident", async () => {
     const withRings = makeHandle({ surfaces: [{ rings: [], lod: "2.2" }] });
-    await expect(withRings.handle.fetchSurfaces("B1")).resolves.toEqual([
-      { rings: [], lod: "2.2" },
-    ]);
+    // Rings AND the space they are in: `frame: null` is "the layer's source
+    // CRS", which is what a projected stream has always answered with.
+    await expect(withRings.handle.fetchSurfaces("B1")).resolves.toEqual({
+      surfaces: [{ rings: [], lod: "2.2" }],
+      frame: null,
+    });
 
     const without = makeHandle({});
     await expect(without.handle.fetchSurfaces("B1")).rejects.toThrow(

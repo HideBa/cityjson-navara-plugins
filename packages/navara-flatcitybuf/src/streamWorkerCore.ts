@@ -43,6 +43,7 @@ import {
   type Grid,
 } from "./tileGrid";
 import type {
+  CellEnuFrameDescriptor,
   CellGeometry,
   CellTexture,
   StreamSource,
@@ -177,6 +178,23 @@ type CellPlacement = {
       readonly frame: LocalMetricFrameDescriptor;
     }
 );
+
+/**
+ * A cell's own ENU origin as plain data — the SAME cell centre, the SAME
+ * `toLngLat` and the SAME height offset the bake builds `makeEnuFrame` from, so
+ * a consumer that rebuilds the frame from this puts a ring back exactly where
+ * the mesh drew it. Extracted rather than recomputed at the call site for that
+ * reason: two spellings of this arithmetic is one too many.
+ */
+function cellEnuDescriptor(
+  theGrid: Grid,
+  key: CellKey,
+  place: CellPlacement,
+): CellEnuFrameDescriptor {
+  const origin = cellCentre(theGrid, key, 0);
+  const [lngDeg, latDeg] = place.toLngLat([origin[0], origin[1]]);
+  return { kind: "enu", lngDeg, latDeg, heightM: place.heightOffset };
+}
 
 /** Each object's bbox as it arrived, before the ENU conversion re-boxed it:
  *  the boxes a cell REPORTS (`toObjectRecords`), in the index space the main
@@ -840,6 +858,14 @@ export function installStreamWorker(
               id: msg.id,
               objectId: msg.objectId,
               surfaces: obj.surfaces as unknown[],
+              // WHICH SPACE those rings are in. A bucket-placed cell was baked
+              // in its own ENU frame before triangulation, so its cached rings
+              // are local metres; say where zero is, rebuilt exactly as the
+              // bake did. A projected cell's rings are still source-CRS.
+              frame:
+                grid && placement?.kind === "bucket"
+                  ? cellEnuDescriptor(grid, key, placement)
+                  : null,
             });
             return;
           }

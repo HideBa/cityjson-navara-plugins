@@ -36,6 +36,7 @@ function input(overrides: Partial<QueryRegionInput> = {}): QueryRegionInput {
     layerId: "l1",
     footprint: footprint(1000, 2000, 3000, 6000),
     epsg: 28992,
+    frame: null,
     heightM: 43.5,
     toLngLat: TO_LNG_LAT,
     ...overrides,
@@ -50,8 +51,23 @@ describe("queryRegionFrom", () => {
     expect(region.bbox).toEqual([1000, 2000, 3000, 6000]);
     expect(region.span).toBe(4000);
     expect(region.epsg).toBe(28992);
+    expect(region.frame).toBeNull();
     expect(region.heightM).toBe(43.5);
     expect(region.layerId).toBe("l1");
+  });
+
+  it("names the bucket frame a geographic layer's bbox is in", () => {
+    // A geographic stream has no EPSG at all, so `epsg: null` alone would tell
+    // a readout only that the bbox means nothing. The frame descriptor is the
+    // positive answer: those numbers are metres about THIS origin.
+    const frame = {
+      kind: "local-metric",
+      lngDeg: 139.6,
+      latDeg: 35.46,
+    } as const;
+    const region = queryRegionFrom(input({ epsg: null, frame }))!;
+    expect(region.epsg).toBeNull();
+    expect(region.frame).toEqual(frame);
   });
 
   it("densifies each edge and never repeats the closing corner", () => {
