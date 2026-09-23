@@ -144,3 +144,80 @@ multigroup-noindex-cityparquet: 238764 B, 8 row groups
   the rows' RD extent. It sits about 110 m south and 20 m west of the source item's
   (whose extent the reference writer computed), because pyproj applies the
   Amersfoort datum shift; no reader code consumes these fields.
+
+### `plateau-6697-cityparquet/` — the geographic-CRS fixture (EPSG:6697)
+
+A PLATEAU-shaped source: JGD2011 geographic (`EPSG:6697`), WKB in lon/lat/h
+order, gravity-related heights in metres. It is the ONE case the streamed path
+reprojects twice today (lon/lat → UTM on read, UTM → lon/lat → ECEF → ENU on
+bake), so the geographic-to-ENU milestone cannot be tested without it.
+**Rewritten** from `two-buildings-cityparquet/building.parquet` by
+`plateau-6697-cityparquet/make_fixture.py` (committed next to the output):
+
+```bash
+cd plateau-6697-cityparquet
+uv run --with pyarrow --with pyproj python make_fixture.py
+```
+
+Generated with pyarrow 25.0.1 and pyproj 3.7.2 (PROJ 9.5.1). It prints what it
+wrote:
+
+```
+plateau-6697-cityparquet: 33637 B, 18 rows, lon 139.599807..139.613971, lat 35.499944..35.500056
+```
+
+- **Rows**: 6 copies (`k = 0..5`) of the source's 3 rows, 18 in all, in copy
+  order (copy `k` is rows `3k..3k+2`), `id`, `feature_id`, `parents` and
+  `children` given a `_k` suffix. Copy `k` is a further 250 m east, so the
+  fixture spans about 1.25 km — several 100 m stream cells (`BASE_CELL_M`),
+  which is what makes a two-cell ownership test possible.
+- **It is SYNTHETIC, in two named ways.** Nobody should read these coordinates
+  as a datum-transform reference:
+  - _Horizontal_: `EPSG:28992 → EPSG:6668` with pyproj — the horizontal
+    components of the source's 7415 and of 6697, so the Amersfoort → JGD2011
+    datum shift is a real transform. But the result is then **relocated to
+    Tokyo Bay** by a degree-space affine about the source extent's centre
+    (`lon = 139.6 + (lon − lonc)·cos(latc)/cos(35.5°)`, `lat = 35.5 + (lat −
+    latc)`), so the coordinates are NOT where these Dutch buildings are. The
+    `cos` ratio is there so a building keeps its metric width instead of
+    stretching by a factor of 1.32 at the lower latitude.
+  - _Vertical_: heights are copied byte for byte. The NAP heights are
+    **relabelled** as JGD2011 gravity-related heights, never transformed. A
+    real conversion needs a geoid model per datum, and this milestone
+    deliberately does not touch the vertical path.
+  - The compound `7415 → 6697` transform is avoided on purpose: pyproj would
+    look for a vertical transformation and could silently move the heights.
+- **WKB is rewritten at the byte level**, not through shapely (same reason as
+  `multigroup`: GEOS has no PolyhedralSurface). Only each point's X and Y
+  doubles change; Z is never written, which makes "heights unchanged"
+  structural rather than merely intended — and the script asserts it anyway, Z
+  double by Z double, against the source.
+- **Footer**: `city.crs` and every `geo.columns[*].crs` are replaced with
+  `CRS.from_epsg(6697).to_json_dict()` (a CompoundCRS "JGD2011 + JGD2011
+  (vertical) height" carrying `id: {EPSG, 6697}`, which is what
+  `parseCityFooter` reads). Everything else — `version`, `source_format`,
+  `primary_column`, `columns` with their encodings and geometry types,
+  `attributes`, `other`, GeoParquet's `edges` — is carried verbatim, and both
+  keys get the same CRS (a file whose two footers disagreed would be a
+  different test). Note that the PROJJSON declares EPSG's **lat/lon** axis
+  order while the WKB stores **lon/lat**: that is exactly what PLATEAU files
+  do, and what `geographicToProjected.ts` documents and relies on.
+- **Write options**: pyarrow defaults plus `compression="zstd"` and
+  `store_schema=True` — one row group, dictionaries on. The multigroup
+  fixture's page-splitting options are deliberately NOT used here (they are
+  what makes that file 252 KB); range-read behaviour is that fixture's job.
+- **Script assertions**: 18 rows; `city.crs` and every `geo` column CRS at EPSG
+  6697; every `bbox` inside lon 139–140 / lat 35–36 with `xmin ≤ xmax`; every Z
+  double and every bbox `zmin`/`zmax` equal to the source's; and the copies
+  really 250 m apart at this latitude (to within 1 m).
+- **`metadata.json`**: the source's STAC item with `id`, `bbox`, `geometry`,
+  `city3d:city_objects` (18), `proj:code` (`EPSG:6697`), `file:size` and
+  `file:checksum` rewritten. The coordinates are already lon/lat, so the STAC
+  extent is the data extent with no transform. No reader code consumes these
+  fields.
+
+`plateau6697Fixture.test.ts` pins both halves: that the fixture is what it
+claims (6697 footer, lon/lat coordinates, the source's heights) and the
+BASELINE the milestone must match — today's proj4 path opens it as UTM zone
+54N with extent `x 373007.914..374292.783`, `y 3929370.557..3929400.590`,
+pinned from pyproj's own `EPSG:6668 → EPSG:32654`, not from this reader.
