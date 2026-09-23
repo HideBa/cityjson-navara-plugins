@@ -219,6 +219,18 @@ function georeference(layerId: string, header: FcbHeaderModel): Georeference {
     };
   }
   if (header.frame) {
+    // The wire carries more than one tagged frame — `header.frame` is the
+    // BUCKET index, `surfaceData.frame` a cell's ENU origin — and both are
+    // `{ lngDeg, latDeg, … }`, so a mis-tagged descriptor would not look
+    // wrong, it would just place the layer by the wrong scale. `kind` is on
+    // the descriptor to be checked, so check it rather than assume the sender
+    // built the one this type names.
+    const kind: string = header.frame.kind;
+    if (kind !== "local-metric") {
+      throw new Error(
+        `Cannot georeference "${layerId}": frame descriptor of kind "${kind}", expected "local-metric"`,
+      );
+    }
     const frame = localMetricFrameFromDescriptor(header.frame);
     return {
       toLngLat: (x, y) => frame.toLngLat(x, y),

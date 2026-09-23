@@ -719,6 +719,34 @@ describe("StreamLayerRegistry.openStream", () => {
     }
   });
 
+  it("refuses a frame descriptor that is not a bucket frame", async () => {
+    // The wire carries two differently tagged frames (`header.frame` is the
+    // bucket index, `surfaceData.frame` is a cell's ENU origin) and both are
+    // `{ lngDeg, latDeg, ... }`, so a descriptor of the wrong kind would be
+    // read as bucket metres and place the whole layer by the wrong scale.
+    // `kind` exists to be checked; this is where it is checked.
+    const trace: string[] = [];
+    const { client, terminate } = makeFakeClient({
+      trace,
+      epsg: null,
+      frame: {
+        kind: "enu",
+        lngDeg: 139.6,
+        latDeg: 35.46,
+        heightM: 37,
+      } as unknown as LocalMetricFrameDescriptor,
+    });
+    const r = makeRegistry({
+      createClient: (_format) => client,
+      getPickRays: () => null,
+    });
+    await expect(r.openStream(openOpts)).rejects.toThrow(
+      `Cannot georeference "L1": frame descriptor of kind "enu", expected "local-metric"`,
+    );
+    expect(terminate).toHaveBeenCalledTimes(1);
+    expect(r.handles()).toEqual([]);
+  });
+
   it("still refuses a foot-based CRS, frame descriptor or not", async () => {
     // EPSG:2263 (NY Long Island, US survey feet) HAS a proj4 definition, so
     // the code gate alone would admit it; the adapter's admission is what
