@@ -90,8 +90,8 @@ describe("createCityParquetSourceAdapter — open", () => {
       referenceSystem: "https://www.opengis.net/def/crs/EPSG/0/7415",
       epsg: 7415,
       // A projected source indexes in its own CRS, so there is no bucket frame
-      // to report. (The frame reaches the worker by the spread below; declaring
-      // it on `StreamHeader` belongs to the task that consumes it.)
+      // to report (`StreamHeader.frame`). A GEOGRAPHIC one reports a descriptor
+      // instead of an EPSG — see the last describe in this file.
       frame: null,
       lods: ["0", "2.2"],
       invalidBBoxRows: 0,

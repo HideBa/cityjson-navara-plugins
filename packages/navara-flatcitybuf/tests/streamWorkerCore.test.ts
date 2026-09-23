@@ -436,8 +436,8 @@ describe("streamWorkerCore", () => {
     // arithmetic) beside this one, and a projected source — RD New here, and
     // every FlatCityBuf source — must keep going through proj4 and
     // `projectPositionsToEnu` with the same numbers. Captured from the code as
-    // it stood before that change, to the metre in ENU and to 1e-6 in each
-    // normal component.
+    // it stood before that change, to the centimetre in ENU and to 1e-4 in
+    // each normal component.
     const { posted, send } = harness(fakeAdapter([feature("a", 100, 100)]));
     await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send(fetchMsg(1, ["2/0/0"]));
