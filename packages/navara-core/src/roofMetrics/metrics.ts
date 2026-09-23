@@ -82,18 +82,52 @@ export function computeInclination(ring: ReadonlyArray<Vec3>): number {
 }
 
 /**
+ * Below this inclination a surface has NO ASPECT, and {@link computeAzimuth}
+ * answers `null` rather than a bearing.
+ *
+ * It is a convention, not a precision claim. These functions read z as up and
+ * x/y as east/north, so they measure a surface against whatever frame it
+ * arrived in — and a level frame is tangent to the ellipsoid at exactly ONE
+ * point. A surface of constant geodetic height therefore leans away from its
+ * frame's origin by d/R: 0.0032° at 360 m, 0.0036° at a 400 m stream cell's
+ * corner. Reading a compass bearing off that tilt turned the same roof into
+ * 225° in one cell and 245° in another, and the milestone review measured a
+ * 183° flip on a real one. The frame is an implementation detail; a roof's
+ * orientation must not be.
+ *
+ * 0.1° sits between the two populations with well over an order of magnitude
+ * of margin each way: about 30x the worst tangent-plane tilt a stream cell can
+ * impose, and about 6x below the 0.57° of a 1-in-100 drainage fall — the
+ * shallowest slope anything built has on purpose. The app's own existing
+ * conventions agree from the other side: `aggregate.ts` and `computeStats.ts`
+ * have always excluded surfaces under 1° from an azimuth average, and the
+ * processing tool's flat-roof slider defaults to 5°.
+ *
+ * NOTE this does not save the STATIC path, whose frame spans the whole model:
+ * at 15 km a flat roof's apparent inclination is 0.135°, past this threshold,
+ * so it still gets a bearing. Anchoring static metrics per object is the
+ * deferred milestone recorded in `docs/plans/2026-09-23-geographic-to-enu.md`.
+ */
+export const FLAT_INCLINATION_DEG = 0.1;
+
+/** sin of the threshold: |horizontal| / |normal| is exactly sin(inclination). */
+const FLAT_SIN = Math.sin((FLAT_INCLINATION_DEG * Math.PI) / 180);
+
+/**
  * Compute the compass azimuth a surface faces.
  * Returns degrees: 0°=North, 90°=East, 180°=South, 270°=West.
  *
- * For flat surfaces (inclination < 0.1°), returns 0 by convention
- * since the horizontal direction is undefined.
+ * `null` when the surface has no aspect: a degenerate ring, or an inclination
+ * below {@link FLAT_INCLINATION_DEG}. Null rather than 0, because 0 is due
+ * north and a consumer has to be able to tell "faces north" from "faces
+ * nowhere" — the old 0 quietly counted flat roofs as northerly.
  */
-export function computeAzimuth(ring: ReadonlyArray<Vec3>): number {
-  if (ring.length < 3) return 0;
+export function computeAzimuth(ring: ReadonlyArray<Vec3>): number | null {
+  if (ring.length < 3) return null;
 
   const normal = newellNormal(ring);
   const mag = magnitude(normal);
-  if (mag === 0) return 0;
+  if (mag === 0) return null;
 
   // Ensure normal points outward (upward Z component).
   // CW-wound polygons produce a downward normal — flip the projection.
@@ -102,8 +136,8 @@ export function computeAzimuth(ring: ReadonlyArray<Vec3>): number {
   const hy = sign * normal[1]; // northing component
   const hMag = Math.sqrt(hx * hx + hy * hy);
 
-  // If the surface is nearly flat, azimuth is undefined
-  if (hMag < 1e-6 * mag) return 0;
+  // Flat enough that the tilt is as likely the frame's as the roof's.
+  if (hMag < FLAT_SIN * mag) return null;
 
   // atan2(easting, northing) gives geographic azimuth (0=N, 90=E)
   let azimuth = Math.atan2(hx, hy) * (180 / Math.PI);
@@ -132,7 +166,7 @@ export function computeElevation(ring: ReadonlyArray<Vec3>): number {
 export function computeRoofMetrics(surface: Surface): RoofMetrics {
   const ring = surface.rings[0];
   if (!ring || ring.length < 3) {
-    return { areaSqM: 0, inclinationDeg: 0, azimuthDeg: 0, elevationM: 0 };
+    return { areaSqM: 0, inclinationDeg: 0, azimuthDeg: null, elevationM: 0 };
   }
 
   return {

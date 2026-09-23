@@ -183,6 +183,8 @@ function geoObject(
     height?: number;
     /** Add a GroundSurface quad at z = 0, so the object has a FOOTPRINT. */
     ground?: boolean;
+    /** Make the roof quad CONSTANT height, so it has no aspect at all. */
+    flat?: boolean;
     /** The attribute `toObjectRecords` multiplies the footprint by. */
     measuredHeight?: number;
   } = {},
@@ -190,9 +192,10 @@ function geoObject(
   const [lodA, lodB] = opts.lods ?? ["2", "2"];
   const h = opts.height ?? 9;
   const d = 0.0001; // ~9 m east, ~11 m north
+  const lo = opts.flat ? h : 0;
   const vertices: Vec3[] = [
-    [lng, lat, 0],
-    [lng + d, lat, 0],
+    [lng, lat, lo],
+    [lng + d, lat, lo],
     [lng + d, lat + d, h],
     [lng, lat + d, h],
     // 4..7: the same footprint flat on the ground, for `ground`.
@@ -731,13 +734,58 @@ describe("metrics in the cell's own frame", () => {
     expect(Math.abs(roofA.inclinationDeg - roofB.inclinationDeg)).toBeLessThan(
       0.01,
     );
-    expect(Math.abs(roofA.azimuthDeg - roofB.azimuthDeg)).toBeLessThan(0.01);
+    // This roof leans 7 m over 11 m, so it HAS an aspect in both frames —
+    // asserted before the comparison, or the flatness convention could turn
+    // this into null vs null.
+    expect(roofA.azimuthDeg).not.toBeNull();
+    expect(roofB.azimuthDeg).not.toBeNull();
+    expect(Math.abs(roofA.azimuthDeg! - roofB.azimuthDeg!)).toBeLessThan(0.01);
     // Elevation is the one metric that is NOT frame-independent: it is the z of
     // the cell's own tangent plane, so it carries d^2/2R for the building's
     // distance d from the cell centre — about 1.3 cm at 400 m. Measured 1.2 mm
     // between these two cells; area agrees to 6e-14 m^2, slope to 0.0006 and
     // azimuth to 0.0008 degrees.
     expect(Math.abs(roofA.elevationM - roofB.elevationM)).toBeLessThan(0.02);
+  });
+
+  /**
+   * The milestone review's Important 3. A cell's ENU frame is tangent at the
+   * cell centre, so a surface of CONSTANT geodetic height tilts away from it by
+   * d/R -- 0.002 deg at cell scale. `computeAzimuth` used to admit any
+   * horizontal component above 1e-6 of the normal (5.7e-5 deg of inclination)
+   * as a bearing, so that tilt became a compass reading POINTING AT THE CELL
+   * CENTRE: the same roof measured 88.28 deg in one frame and 271.80 deg in one
+   * ~360 m away. A grid or LoD change could therefore flip an orientation
+   * classification by 183 deg on identical input.
+   */
+  it("give a constant-height roof no azimuth, in either cell", async () => {
+    const building = geoObject("b", LNG, LAT, { height: 7, flat: true });
+    const records = [];
+    for (const centre of [
+      [LNG, LAT],
+      [LNG + 0.004, LAT + 0.003],
+    ] as [number, number][]) {
+      const { frame, extent, grid, descriptor } = syntheticSpace(centre, 400);
+      const family = geoFamily([building], frame);
+      const { posted, send } = harness(
+        fakeAdapter([family], { extent, epsg: null, frame: descriptor }),
+      );
+      await send(openReq());
+      await send(
+        fetchMsg(1, keysCovering(grid, box2(extent), 2), box2(extent)),
+      );
+      const cells = posted.filter(ofType("cell"));
+      expect(cells).toHaveLength(1);
+      records.push({ key: cells[0]!.key, record: cells[0]!.objects[0]! });
+    }
+    expect(records[0]!.key).not.toBe(records[1]!.key);
+
+    const [roofA, roofB] = records.map((r) => r.record.roofMetrics[0]!);
+    // The tilt is real and tiny; the bearing read off it is not real at all.
+    expect(roofA!.inclinationDeg).toBeLessThan(0.01);
+    expect(roofB!.inclinationDeg).toBeLessThan(0.01);
+    expect(roofA!.azimuthDeg).toBeNull();
+    expect(roofB!.azimuthDeg).toBeNull();
   });
 });
 

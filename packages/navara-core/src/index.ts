@@ -166,6 +166,7 @@ export {
   computeInclination,
   computeRoofMetrics,
   computeSurfaceNormal,
+  FLAT_INCLINATION_DEG,
 } from "./roofMetrics/metrics";
 export { computeFootprintArea } from "./roofMetrics/footprint";
 export type {
