@@ -509,6 +509,48 @@ describe("a multi-face planar bake's normals", () => {
     expect(n.hi).toBeLessThan(-0.99);
   });
 
+  /**
+   * The other two sides of the boundary, pinned as RESIDUE rather than as
+   * behaviour anyone wants: `orientExteriorRing` is a one-bit test against the
+   * box CENTRE, so the row box is the right reference only while it puts the
+   * face clearly on ONE side of that centre. Both cases below are what
+   * `projectCityObjects` does on the static path today, so neither is this
+   * milestone's regression — they are the bbox-centre heuristic's own limit, and
+   * `docs/roadmap.md`'s follow-up ("The winding heuristic needs a real
+   * inside/outside test") is what closes them. Pinned so that follow-up flips a
+   * test rather than a sentence.
+   */
+  it("inverts a roof BELOW the centre of a row box twice its height", () => {
+    // The mirror of the tight box's failure, found by the fix round's
+    // re-review: a row box far taller than the geometry the read kept — a child
+    // row carrying its parent's extent, a tower's LoD dropped for a low block's
+    // LoD 0, a basement extent under a ground face. The flip sits exactly at
+    // boxHeight / 2.
+    expect(bakeNormalZ([upQuad(0, 20, 0, 20, 8)], rowBox(40)).lo).toBeLessThan(
+      -0.99,
+    );
+    expect(
+      bakeNormalZ([upQuad(0, 20, 0, 20, 20)], rowBox(40)).lo,
+    ).toBeGreaterThan(0.99);
+    // Its own box gets it right, which is what makes this the box's fault.
+    expect(bakeNormalZ([upQuad(0, 20, 0, 20, 8)], rowBox(8)).lo).toBeGreaterThan(
+      0.99,
+    );
+  });
+
+  it("still inverts the upper polygon given a z-DEGENERATE row box", () => {
+    // A valid row box, not a missing one: `readBBox` accepts zmin == zmax and
+    // `familyIndex` accepts minZ <= maxZ, so such a row decodes, indexes and
+    // places with `invalidBBoxRows` at 0 — nothing reports that the winding
+    // reference carried no information. The real shape is a table whose only
+    // geometry is LoD 0 footprints, where zmin..zmax IS the footprint's own
+    // step, so the row box equals the tight box.
+    const flat: BBox3 = [east(0), north(0), 0, east(40), north(20), 0];
+    const n = bakeNormalZ(footprint(0.5), flat);
+    expect(n.lo).toBeLessThan(-0.99);
+    expect(n.hi).toBeGreaterThan(0.99);
+  });
+
   it("still inverts the upper polygon with NO row box, above the floor's reach", () => {
     // The honest residue: a CityParquet child row whose bbox columns are null
     // has no file extent, and `orientExteriorRing`'s 2.5e-4 magnitude floor
