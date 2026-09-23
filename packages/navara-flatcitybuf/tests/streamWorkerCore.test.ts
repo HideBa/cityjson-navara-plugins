@@ -430,6 +430,38 @@ describe("streamWorkerCore", () => {
     expect(cells[0]!.objects.map((o) => o.id).sort()).toEqual(["p", "q"]);
   });
 
+  it("bakes a PROJECTED source byte for byte as it did before the frame path", async () => {
+    // A baseline PIN, not a failing test: the geographic-to-ENU milestone adds
+    // a second bake path (rings already geodetic, converted per cell by
+    // arithmetic) beside this one, and a projected source — RD New here, and
+    // every FlatCityBuf source — must keep going through proj4 and
+    // `projectPositionsToEnu` with the same numbers. Captured from the code as
+    // it stood before that change, to the metre in ENU and to 1e-6 in each
+    // normal component.
+    const { posted, send } = harness(fakeAdapter([feature("a", 100, 100)]));
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(fetchMsg(1, ["2/0/0"]));
+    const cell = posted.filter(ofType("cell"))[0]!;
+    expect(cell.geometry.triangleCount).toBe(2);
+    // `+ 0` normalises -0, which `toFixed` keeps and `toEqual` distinguishes.
+    const round = (a: Float32Array, dp: number) =>
+      [...a].map((v) => Number(v.toFixed(dp)) + 0);
+    // EPSG:28992 -> WGS84 -> ENU about the 2/0/0 cell centre (200, 200): the
+    // 10 m roof quad sits ~135 m west and ~104 m south of it, tilted by RD
+    // New's grid convergence at this (fixture) position.
+    // EPSG:28992 -> WGS84 -> ENU about the 2/0/0 cell centre (200, 200): the
+    // 10 m roof quad sits ~97 m west and ~102 m south of it, and the ring is
+    // wound so its normal points up-and-north.
+    expect(round(cell.geometry.positions, 2)).toEqual([
+      -92.2, -97.46, 10, -102.18, -97.74, 10, -101.91, -107.72, 0, -101.91,
+      -107.72, 0, -91.93, -107.45, 0, -92.2, -97.46, 10,
+    ]);
+    expect(round(cell.geometry.normals, 4)).toEqual([
+      0, -0.7071, 0.7071, 0, -0.7071, 0.7071, 0, -0.7071, 0.7071, 0, -0.7071,
+      0.7071, 0, -0.7071, 0.7071, 0, -0.7071, 0.7071,
+    ]);
+  });
+
   it("close closes the adapter and clears the cache", async () => {
     const adapter = fakeAdapter([feature("a", 100, 100)]);
     const { posted, send } = harness(adapter);

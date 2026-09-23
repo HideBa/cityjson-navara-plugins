@@ -9,6 +9,7 @@ import type {
   BBox3,
   CityAppearance,
   CityModel,
+  LocalMetricFrameDescriptor,
 } from "@cityjson/navara-core";
 import type { CellOwnership } from "./bucketFeatures";
 import type { WorkerRequest } from "./workerProtocol";
@@ -45,13 +46,38 @@ export interface StreamHeader {
    *  notion. `objectsCount` counts them, so this is the difference between
    *  "not loaded yet" and "will never load" behind an `N of M loaded`. */
   readonly invalidBBoxRows?: number;
-  /** In the stream's METRIC CRS. `undefined` exactly when the source carries
-   *  no extent — callers must check the admission first; this model does not
-   *  repeat that gate, so it never lies about having an extent it doesn't. */
+  /** In the stream's INDEX SPACE: its metric CRS when {@link epsg} is set,
+   *  else bucket metres about {@link frame}'s origin. `undefined` exactly when
+   *  the source carries no extent — callers must check the admission first;
+   *  this model does not repeat that gate, so it never lies about having an
+   *  extent it doesn't. */
   readonly extent: BBox3 | undefined;
+  /** PROVENANCE: the CRS the source's own coordinates are in. For a
+   *  frame-carrying source that is also the CRS `select`'s rings arrive in. */
   readonly referenceSystem: string | undefined;
-  /** The metric EPSG code the cells are built in. */
+  /** The metric EPSG code the index and the cells are built in, or `null` when
+   *  the source indexes in a bucket frame instead — no EPSG code names a local
+   *  metric frame, and one that did not describe {@link extent} would be worse
+   *  than none. */
   readonly epsg: number | null;
+  /**
+   * The bucket frame {@link extent}, the tile grid and every record bbox are
+   * expressed in, as a `structuredClone`-able descriptor (functions cannot
+   * cross `postMessage`; each side rebuilds its transforms from this). Set
+   * exactly when {@link epsg} is `null` — that pair is the positive contract
+   * for a geographic source, which is admitted on the frame rather than on a
+   * metric EPSG.
+   *
+   * It also says what `select` yields: with a frame, a model's rings are still
+   * in the SOURCE CRS (lon/lat/h) and only its bboxes are in index space,
+   * because the worker converts each cell's rings into that CELL's own ENU
+   * frame — a vertex put through a dataset-wide frame first would have been
+   * placed twice, and a frame that spans a city is not level (see
+   * `docs/plans/2026-09-23-geographic-to-enu.md`).
+   *
+   * Absent (as opposed to `null`) for a format that has no such notion.
+   */
+  readonly frame?: LocalMetricFrameDescriptor | null;
 }
 
 export type AdmissionCode =
@@ -90,8 +116,12 @@ export interface StreamSourceAdapter {
     signal: AbortSignal,
   ): Promise<number>;
   /** Decoded features (one CityModel per feature: an object plus its parts)
-   *  whose objects intersect `bbox`, in the header's metric CRS. `lod` is
-   *  the requested rung: the adapter may skip geometry above it. */
+   *  whose objects intersect `bbox`. Every BBOX — the model's and each
+   *  object's — is in the header's index space, because that is what the tile
+   *  grid and this `bbox` are in; RINGS are in the header's metric CRS too,
+   *  unless the header carries a `frame`, in which case they are still the
+   *  source's lon/lat/h and the worker places them per cell. `lod` is the
+   *  requested rung: the adapter may skip geometry above it. */
   select(
     bbox: readonly [number, number, number, number],
     opts: { lod: string | null; signal: AbortSignal },

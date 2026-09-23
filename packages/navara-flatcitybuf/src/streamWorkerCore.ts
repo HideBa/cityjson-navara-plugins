@@ -14,13 +14,18 @@ import {
   buildCityMeshArrays,
   buildRuleColorsFromArrays,
   ensureProjDef,
+  geodeticRingsToEnu,
+  localMetricFrameFromDescriptor,
   makeEnuFrame,
   projectPositionsToEnu,
   type AppearanceTheme,
   resolveSurfaceColorsLinear,
   SURFACE_COLORS_LINEAR,
+  type BBox3,
   type CityAppearance,
   type CityModel,
+  type CityObject,
+  type LocalMetricFrameDescriptor,
 } from "@cityjson/navara-core";
 import { bucketFeatures } from "./bucketFeatures";
 import { WORKER_RETAINED_BYTE_BUDGET } from "./constants";
@@ -136,24 +141,68 @@ function estimateRetainedBytes(
 
 /**
  * Everything needed to bake a cell's vertices into exact local-ENU metres,
- * captured once per `open`.
+ * captured once per `open`. Two kinds, because a source's coordinates arrive in
+ * one of two spaces (`docs/plans/2026-09-23-geographic-to-enu.md`):
  *
- * `buildCityMeshArrays` emits source-CRS deltas from the cell centre, and the
- * renderer treats a cell's vertices as ENU metres — which for a projected CRS
- * is wrong by the point scale factor and the grid convergence angle, and
- * ignores the vertical datum entirely. The correction is per-vertex, so it
- * belongs off the main thread: right here (Task A13b's `projectPositionsToEnu`;
- * `CityModelMesh` does the identical thing for static layers).
+ * - `"projected"` — the original. `buildCityMeshArrays` emits source-CRS deltas
+ *   from the cell centre, and the renderer treats a cell's vertices as ENU
+ *   metres, which for a projected CRS is wrong by the point scale factor and
+ *   the grid convergence angle and ignores the vertical datum entirely. The
+ *   correction is per-vertex, so it belongs off the main thread: right here
+ *   (Task A13b's `projectPositionsToEnu`; `CityModelMesh` does the identical
+ *   thing for static layers). EVERY FlatCityBuf source and every projected
+ *   CityParquet one takes this path, unchanged.
+ * - `"bucket"` — a GEOGRAPHIC source (EPSG:6697). Its rings are already
+ *   geodetic, so they are converted into the cell's ENU frame by arithmetic
+ *   BEFORE triangulation (`geodeticRingsToEnu`), and no projection runs at all.
+ *   Its INDEX — the extent, the tile grid, cell ownership and the bboxes it
+ *   reports — is bucket metres about the dataset centre, which is what
+ *   `toLngLat` inverts here.
+ *
+ * Both carry `toLngLat`, because both build a cell's frame from its centre, and
+ * both carry the same `heightOffset`.
  */
-interface CellPlacement {
-  readonly epsg: number;
+type CellPlacement = {
   /** Metres added to every vertex's geodetic height AND to the frame origin —
    *  the geoid undulation, resolved by the plugin BEFORE `open` (see the
    *  `open` handler). */
   readonly heightOffset: number;
-  /** Source CRS -> WGS84, built once: proj4's three-argument call re-parses
+  /** Index space -> WGS84, built once: proj4's three-argument call re-parses
    *  both CRS definitions on every invocation. */
   toLngLat(coords: [number, number]): [number, number];
+} & (
+  | { readonly kind: "projected"; readonly epsg: number }
+  | {
+      readonly kind: "bucket";
+      readonly frame: LocalMetricFrameDescriptor;
+    }
+);
+
+/** Each object's bbox as it arrived, before the ENU conversion re-boxed it:
+ *  the boxes a cell REPORTS (`toObjectRecords`), in the index space the main
+ *  thread merges and fits them in. */
+function bboxesOf(model: CityModel): Map<string, BBox3> {
+  const out = new Map<string, BBox3>();
+  for (const object of Object.values(model.objects)) {
+    if (object?.bbox) out.set(object.id, object.bbox);
+  }
+  return out;
+}
+
+/**
+ * A copy of `model` whose rings (and object bboxes) are local ENU metres in
+ * `frame`, leaving the caller's geographic model untouched — the cell cache
+ * keeps the ENU one, because `recolor` must see exactly the object and surface
+ * ordering that built the arrays.
+ */
+function toCellEnu(
+  model: CityModel,
+  frame: ReturnType<typeof makeEnuFrame>,
+  heightOffset: number,
+): CityModel {
+  const objects: Record<string, CityObject> = { ...model.objects };
+  geodeticRingsToEnu(objects, frame, heightOffset);
+  return { ...model, objects };
 }
 
 /** The slice of a worker's global scope the core talks through. */
@@ -401,7 +450,11 @@ export function installStreamWorker(
     // An admitted source guarantees header.extent is set and header.epsg is a
     // metre-based code (the adapter's admission refuses anything else), but
     // the two are independent as far as the type checker knows.
-    if (!admission && header.extent && header.epsg !== null) {
+    // An admitted source guarantees an index space: a metric EPSG, or — for a
+    // geographic one — a bucket frame descriptor. `epsg: null` WITH a frame is
+    // the positive contract for the second kind; `epsg: null` with no frame is
+    // no contract at all and is not placed.
+    if (!admission && header.extent && (header.epsg !== null || header.frame)) {
       opened = {
         source: msg.source,
         ...(msg.sourceKey !== undefined ? { sourceKey: msg.sourceKey } : {}),
@@ -409,23 +462,38 @@ export function installStreamWorker(
       };
       // A new source always gets its own grid; the same source keeps its.
       grid = same && grid ? grid : makeGrid(header.extent);
-      const epsg = header.epsg;
-      // Registers RD New and friends; built-in codes are a no-op. Without it
-      // proj4 cannot construct the converter below at all.
-      ensureProjDef(epsg);
-      const converter = proj4(`EPSG:${epsg}`, "WGS84") as {
-        forward(coords: [number, number]): [number, number];
-      };
-      placement = {
-        epsg,
-        // The plugin resolved the geoid undulation (or the caller's override)
-        // BEFORE sending `open`, precisely so the worker can bake every cell
-        // in the right frame from the first fetch — the worker never samples
-        // it itself and never needs network access. See Global Constraints
-        // -> Vertical datum.
-        heightOffset: msg.heightOffset ?? 0,
-        toLngLat: (coords) => converter.forward(coords),
-      };
+      // The plugin resolved the geoid undulation (or the caller's override)
+      // BEFORE sending `open`, precisely so the worker can bake every cell
+      // in the right frame from the first fetch — the worker never samples
+      // it itself and never needs network access. See Global Constraints
+      // -> Vertical datum.
+      const heightOffset = msg.heightOffset ?? 0;
+      if (header.epsg !== null) {
+        const epsg = header.epsg;
+        // Registers RD New and friends; built-in codes are a no-op. Without it
+        // proj4 cannot construct the converter below at all.
+        ensureProjDef(epsg);
+        const converter = proj4(`EPSG:${epsg}`, "WGS84") as {
+          forward(coords: [number, number]): [number, number];
+        };
+        placement = {
+          kind: "projected",
+          epsg,
+          heightOffset,
+          toLngLat: (coords) => converter.forward(coords),
+        };
+      } else {
+        // Arithmetic, and the SAME arithmetic every other user of this frame
+        // performs — the family index, the tile grid, the camera footprint and
+        // the main thread's own `cellFrame`.
+        const bucket = localMetricFrameFromDescriptor(header.frame!);
+        placement = {
+          kind: "bucket",
+          frame: header.frame!,
+          heightOffset,
+          toLngLat: ([x, y]) => bucket.toLngLat(x, y),
+        };
+      }
     }
     surfaceColors = resolveSurfaceColorsLinear(msg.surfaceColors);
     post({ type: "opened", id: msg.id, header, admission });
@@ -568,37 +636,56 @@ export function installStreamWorker(
               return;
             }
             if (!resident.has(key)) continue; // outside the requested cover
-            const cellModel: CityModel = builtAppearance
+            const bareModel: CityModel = builtAppearance
               ? { ...cellModelBare, appearance: builtAppearance }
               : cellModelBare;
-            const cellLods = distinctLods(cellModel);
+            const cellLods = distinctLods(bareModel);
             const origin = cellCentre(theGrid, key, 0);
+            // The cell's own ENU frame: its centre's geodetic position, raised
+            // by the vertical datum offset. Built the same way on both sides —
+            // same function, same arguments as `cellMeshes.cellFrame()` on the
+            // main thread (Task C8) — so cell placement and cell vertices
+            // cannot disagree.
+            const [cellLng, cellLat] = place.toLngLat([origin[0], origin[1]]);
+            const frame = makeEnuFrame(cellLng, cellLat, place.heightOffset);
+            // A GEOGRAPHIC source is placed BEFORE triangulation: its rings are
+            // already geodetic, so `lon/lat/h -> ECEF -> this frame` is
+            // arithmetic, and doing it first means normals and edge creases are
+            // computed where they are drawn. The boxes the cell REPORTS are
+            // kept aside first: they travel in bucket space, the one frame the
+            // main thread can merge and fit across cells, while the geometry
+            // (and the metrics computed from it) belong in the cell's frame.
+            const reportBBoxes =
+              place.kind === "bucket" ? bboxesOf(bareModel) : undefined;
+            const cellModel =
+              place.kind === "bucket"
+                ? toCellEnu(bareModel, frame, place.heightOffset)
+                : bareModel;
             const a = buildCityMeshArrays(
               cellModel,
               key,
-              origin,
+              // Already ENU metres about the frame origin for a bucket source,
+              // so there is nothing to subtract; source-CRS deltas from the
+              // cell centre otherwise.
+              place.kind === "bucket" ? [0, 0, 0] : origin,
               adapter.bakeLod(msg.lod, cellLods),
               hiddenTypes,
               msg.appearance ?? null,
               surfaceColors,
             );
-            // `a.positions` are source-CRS deltas from `origin`; the renderer
-            // wants local ENU metres in the cell's OWN frame. Build that
-            // frame from the cell centre's geodetic position (raised by the
-            // vertical datum offset) and re-place every vertex exactly —
-            // same frame, same call, same numbers as `cellMeshes.cellFrame()`
-            // on the main thread (Task C8), so cell placement and cell
-            // vertices cannot disagree. Without this the deltas are off by
-            // the projection's scale factor and grid convergence, which is
-            // metres and a fraction of a degree of bearing at cell scale.
-            const [cellLng, cellLat] = place.toLngLat([origin[0], origin[1]]);
-            const frame = makeEnuFrame(cellLng, cellLat, place.heightOffset);
-            projectPositionsToEnu(a.positions, {
-              originOffset: origin,
-              epsg: place.epsg,
-              frame,
-              heightOffset: place.heightOffset,
-            });
+            if (place.kind === "projected") {
+              // `a.positions` are source-CRS deltas from `origin`; the renderer
+              // wants local ENU metres in the cell's OWN frame, so re-place
+              // every vertex exactly. Without this the deltas are off by the
+              // projection's scale factor and grid convergence, which is metres
+              // and a fraction of a degree of bearing at cell scale.
+              projectPositionsToEnu(a.positions, {
+                originOffset: origin,
+                epsg: place.epsg,
+                frame,
+                heightOffset: place.heightOffset,
+              });
+            }
             const ruleColors = msg.rulesEnabled
               ? buildRuleColorsFromArrays(
                   cellModel,
@@ -625,7 +712,10 @@ export function installStreamWorker(
               textureGroups: a.textureGroups ?? null,
               textures: cellTextures(a.textureGroups, builtAppearance),
             };
-            const { records, surfaceAttrKeys } = toObjectRecords(cellModel);
+            const { records, surfaceAttrKeys } = toObjectRecords(
+              cellModel,
+              reportBBoxes,
+            );
 
             // Record this cell in the worker cache BEFORE transferring: the
             // arrays below are detached the instant `post()`'s postMessage
@@ -677,6 +767,9 @@ export function installStreamWorker(
                 // ...plus the source's up-front LoDs, when its format knows
                 // them, so the ladder is complete before every cell is seen.
                 lodsSeen: unionLods(cellLods, knownLods),
+                // What the record bboxes are in, and what the main thread
+                // rebuilds this cell's ENU placement from.
+                frame: place.kind === "bucket" ? place.frame : null,
                 appearanceThemes,
                 // What this cell costs the WORKER, which is not what its
                 // transferred arrays cost: the main thread adds it to the

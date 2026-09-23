@@ -2,6 +2,7 @@ import type {
   AppearanceTheme,
   BBox3,
   CityTexture,
+  LocalMetricFrameDescriptor,
   RoofMetrics,
   Rule,
   SurfacePalette,
@@ -152,6 +153,13 @@ export type WorkerResponse =
       objects: ResidentObjectRecord[];
       surfaceAttrKeys: string[];
       lodsSeen: string[];
+      /** The BUCKET frame this cell's record bboxes are in, and the frame the
+       *  main thread rebuilds the cell's own ENU placement from (cell centre
+       *  -> lng/lat -> `makeEnuFrame`). `null` for a source whose index is a
+       *  metric CRS, where the layer's EPSG answers both. It duplicates the
+       *  header's descriptor deliberately: a cell is adopted on its own, and a
+       *  placement looked up elsewhere is a placement that can disagree. */
+      frame?: LocalMetricFrameDescriptor | null;
       /** Every appearance theme the worker has seen so far across the open
        *  file — learned like the LoD ladder, offered to the user as it grows. */
       appearanceThemes?: AppearanceTheme[];

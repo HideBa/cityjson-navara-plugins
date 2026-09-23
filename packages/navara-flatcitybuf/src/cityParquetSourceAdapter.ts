@@ -22,10 +22,12 @@ import {
   type ReadBatch,
 } from "@cityjson/navara-cityparquet";
 import {
+  localMetricFrameFromDescriptor,
   mergeBBox,
   type BBox3,
   type CityModel,
   type CityObject,
+  type LocalMetricFrame,
 } from "@cityjson/navara-core";
 import type {
   AdmissionError,
@@ -111,16 +113,48 @@ function countRingVertices(objects: ReadonlyArray<CityObject>): number {
 }
 
 /**
+ * A geographic bbox in bucket metres: all four horizontal corners, re-boxed.
+ * (The bucket transform is linear in lon/lat, so two corners would do — four
+ * costs nothing and keeps this identical to `projectBBox`'s contract, which a
+ * non-linear target really does need.)
+ */
+function toBucketBBox(bbox: BBox3, frame: LocalMetricFrame): BBox3 {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const lng of [bbox[0], bbox[3]]) {
+    for (const lat of [bbox[1], bbox[4]]) {
+      const [x, y] = frame.toMetric(lng, lat);
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  return [minX, minY, bbox[2], maxX, maxY, bbox[5]];
+}
+
+/**
  * A batch as one `CityModel` per family (`StreamRow.familyRoot`), keeping
  * only the families whose union bbox intersects `bbox`: a batch also holds
  * the rows of its merge gaps, which no viewport asked for. A family with no
  * object bbox cannot be placed and is dropped. `referenceSystem` (the
  * stream header's) is carried as each model's metadata.
+ *
+ * `frame`, for a GEOGRAPHIC source, is the stream's bucket frame: every bbox —
+ * each object's and the family union — is converted into it, because the query
+ * `bbox`, the tile grid and cell ownership are all bucket metres, and the
+ * records the worker posts report their bboxes there too (so the main thread
+ * can merge and fit them across cells). RINGS are deliberately left in
+ * lon/lat/h: the worker converts a cell's rings into that CELL's own ENU frame,
+ * and a vertex put through a dataset-wide frame first would be placed twice.
  */
 export function familyModels(
   batch: ReadBatch,
   bbox: Box2,
   referenceSystem?: string,
+  frame?: LocalMetricFrame,
 ): CityModel[] {
   const families = new Map<string, CityObject[]>();
   for (const [id, object] of Object.entries(batch.objects)) {
@@ -130,7 +164,11 @@ export function familyModels(
       members = [];
       families.set(root, members);
     }
-    members.push(object);
+    members.push(
+      frame && object.bbox
+        ? { ...object, bbox: toBucketBBox(object.bbox, frame) }
+        : object,
+    );
   }
   const out: CityModel[] = [];
   for (const members of families.values()) {
@@ -209,6 +247,9 @@ export function createCityParquetSourceAdapter(
   const maxFetchReadBytes = options.maxFetchReadBytes ?? MAX_FETCH_READ_BYTES;
   let stream: CityParquetStream | undefined;
   let buffers: RangeBuffer[] = [];
+  /** The opened stream's bucket frame, rebuilt once from its descriptor;
+   *  `undefined` for a projected source, which indexes in its own CRS. */
+  let bucketFrame: LocalMetricFrame | undefined;
   /** Cancels the open in flight; `close` aborts it. */
   let openController: AbortController | undefined;
 
@@ -226,6 +267,7 @@ export function createCityParquetSourceAdapter(
       openController = controller;
       stream = undefined;
       buffers = [];
+      bucketFrame = undefined;
       let opened: CityParquetStream;
       let opening: RangeBuffer[];
       try {
@@ -243,6 +285,9 @@ export function createCityParquetSourceAdapter(
       controller.signal.throwIfAborted();
       stream = opened;
       buffers = opening;
+      bucketFrame = opened.header.frame
+        ? localMetricFrameFromDescriptor(opened.header.frame)
+        : undefined;
       return {
         // A PROJECTION of the stream's own header, not a copy field by field:
         // every field the reader adds (`tables`, and whatever comes next)
@@ -281,7 +326,7 @@ export function createCityParquetSourceAdapter(
       }
       for (const buffer of buffers) buffer.setSignal(signal);
       for await (const batch of s.readRows(ranges, lod, signal)) {
-        yield* familyModels(batch, bbox, s.header.referenceSystem);
+        yield* familyModels(batch, bbox, s.header.referenceSystem, bucketFrame);
       }
     },
 
@@ -300,6 +345,7 @@ export function createCityParquetSourceAdapter(
       openController = undefined;
       stream = undefined;
       buffers = [];
+      bucketFrame = undefined;
     },
   };
 }

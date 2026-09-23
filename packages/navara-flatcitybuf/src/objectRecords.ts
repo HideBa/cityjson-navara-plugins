@@ -11,11 +11,30 @@
 import {
   computeFootprintArea,
   computeRoofMetrics,
+  type BBox3,
   type CityModel,
 } from "@cityjson/navara-core";
 import type { ResidentObjectRecord } from "./workerProtocol";
 
-export function toObjectRecords(model: CityModel): {
+/**
+ * `reportBBoxes`, when given, is the bbox to REPORT per object id, overriding
+ * the one on the object itself. It exists because a cell of a geographic source
+ * is baked in the CELL's own ENU frame — which is where its metrics must be
+ * computed, level — while its record bboxes have to travel in BUCKET space, the
+ * one frame the main thread can merge and fit them in across cells. The two
+ * spaces cannot both live on `obj.bbox`, so the model carries the frame the
+ * geometry is in and the caller passes the boxes it reports.
+ *
+ * It also decides what is skippable: an object with no bbox is skipped (a
+ * `ResidentObjectRecord.bbox` is non-nullable and fabricating one would be
+ * worse), and for such a source the ENU conversion nulls the bbox of a
+ * geometryless family parent — so the override is what keeps that parent's
+ * record, which the inspector and the hidden-type lookup need.
+ */
+export function toObjectRecords(
+  model: CityModel,
+  reportBBoxes?: ReadonlyMap<string, BBox3>,
+): {
   records: ResidentObjectRecord[];
   surfaceAttrKeys: string[];
 } {
@@ -28,7 +47,8 @@ export function toObjectRecords(model: CityModel): {
     // ownership (`if (!obj?.bbox) continue`) — so a real streamed CityModel
     // never contains one. Skip defensively rather than fabricate a bbox for
     // ResidentObjectRecord.bbox, which is non-nullable.
-    if (!obj.bbox) continue;
+    const bbox = reportBBoxes?.get(obj.id) ?? obj.bbox;
+    if (!bbox) continue;
 
     const roofMetrics = obj.surfaces
       .filter((s) => s.type === "RoofSurface")
@@ -53,7 +73,7 @@ export function toObjectRecords(model: CityModel): {
       id: obj.id,
       objectType: obj.objectType,
       attributes: obj.attributes,
-      bbox: obj.bbox,
+      bbox,
       lod: obj.lod,
       surfaceCount: obj.surfaces.length,
       roofMetrics,

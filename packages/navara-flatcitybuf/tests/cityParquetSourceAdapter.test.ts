@@ -41,6 +41,8 @@ async function fixtureBytes(dir: string): Promise<Uint8Array<ArrayBuffer>> {
 
 const MULTIGROUP = "multigroup-cityparquet";
 const NOINDEX = "multigroup-noindex-cityparquet";
+/** The real PLATEAU fixture: EPSG:6697, 18 rows, six copies 250 m apart. */
+const GEOGRAPHIC = "plateau-6697-cityparquet";
 
 async function blobOf(dir: string): Promise<Blob> {
   return new Blob([await fixtureBytes(dir)]);
@@ -484,5 +486,54 @@ describe("bakeLodSelection — unlabelled geometry", () => {
   it("omits the rung entirely when the source has no unlabelled column", () => {
     expect(bakeLodSelection(null, [], ["0", "2"], false)).toEqual(["2", "0"]);
     expect(bakeLodSelection("2", [], [], false)).toEqual([]);
+  });
+});
+
+describe("a geographic (EPSG:6697) source", () => {
+  it("declares its bucket frame, and yields bucket bboxes over lon/lat rings", async () => {
+    // The seam's contract for a frame-carrying source: BBOXES are in the
+    // header's index space, because that is what the query box, the tile grid
+    // and cell ownership are in; RINGS are still the source's lon/lat/h,
+    // because the worker places them per CELL, in that cell's own ENU frame.
+    // Before this task the adapter left the bboxes geographic, so a bucket
+    // query box (y within +/-7 m) intersected nothing and no cell was baked.
+    const adapter = createCityParquetSourceAdapter();
+    const opened = await adapter.open(
+      openReq({ blob: await blobOf(GEOGRAPHIC) }),
+    );
+    expect(opened.admission).toBeNull();
+    expect(opened.header.epsg).toBeNull();
+    expect(opened.header.frame).toEqual({
+      kind: "local-metric",
+      lngDeg: expect.closeTo(139.60689, 5),
+      latDeg: expect.closeTo(35.5, 5),
+    });
+    const extent = opened.header.extent!;
+    expect(extent[0]).toBeCloseTo(-642.541, 3);
+    expect(extent[3]).toBeCloseTo(642.541, 3);
+
+    const models = await collect(
+      adapter.select([extent[0], extent[1], extent[3], extent[4]], {
+        lod: null,
+        signal: new AbortController().signal,
+      }),
+    );
+    // Six copies, each a family of two plus a lone building.
+    expect(models).toHaveLength(12);
+    for (const model of models) {
+      for (const object of Object.values(model.objects)) {
+        // Bucket metres about the dataset centre, inside the header's extent.
+        expect(object.bbox![0]).toBeGreaterThanOrEqual(extent[0]);
+        expect(object.bbox![3]).toBeLessThanOrEqual(extent[3]);
+        expect(Math.abs(object.bbox![1])).toBeLessThan(10);
+        // Rings untouched: still degrees.
+        const point = object.surfaces[0]!.rings[0]![0]!;
+        expect(point[0]).toBeGreaterThan(139.5);
+        expect(point[0]).toBeLessThan(139.7);
+        expect(point[1]).toBeCloseTo(35.5, 3);
+      }
+      // The family union is bucket too, so `bucketFeatures` can own it.
+      expect(model.bbox![0]).toBeGreaterThanOrEqual(extent[0]);
+    }
   });
 });
