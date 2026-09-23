@@ -711,6 +711,10 @@ describe("the coordinate gate", () => {
   });
 });
 
+/** A plausible geoid undulation over Japan, so the vertical datum is never
+ *  exercised at zero. */
+const GEOID_M = 37;
+
 describe("rings fetched for one object", () => {
   it("come back in the OWNING CELL's ENU frame, and name it", async () => {
     // Task 3 moved the bake in front of the projection, so a geographic
@@ -725,7 +729,10 @@ describe("rings fetched for one object", () => {
     const grid = makeGrid(extent);
     const cells = keysCovering(grid, box2(extent), 2);
     const { posted, send } = harness(createCityParquetSourceAdapter());
-    await send(openReq({ source: { blob } }));
+    // A NON-ZERO geoid offset, so `heightM` on the descriptor has to be carried
+    // rather than assumed: with 0 the field would pass even hard-coded, and it
+    // is the one number the vertical-datum constraint turns on.
+    await send(openReq({ source: { blob }, heightOffset: GEOID_M }));
     await send(fetchMsg(1, cells, box2(extent)));
 
     const cell = posted.filter(ofType("cell")).find((c) => c.objects.length > 0);
@@ -742,7 +749,7 @@ describe("rings fetched for one object", () => {
       grid,
       cell!.key,
       (x, y) => bucket.toLngLat(x, y),
-      0,
+      GEOID_M,
     );
     expect(data?.frame).toEqual({
       kind: "enu",
@@ -753,7 +760,7 @@ describe("rings fetched for one object", () => {
 
     // And they are metres a consumer can USE: put back through the named
     // frame, every ring vertex lands on the source vertex it came from.
-    const reference = referenceEcef(allObjects(batches));
+    const reference = referenceEcef(allObjects(batches), GEOID_M);
     const frame = makeEnuFrame(
       data!.frame!.lngDeg,
       data!.frame!.latDeg,
