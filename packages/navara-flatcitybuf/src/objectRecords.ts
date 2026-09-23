@@ -30,6 +30,13 @@ import type { ResidentObjectRecord } from "./workerProtocol";
  * worse), and for such a source the ENU conversion nulls the bbox of a
  * geometryless family parent — so the override is what keeps that parent's
  * record, which the inspector and the hidden-type lookup need.
+ *
+ * When it is given, it is the ONLY source of a reported box: there is no
+ * fall-back to `obj.bbox`, because an object the caller could not box is an
+ * object whose own bbox is in the WRONG SPACE (the geometry's, not the
+ * index's), and publishing that reads as a plausible coordinate hundreds of
+ * metres from the object. Skipping loses a record; falling back loses the
+ * space, silently. The caller's job is to leave no object unboxed.
  */
 export function toObjectRecords(
   model: CityModel,
@@ -47,7 +54,7 @@ export function toObjectRecords(
     // ownership (`if (!obj?.bbox) continue`) — so a real streamed CityModel
     // never contains one. Skip defensively rather than fabricate a bbox for
     // ResidentObjectRecord.bbox, which is non-nullable.
-    const bbox = reportBBoxes?.get(obj.id) ?? obj.bbox;
+    const bbox = reportBBoxes ? reportBBoxes.get(obj.id) : obj.bbox;
     if (!bbox) continue;
 
     const roofMetrics = obj.surfaces

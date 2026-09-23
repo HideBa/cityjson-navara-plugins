@@ -596,6 +596,60 @@ describe("cell ownership in bucket space", () => {
   });
 });
 
+/**
+ * The milestone review's Important 2. A CityParquet family can carry a valid
+ * file bbox on its parent row and a NULL one on a geometry-bearing child; with
+ * `ownership: "feature"` the child rides into the bake on the family's box.
+ * The boxes a cell reports travel in BUCKET space, so a child the bucket-box
+ * map does not name must NOT fall back to `obj.bbox` — by then that is the
+ * cell's own ENU metres, and the main thread would fit the camera on it as if
+ * it were an index coordinate.
+ */
+describe("a child with no file bbox", () => {
+  it("reports its box in bucket space, not the cell's ENU metres", async () => {
+    const { frame, extent, grid, descriptor } = syntheticSpace([LNG, LAT]);
+    // ~180 m north-east of the dataset centre, so the bucket box and the
+    // owning cell's ENU box are hundreds of metres apart and cannot be
+    // confused for one another.
+    const parent = geoObject("fam", LNG + 0.002, LAT + 0.0016);
+    const child = geoObject("fam-part", LNG + 0.002, LAT + 0.0016);
+    const geoChildBox = child.bbox!;
+    const built = geoFamily([parent, child], frame);
+    // The parent keeps its bucket box; the child's file bbox is null, exactly
+    // as a CityParquet row with no bbox columns decodes. The FAMILY box still
+    // covers both, which is what carries the child into the bake.
+    const family: CityModel = {
+      ...built,
+      objects: {
+        ...built.objects,
+        "fam-part": { ...built.objects["fam-part"]!, bbox: null },
+      },
+    };
+
+    const { posted, send } = harness(
+      fakeAdapter([family], { extent, epsg: null, frame: descriptor }),
+    );
+    await send(openReq());
+    await send(fetchMsg(1, keysCovering(grid, box2(extent), 2), box2(extent)));
+
+    const cells = posted.filter(ofType("cell"));
+    expect(cells).toHaveLength(1);
+    const record = cells[0]!.objects.find((o) => o.id === "fam-part");
+    // The record must exist at all: dropping it would take the child out of
+    // the inspector, the legend counts and the hidden-type lookup.
+    expect(record).toBeDefined();
+    const want = toBucketBBox(geoChildBox, frame);
+    for (const axis of [0, 1, 2, 3, 4, 5] as const) {
+      expect(record!.bbox[axis]).toBeCloseTo(want[axis], 6);
+    }
+    // And it agrees with the parent's box, which came through the index: the
+    // two objects are the same footprint, so a space mix-up shows up here.
+    const parentRecord = cells[0]!.objects.find((o) => o.id === "fam")!;
+    expect(record!.bbox[0]).toBeCloseTo(parentRecord.bbox[0], 6);
+    expect(record!.bbox[1]).toBeCloseTo(parentRecord.bbox[1], 6);
+  });
+});
+
 describe("metrics in the cell's own frame", () => {
   it("agree for the same building sitting in two different cells", async () => {
     const building = geoObject("b", LNG, LAT, { height: 7 });

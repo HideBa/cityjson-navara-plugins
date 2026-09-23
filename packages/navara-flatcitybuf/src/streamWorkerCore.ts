@@ -176,6 +176,9 @@ type CellPlacement = {
   | {
       readonly kind: "bucket";
       readonly frame: LocalMetricFrameDescriptor;
+      /** WGS84 -> index space, the forward of `toLngLat`: what boxes an
+       *  object whose file bbox was null, from its own geographic rings. */
+      toMetric(lng: number, lat: number): [number, number];
     }
 );
 
@@ -196,15 +199,63 @@ function cellEnuDescriptor(
   return { kind: "enu", lngDeg, latDeg, heightM: place.heightOffset };
 }
 
-/** Each object's bbox as it arrived, before the ENU conversion re-boxed it:
- *  the boxes a cell REPORTS (`toObjectRecords`), in the index space the main
- *  thread merges and fits them in. */
-function bboxesOf(model: CityModel): Map<string, BBox3> {
+/**
+ * Each object's bbox as it arrived, before the ENU conversion re-boxed it: the
+ * boxes a cell REPORTS (`toObjectRecords`), in the index space the main thread
+ * merges and fits them in.
+ *
+ * An object whose FILE bbox is null gets one derived from its own rings, which
+ * are still lon/lat/h at this point, through the same bucket transform the
+ * index used. That is not defensive: with `ownership: "feature"` a whole
+ * family rides into the bake on the family's box, so a CityParquet child row
+ * with no bbox of its own arrives here carrying geometry and nothing else.
+ * Leaving it out of this map would hand `toObjectRecords` the object's own
+ * bbox — by then the CELL's ENU metres, published as if they were bucket
+ * coordinates, which frames the camera hundreds of metres away.
+ */
+function bucketBBoxesOf(
+  model: CityModel,
+  toMetric: (lng: number, lat: number) => [number, number],
+): Map<string, BBox3> {
   const out = new Map<string, BBox3>();
   for (const object of Object.values(model.objects)) {
-    if (object?.bbox) out.set(object.id, object.bbox);
+    if (!object) continue;
+    if (object.bbox) {
+      out.set(object.id, object.bbox);
+      continue;
+    }
+    const derived = bucketBoxOfRings(object, toMetric);
+    if (derived) out.set(object.id, derived);
   }
   return out;
+}
+
+/** The bucket-space box of an object's still-geographic rings, or null when it
+ *  has no ring to box. Heights pass through as they are, exactly as the index's
+ *  own boxes carry the file's z. */
+function bucketBoxOfRings(
+  object: CityObject,
+  toMetric: (lng: number, lat: number) => [number, number],
+): BBox3 | null {
+  let box: BBox3 | null = null;
+  for (const surface of object.surfaces) {
+    for (const ring of surface.rings) {
+      for (const [lng, lat, z] of ring) {
+        const [x, y] = toMetric(lng, lat);
+        box = box
+          ? [
+              Math.min(box[0], x),
+              Math.min(box[1], y),
+              Math.min(box[2], z),
+              Math.max(box[3], x),
+              Math.max(box[4], y),
+              Math.max(box[5], z),
+            ]
+          : [x, y, z, x, y, z];
+      }
+    }
+  }
+  return box;
 }
 
 /**
@@ -507,6 +558,7 @@ export function installStreamWorker(
           frame: header.frame!,
           heightOffset,
           toLngLat: ([x, y]) => bucket.toLngLat(x, y),
+          toMetric: (lng, lat) => bucket.toMetric(lng, lat),
         };
       }
     }
@@ -671,7 +723,9 @@ export function installStreamWorker(
             // main thread can merge and fit across cells, while the geometry
             // (and the metrics computed from it) belong in the cell's frame.
             const reportBBoxes =
-              place.kind === "bucket" ? bboxesOf(bareModel) : undefined;
+              place.kind === "bucket"
+                ? bucketBBoxesOf(bareModel, place.toMetric)
+                : undefined;
             const cellModel =
               place.kind === "bucket"
                 ? toCellEnu(bareModel, frame, place.heightOffset)
