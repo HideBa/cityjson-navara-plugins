@@ -404,7 +404,12 @@ function targetFor(
     // only.
     return coordinateTargetFor(sourceEpsg, centre, "bucket");
   } catch (cause) {
-    if (cause instanceof NonMetricCrsError) {
+    // `RangeError` too: `makeLocalMetricFrame` refuses a centre past +/-89.9
+    // degrees, where cos(phi0) collapses and the frame stops being invertible.
+    // Both mean the same thing to a caller — this source has no usable metric
+    // index space — and an unwrapped RangeError reached the worker as an
+    // unexplained failure instead of a refusal (Task 2 review, Minor).
+    if (cause instanceof NonMetricCrsError || cause instanceof RangeError) {
       throw new AdmissionRefusedError("non-metric-crs", cause.message, {
         cause,
       });

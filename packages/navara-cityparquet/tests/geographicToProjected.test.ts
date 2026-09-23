@@ -16,6 +16,7 @@ import { NonMetricCrsError, makeLocalMetricFrame } from "@cityjson/navara-core";
 import type { CityObject } from "@cityjson/navara-core";
 import proj4 from "proj4";
 import { describe, expect, it } from "vitest";
+import { CityParquetError } from "../src/footer";
 import {
   coordinateTargetFor,
   isBucketTarget,
@@ -182,5 +183,20 @@ describe("projectCityObjects", () => {
     const objects: Record<string, CityObject> = { a: object };
     projectCityObjects(objects, target);
     expect(objects.a).toBe(object);
+  });
+
+  it("REFUSES a bucket target rather than putting index numbers in rings", () => {
+    // `isIdentityTarget` is `epsg === sourceEpsg`, which for a bucket target
+    // (`epsg: null`, `sourceEpsg: 6697`) is false — so this function would not
+    // short-circuit, it would happily write bucket metres into geometry rings
+    // and nothing downstream could tell. The only guard used to be the call
+    // site in `streamReader.ts` plus this module's doc comment, and the
+    // function is exported from `index.ts` (Task 2 review, Important).
+    const target = coordinateTargetFor(6697, [139.6, 35.45], "bucket");
+    const object = objectAt(139.6, 35.45);
+    const objects: Record<string, CityObject> = { a: object };
+    expect(() => projectCityObjects(objects, target)).toThrow(CityParquetError);
+    expect(() => projectCityObjects(objects, target)).toThrow(/bucket/i);
+    expect(objects.a).toBe(object); // and nothing was written
   });
 });

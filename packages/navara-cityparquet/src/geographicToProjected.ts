@@ -225,13 +225,22 @@ export function projectBBox(bbox: BBox3, target: CoordinateTarget): BBox3 {
  * new bbox covers its projected source bbox (kept for geometryless parents)
  * and every projected vertex. An identity target changes nothing.
  *
- * NOT for a bucket target: it would put rings in index space, which is not
- * where anything is drawn. The stream reader skips this call for one.
+ * REFUSES a bucket target: its output is an INDEX, and writing it into rings
+ * would place geometry tens of metres out with nothing downstream able to tell.
+ * `isIdentityTarget` cannot catch that — for a bucket target it is false
+ * (`epsg: null` !== `sourceEpsg: 6697`), so this function would run. Rings of a
+ * bucket-space stream are converted per CELL, into that cell's own ENU frame
+ * (`geodeticRingsToEnu`), by the worker.
  */
 export function projectCityObjects(
   objects: Record<string, CityObject>,
   target: CoordinateTarget,
 ): void {
+  if (isBucketTarget(target)) {
+    throw new CityParquetError(
+      "Cannot project CityParquet geometry into a bucket frame: bucket metres are an index, not geometry. Convert each cell's rings into that cell's ENU frame instead.",
+    );
+  }
   if (isIdentityTarget(target)) return;
   for (const id of Object.keys(objects)) {
     const object = objects[id]!;

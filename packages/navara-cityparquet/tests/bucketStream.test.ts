@@ -267,6 +267,13 @@ describe("the bucket index covers what the UTM index returned", () => {
     const utmIndex = indexIn(table.rows, utm);
     // Same rows, same families, only a different space.
     expect(bucketIndex.rowCount).toBe(utmIndex.rowCount);
+    // The UTM "before" as a live number rather than a commit message: UTM
+    // zone 54N metres, whose 1284.868 m easting span is bucket space's
+    // 1285.082 m times UTM's 0.99980 scale factor at this latitude — a CHANGED
+    // number, not a more precise one (Task 2 review, Minor).
+    expect(utmIndex.extent.map((v) => Math.round(v))).toEqual([
+      373008, 3929371, 0, 374293, 3929401, 12,
+    ]);
 
     for (const [name, box] of boxes) {
       const before = rowsFor(utmIndex, utm, box);
@@ -282,6 +289,24 @@ describe("the bucket index covers what the UTM index returned", () => {
     }
     expect(all.size).toBe(18);
     expect(rowsFor(bucketIndex, bucket, boxes[5]![1]).size).toBe(0);
+  });
+});
+
+describe("a centre the bucket frame cannot be built about", () => {
+  it("is an admission refusal, not a raw RangeError out of openCityParquetStream", () => {
+    // `makeLocalMetricFrame` refuses past +/-89.9 degrees, where cos(phi0)
+    // collapses — with a plain `RangeError`, which escaped the reader's
+    // `NonMetricCrsError`/`AdmissionRefusedError` wrapping and reached the
+    // worker as an unexplained error instead of "this source cannot be
+    // streamed" (Task 2 review, Minor).
+    return expect(
+      bufferOf(GEOGRAPHIC).then((buffer) =>
+        openCityParquetStream([buffer], { lngLatCentre: [136.9, 89.95] }),
+      ),
+    ).rejects.toMatchObject({
+      name: "AdmissionRefusedError",
+      code: "non-metric-crs",
+    });
   });
 });
 
