@@ -149,8 +149,18 @@ export function projectPositionsToEnu(
  * The range a longitude/latitude pair must lie in. Wider than the UTM zones'
  * (`geographicToProjected.ts`'s `validateLonLat`) because an ENU frame has no
  * zones — it is defined wherever the globe is.
+ *
+ * The HEIGHT is gated too, for the same reason and not for its range: there is
+ * no plausible bound on an ellipsoidal height, but a non-finite one makes
+ * non-finite ECEF just as surely as a non-finite longitude does, and the
+ * resulting vertex draws nothing while reporting nothing.
  */
-function assertGeographic(lng: number, lat: number, objectId: string): void {
+function assertGeographic(
+  lng: number,
+  lat: number,
+  height: number,
+  objectId: string,
+): void {
   if (
     !Number.isFinite(lng) ||
     !Number.isFinite(lat) ||
@@ -161,6 +171,11 @@ function assertGeographic(lng: number, lat: number, objectId: string): void {
   ) {
     throw new RangeError(
       `Cannot place object "${objectId}": expected a longitude/latitude pair, got longitude ${String(lng)}, latitude ${String(lat)}.`,
+    );
+  }
+  if (!Number.isFinite(height)) {
+    throw new RangeError(
+      `Cannot place object "${objectId}": expected a finite height, got ${String(height)}.`,
     );
   }
 }
@@ -198,7 +213,13 @@ function extend(
  * The bbox is re-boxed FROM THE CONVERTED RINGS, because it is not decoration:
  * `buildCityMeshArrays` orients an exterior ring against the object's bbox
  * CENTRE, so a bbox left in the source's (or an index's) space flips roughly
- * half the surfaces. An object with no rings therefore comes out with
+ * half the surfaces. For the same reason the re-boxed value is TIGHT around
+ * the rings actually present: where the old path handed `orientExteriorRing`
+ * the file's own row box, a LoD-FILTERED bake here sees only the surviving
+ * rings, so their centre — and with it a borderline surface's winding — can
+ * come out the other way. Invisible with the city's double-sided material,
+ * real for anything reading the normal G-buffer. An object with no rings
+ * therefore comes out with
  * `bbox: null` — this function reads only rings, so it never has to trust, or
  * be told, which space the incoming bbox was in. (The stream worker hands the
  * adapter's BUCKET-space boxes straight to `toObjectRecords`, which is where a
@@ -210,9 +231,10 @@ function extend(
  * that must keep the geographic model passes a shallow copy of the record.
  *
  * Throws a `RangeError` naming the object for a vertex that is not a
- * longitude/latitude pair. This is the read path's only coordinate gate: the
- * per-vertex check the projected path did in proj4 is gone, and an unchecked
- * NaN would become NaN geometry — a cell that silently draws nothing.
+ * longitude/latitude pair, or whose height is not finite. This is the read
+ * path's only coordinate gate: the per-vertex check the projected path did in
+ * proj4 is gone, and an unchecked NaN in ANY of the three components would
+ * become NaN geometry — a cell that silently draws nothing.
  */
 export function geodeticRingsToEnu(
   objects: Record<string, CityObject>,
@@ -226,13 +248,9 @@ export function geodeticRingsToEnu(
       ...surface,
       rings: surface.rings.map((ring) =>
         ring.map((point): Vec3 => {
-          assertGeographic(point[0], point[1], id);
-          const enu = geodeticToEnu(
-            point[0],
-            point[1],
-            point[2] + heightOffset,
-            frame,
-          );
+          const h = point[2] + heightOffset;
+          assertGeographic(point[0], point[1], h, id);
+          const enu = geodeticToEnu(point[0], point[1], h, frame);
           box = extend(box, enu);
           return enu;
         }),

@@ -190,6 +190,23 @@ describe("geodeticRingsToEnu", () => {
     );
   });
 
+  it("refuses a non-finite HEIGHT, naming the object", () => {
+    // Same failure mode as a NaN longitude and just as invisible: a NaN z
+    // makes NaN ECEF, so the vertex lands nowhere and the surface it belongs
+    // to draws nothing. `assertGeographic` gated lng/lat only until the
+    // geographic-to-ENU milestone's cleanup.
+    const frame = makeEnuFrame(CELL_LNG, CELL_LAT, 0);
+    for (const z of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const ring = quad(0.0002, 0.0002, 3);
+      ring[2] = [ring[2]![0], ring[2]![1], z];
+      const objects: Record<string, CityObject> = {
+        "bldg-9": objectWith("bldg-9", [ring], bboxOfRings([quad(0, 0, 0)])),
+      };
+      expect(() => geodeticRingsToEnu(objects, frame, 0)).toThrow(/bldg-9/);
+      expect(() => geodeticRingsToEnu(objects, frame, 0)).toThrow(/height/);
+    }
+  });
+
   it("refuses an out-of-range longitude or latitude", () => {
     const frame = makeEnuFrame(CELL_LNG, CELL_LAT, 0);
     for (const bogus of [
