@@ -44,7 +44,9 @@ export interface FamilyIndex {
   /** Rows excluded from placement: a missing, non-finite or inverted bbox. */
   readonly invalidBBoxRows: number;
   /** Union of every valid row's box, in the coordinates the columns were
-   *  given in (the stream's projected CRS). All-NaN when no row is valid. */
+   *  given in — the stream's index space, which is its projected CRS for a
+   *  projected source and bucket metres for a geographic one. All-NaN when no
+   *  row is valid. */
   readonly extent: BBox3;
   /** Ranges covering every family whose union bbox intersects `bbox`,
    *  merged across gaps ≤ {@link MERGE_GAP_ROWS}, in table then row order.

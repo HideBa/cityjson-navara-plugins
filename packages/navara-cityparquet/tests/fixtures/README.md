@@ -217,7 +217,12 @@ plateau-6697-cityparquet: 33637 B, 18 rows, lon 139.599807..139.613971, lat 35.4
   fields.
 
 `plateau6697Fixture.test.ts` pins both halves: that the fixture is what it
-claims (6697 footer, lon/lat coordinates, the source's heights) and the
-BASELINE the milestone must match — today's proj4 path opens it as UTM zone
-54N with extent `x 373007.914..374292.783`, `y 3929370.557..3929400.590`,
-pinned from pyproj's own `EPSG:6668 → EPSG:32654`, not from this reader.
+claims (6697 footer, lon/lat coordinates, the source's heights) and what the
+stream path makes of it. The RECORDED BEFORE, from the proj4 path the stream
+used until the bucket-space change, is UTM zone 54N with extent
+`x 373007.914..374292.783`, `y 3929370.557..3929400.590` — pinned from pyproj's
+own `EPSG:6668 → EPSG:32654`, not from this reader. The stream now indexes it in
+the bucket frame about the data centre (139.60688892562575, 35.499999999727315):
+extent `x ±642.540883`, `y ±6.228236`, a 1285.082 m easting span against UTM's
+1284.868 m (the 0.21 m is UTM's scale factor, 0.99980 here), and its batches'
+rings stay lon/lat/h.

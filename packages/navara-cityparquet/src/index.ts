@@ -54,9 +54,13 @@ export {
 export type { FamilyColumns, FamilyIndex, FamilyRange } from "./familyIndex";
 export { MERGE_GAP_ROWS, buildFamilyIndex } from "./familyIndex";
 
-export type { CoordinateTarget } from "./geographicToProjected";
+export type {
+  CoordinateSpace,
+  CoordinateTarget,
+} from "./geographicToProjected";
 export {
   coordinateTargetFor,
+  isBucketTarget,
   projectCityObjects,
 } from "./geographicToProjected";
 

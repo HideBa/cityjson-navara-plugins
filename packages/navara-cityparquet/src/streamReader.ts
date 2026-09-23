@@ -6,17 +6,26 @@
  * `parents` columns ONE ROW GROUP AT A TIME, packing them straight into typed
  * arrays (six `Float64Array`s and a `Uint8Array`, 49 bytes a row) — never a
  * whole table of JS row objects. It enforces one source EPSG across the
- * tables, picks the stream's metric CRS once (for EPSG:6697 the UTM zone of
- * the caller's centre, else of the source extent's centre), projects the
- * packed boxes into it, and refuses a stream whose projected extent is not
- * finite and non-degenerate.
+ * tables, picks the stream's INDEX space once, converts the packed boxes into
+ * it, and refuses a stream whose converted extent is not finite and
+ * non-degenerate.
+ *
+ * The index space is `"bucket"` (`geographicToProjected`): a projected source
+ * indexes in its own metric CRS, unchanged; a GEOGRAPHIC one (EPSG:6697)
+ * indexes in navara-core's pinned local metric frame about the source extent's
+ * centre (or the caller's), which costs arithmetic instead of a proj4 call per
+ * row — about 4 s of Yokohama's 7.2 s open. The header then reports
+ * `epsg: null` and the frame's descriptor.
  *
  * `readRows` reads the identity columns, the footer's attribute columns,
  * `other_attributes` and every geometry column (with its semantic-surface
  * sibling) up to a LoD, for row ranges only — with `useOffsetIndex`, so a
  * range inside a row group decodes just the pages covering it. Appearance
- * columns are never read: a stream draws no textures. Every batch is
- * projected into the stream's CRS before it is yielded.
+ * columns are never read: a stream draws no textures. A batch of a PROJECTED
+ * source is projected into the stream's CRS before it is yielded; a batch of a
+ * geographic one is NOT — its rings and bboxes stay lon/lat/h doubles, because
+ * the worker converts each cell into that cell's own ENU frame, and a vertex
+ * that went through a dataset-wide frame first would have been placed twice.
  *
  * A batch holds every row of its range, including the rows of a merge gap
  * (families the query did not hit, and rows without a bbox) — the caller
@@ -25,7 +34,11 @@
  * Engine-free: no `@navaramap/*` imports.
  */
 
-import type { BBox3, CityObject } from "@cityjson/navara-core";
+import type {
+  BBox3,
+  CityObject,
+  LocalMetricFrameDescriptor,
+} from "@cityjson/navara-core";
 import { NonMetricCrsError } from "@cityjson/navara-core";
 import { decodeTableObjects, readBBox } from "./decodeTable";
 import type { FamilyColumns, FamilyIndex, FamilyRange } from "./familyIndex";
@@ -34,6 +47,7 @@ import { CityParquetError } from "./footer";
 import type { CoordinateTarget } from "./geographicToProjected";
 import {
   coordinateTargetFor,
+  isBucketTarget,
   isIdentityTarget,
   projectBBox,
   projectCityObjects,
@@ -104,10 +118,20 @@ export interface CityParquetStreamHeader {
    *  breakdown of {@link objectsCount}: one object family per table, so the
    *  sum alone cannot say how many of the rows are buildings. */
   tables: ReadonlyArray<CityParquetStreamTable>;
-  /** In the stream's projected CRS. */
+  /** In the stream's index space: its projected metric CRS when {@link epsg}
+   *  is set, else bucket metres about {@link frame}'s origin. */
   extent: BBox3;
-  /** The stream's (projected, metric) EPSG code. */
-  epsg: number;
+  /** The stream's (projected, metric) EPSG code, or `null` when it indexes in
+   *  bucket space — no EPSG code names a local metric frame, and a code that
+   *  did not describe {@link extent} would be worse than none. */
+  epsg: number | null;
+  /** The bucket frame {@link extent} and {@link CityParquetStream.index} are
+   *  expressed in, as a `structuredClone`-able descriptor for the worker
+   *  boundary; `null` exactly when {@link epsg} is set. */
+  frame: LocalMetricFrameDescriptor | null;
+  /** PROVENANCE, not the index space: the CRS the source's own coordinates
+   *  are in — which, for a bucket-space stream, is also the CRS its batches'
+   *  rings still arrive in. */
   referenceSystem: string;
   /** Display LoDs of the geometry columns, ascending (`"0"`, `"2.2"`). */
   lods: string[];
@@ -343,7 +367,11 @@ function sourceCentre(
   return x0 <= x1 && y0 <= y1 ? [(x0 + x1) / 2, (y0 + y1) / 2] : null;
 }
 
-/** Projects every valid packed box into `target`, in place. */
+/**
+ * Converts every valid packed box into `target`'s space, in place — all four
+ * horizontal corners each, since neither a projected nor a bucket rectangle is
+ * the axis-aligned box of two of them.
+ */
 function projectPackedBoxes(
   cols: FamilyColumns,
   target: CoordinateTarget,
@@ -371,7 +399,10 @@ function targetFor(
   centre: readonly [number, number] | null,
 ): CoordinateTarget {
   try {
-    return coordinateTargetFor(sourceEpsg, centre);
+    // "bucket": the streamed path's index space. It is the projected source's
+    // own CRS for anything already metric, so this is a change for EPSG:6697
+    // only.
+    return coordinateTargetFor(sourceEpsg, centre, "bucket");
   } catch (cause) {
     if (cause instanceof NonMetricCrsError) {
       throw new AdmissionRefusedError("non-metric-crs", cause.message, {
@@ -488,7 +519,11 @@ export async function openCityParquetStream(
     })),
     extent: index.extent,
     epsg: target.epsg,
-    referenceSystem: `https://www.opengis.net/def/crs/EPSG/0/${String(target.epsg)}`,
+    frame: target.frame,
+    // The source CRS when the index is a bucket frame (there is no EPSG for
+    // that), the target CRS otherwise — in both cases the CRS the yielded
+    // rings are in.
+    referenceSystem: `https://www.opengis.net/def/crs/EPSG/0/${String(target.epsg ?? target.sourceEpsg)}`,
     lods,
     unlabelledGeometry,
     invalidBBoxRows: index.invalidBBoxRows,
@@ -636,7 +671,10 @@ export async function openCityParquetStream(
           }
         }
       }
-      projectCityObjects(objects, target);
+      // A bucket target's coordinates are an INDEX: the batch keeps its source
+      // lon/lat/h, and the worker converts each cell's families into that
+      // cell's own ENU frame.
+      if (!isBucketTarget(target)) projectCityObjects(objects, target);
       yield { objects, rows };
     }
   }

@@ -7,12 +7,14 @@
  *
  * Two jobs. First, that the fixture really is what it claims: 6697 in its
  * footer, coordinates that look like lon/lat, heights unchanged from the 7415
- * source. Second, the BASELINE — today's proj4/UTM stream path opens it, and
- * the tasks that remove that path have to match what is pinned here.
+ * source. Second, what the stream path makes of it: bucket-space index
+ * coordinates and rings left geographic, with the UTM numbers the same tests
+ * pinned before the change recorded beside each assertion.
  */
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { makeLocalMetricFrame } from "@cityjson/navara-core";
 import { describe, expect, it } from "vitest";
 import { decodeTableObjects } from "../src/decodeTable";
 import type { RangeBuffer } from "../src/rangeSource";
@@ -113,35 +115,70 @@ describe(`${FIXTURE} fixture`, () => {
   });
 });
 
-describe(`${FIXTURE} through today's UTM stream path`, () => {
-  it("opens as a UTM zone 54N stream whose extent is the projected data extent", async () => {
+/**
+ * These two tests were written against today's proj4/UTM stream path and are
+ * MIGRATED here, not replaced: the numbers the UTM path produced stay recorded
+ * beside each bucket-space assertion (they are in the fixtures README too), so
+ * the change of index space is visible rather than forgotten.
+ */
+describe(`${FIXTURE} through the bucket-space stream path`, () => {
+  it("opens with no EPSG, a bucket frame at the data centre, and the bucket-space extent", async () => {
     const stream = await openCityParquetStream([await bufferOf(FIXTURE)]);
-    // floor((139.6 + 180) / 6) + 1 = 54, north of the equator.
-    expect(stream.header.epsg).toBe(32654);
+    // BEFORE (proj4/UTM): epsg 32654 — floor((139.6 + 180) / 6) + 1 = 54,
+    // north of the equator. No EPSG code names a local metric frame, so the
+    // stream reports none and carries the frame instead.
+    expect(stream.header.epsg).toBeNull();
+    expect(stream.header.frame).toEqual({
+      kind: "local-metric",
+      // The centre of the fixture's own geographic extent, as `sourceCentre`
+      // computes it over every valid row's bbox.
+      lngDeg: (139.59980697706857 + 139.61397087418294) / 2,
+      latDeg: (35.499943864086234 + 35.500056135368396) / 2,
+    });
+    // Provenance, not the index space: the source CRS the rows are still in.
+    expect(stream.header.referenceSystem).toBe(
+      "https://www.opengis.net/def/crs/EPSG/0/6697",
+    );
     expect(stream.header.objectsCount).toBe(COPIES * SOURCE_IDS.length);
     expect(stream.header.lods).toEqual(["0", "2.2"]);
     expect(stream.header.invalidBBoxRows).toBe(0);
 
+    // The INDEPENDENT oracle: the fixture's geographic extent through a frame
+    // this test builds itself.
+    const frame = makeLocalMetricFrame(
+      stream.header.frame!.lngDeg,
+      stream.header.frame!.latDeg,
+    );
+    const [bx0, by0] = frame.toMetric(139.59980697706857, 35.499943864086234);
+    const [bx1, by1] = frame.toMetric(139.61397087418294, 35.500056135368396);
     const [x0, y0, z0, x1, y1, z1] = stream.header.extent;
-    // Pinned from an INDEPENDENT oracle — pyproj's EPSG:6668 -> EPSG:32654 over
-    // the fixture's 18 bboxes, four corners each:
+    expect(x0).toBeCloseTo(bx0, 6);
+    expect(y0).toBeCloseTo(by0, 6);
+    expect(x1).toBeCloseTo(bx1, 6);
+    expect(y1).toBeCloseTo(by1, 6);
+    // Metres about the centre, so the extent is symmetric about 0.
+    expect(x0).toBeCloseTo(-642.540883, 6);
+    expect(y0).toBeCloseTo(-6.228236, 6);
+    expect(x1).toBeCloseTo(642.540883, 6);
+    expect(y1).toBeCloseTo(6.228236, 6);
+    // BEFORE (proj4/UTM), from pyproj's EPSG:6668 -> EPSG:32654 over the
+    // fixture's 18 bboxes, four corners each:
     //   x 373007.914..374292.783, y 3929370.557..3929400.590
-    // so a later task's bucket-space extent can be compared against what
-    // today's proj4 path really produces (metres, UTM 54N).
-    expect(x0).toBeCloseTo(373007.914, 0);
-    expect(y0).toBeCloseTo(3929370.557, 0);
-    expect(x1).toBeCloseTo(374292.783, 0);
-    expect(y1).toBeCloseTo(3929400.59, 0);
-    // 1285 m of easting: 5 * 250 m of copy step plus a 35 m building.
-    expect(x1 - x0).toBeCloseTo(1284.87, 1);
+    // 1285 m of easting either way: 5 * 250 m of copy step plus a 35 m
+    // building. The 0.21 m difference in the span is UTM's scale factor
+    // (0.99980 at 139.6E/35.5N) — a CHANGED number, not a more precise one.
+    expect(x1 - x0).toBeCloseTo(1285.082, 3);
+    expect(1284.868 / (x1 - x0)).toBeCloseTo(0.99983, 5);
+    // Heights are untouched in either space.
     expect(z0).toBe(0);
     expect(z1).toBeCloseTo(12.1, 6);
   });
 
-  it("reads one family, projected into that UTM frame", async () => {
+  it("reads one family whose rings are still lon/lat/h", async () => {
     const stream = await openCityParquetStream([await bufferOf(FIXTURE)]);
-    const [x0, y0, , x1, y1] = stream.header.extent;
-    // A box tight around the first copy: the other five are 250 m east.
+    const [x0, y0, , , y1] = stream.header.extent;
+    // A box tight around the first copy, in bucket metres: the other five are
+    // 250 m east.
     const ranges = stream.index.query([x0 - 1, y0 - 1, x0 + 40, y1 + 1]);
     expect(ranges).toHaveLength(1);
 
@@ -157,17 +194,24 @@ describe(`${FIXTURE} through today's UTM stream path`, () => {
     const objects = batches[0]!.objects;
     expect(Object.keys(objects)).toEqual(SOURCE_IDS.map((id) => `${id}_0`));
 
+    // BEFORE, the rings came back in UTM 54N metres (373007..374292 east,
+    // 3929370..3929400 north). They now arrive as the file stores them —
+    // lon/lat/h doubles — because the worker converts each cell into its own
+    // ENU frame.
     for (const object of Object.values(objects)) {
       for (const surface of object.surfaces) {
         for (const ring of surface.rings) {
           for (const [x, y] of ring) {
-            expect(x).toBeGreaterThan(x0 - 1);
-            expect(x).toBeLessThan(x1 + 1);
-            expect(y).toBeGreaterThan(y0 - 1);
-            expect(y).toBeLessThan(y1 + 1);
+            expect(inLngRange(x), `x ${String(x)}`).toBe(true);
+            expect(inLatRange(y), `y ${String(y)}`).toBe(true);
           }
         }
       }
+      // The object's own bbox stays geographic with it: the worker decides
+      // ownership from it, in bucket space, before any conversion.
+      const [ox0, oy0, , ox1, oy1] = object.bbox!;
+      expect(inLngRange(ox0) && inLngRange(ox1)).toBe(true);
+      expect(inLatRange(oy0) && inLatRange(oy1)).toBe(true);
     }
   });
 });

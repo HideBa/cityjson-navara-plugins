@@ -1,19 +1,24 @@
 /**
- * The one seam that turns a stream's source coordinates into its metric CRS:
- * EPSG:6697 (JGD2011 lon/lat, heights in metres) into the UTM zone of a centre
- * chosen once, a metric EPSG unchanged, anything else refused.
+ * The one seam that says what a stream's coordinates are: EPSG:6697 (JGD2011
+ * lon/lat, heights in metres) into the UTM zone of a centre chosen once, or
+ * into navara-core's pinned bucket frame about it; a metric EPSG unchanged in
+ * either space; anything else refused.
  *
- * The 6697 path must reproduce the app's `normalizeCityParquetCrs` exactly —
- * the same proj4 source definition, lon/lat input order, zone rule and
- * untouched heights — so a streamed and a resident layer line up.
+ * The projected 6697 path must reproduce the app's `normalizeCityParquetCrs`
+ * exactly — the same proj4 source definition, lon/lat input order, zone rule
+ * and untouched heights — so a streamed and a resident layer line up. The
+ * bucket path must reproduce `makeLocalMetricFrame` exactly, so that every
+ * user of the index (the tile grid, the camera footprint, a cell's centre)
+ * computes the same metres.
  */
 
-import { NonMetricCrsError } from "@cityjson/navara-core";
+import { NonMetricCrsError, makeLocalMetricFrame } from "@cityjson/navara-core";
 import type { CityObject } from "@cityjson/navara-core";
 import proj4 from "proj4";
 import { describe, expect, it } from "vitest";
 import {
   coordinateTargetFor,
+  isBucketTarget,
   projectCityObjects,
 } from "../src/geographicToProjected";
 
@@ -24,6 +29,7 @@ describe("coordinateTargetFor", () => {
     const target = coordinateTargetFor(6697, [139.6, 35.45]);
     expect(target.sourceEpsg).toBe(6697);
     expect(target.epsg).toBe(32654);
+    expect(target.frame).toBeNull();
     const reference = proj4(JGD2011_LONGLAT, "EPSG:32654");
     for (const [lon, lat] of [
       [139.6, 35.45],
@@ -57,6 +63,66 @@ describe("coordinateTargetFor", () => {
     expect(() => coordinateTargetFor(4326, [4.37, 52])).toThrow(
       NonMetricCrsError,
     );
+  });
+});
+
+describe("coordinateTargetFor in bucket space", () => {
+  it("maps EPSG:6697 into the pinned bucket frame about the centre, with no EPSG", () => {
+    const target = coordinateTargetFor(6697, [139.6, 35.45], "bucket");
+    expect(target.sourceEpsg).toBe(6697);
+    // No EPSG code names a local metric frame, so the stream reports none and
+    // carries the frame's descriptor instead.
+    expect(target.epsg).toBeNull();
+    expect(target.frame).toEqual({
+      kind: "local-metric",
+      lngDeg: 139.6,
+      latDeg: 35.45,
+    });
+    expect(isBucketTarget(target)).toBe(true);
+
+    const frame = makeLocalMetricFrame(139.6, 35.45);
+    for (const [lon, lat] of [
+      [139.6, 35.45],
+      [139.55, 35.4],
+      [139.71, 35.52],
+    ] as const) {
+      // Bit-for-bit the frame's own arithmetic: every user of bucket space has
+      // to compute the SAME numbers.
+      expect(target.toTarget(lon, lat)).toEqual(frame.toMetric(lon, lat));
+    }
+    expect(target.toTarget(139.6, 35.45)).toEqual([0, 0]);
+  });
+
+  it("is defined outside the UTM latitude band, where the projected target is not", () => {
+    expect(() => coordinateTargetFor(6697, [15, 85])).toThrow();
+    const target = coordinateTargetFor(6697, [15, 85], "bucket");
+    expect(target.frame).toEqual({
+      kind: "local-metric",
+      lngDeg: 15,
+      latDeg: 85,
+    });
+  });
+
+  it("still refuses EPSG:6697 without a centre, a bogus centre, and another geographic CRS", () => {
+    expect(() => coordinateTargetFor(6697, null, "bucket")).toThrow(
+      NonMetricCrsError,
+    );
+    expect(() => coordinateTargetFor(6697, [139.6, 95], "bucket")).toThrow();
+    expect(() =>
+      coordinateTargetFor(6697, [Number.NaN, 35.45], "bucket"),
+    ).toThrow();
+    expect(() => coordinateTargetFor(4326, [4.37, 52], "bucket")).toThrow(
+      NonMetricCrsError,
+    );
+  });
+
+  it("leaves a projected source exactly as the projected target does", () => {
+    const target = coordinateTargetFor(7415, [4.37, 52], "bucket");
+    expect(target.sourceEpsg).toBe(7415);
+    expect(target.epsg).toBe(7415);
+    expect(target.frame).toBeNull();
+    expect(isBucketTarget(target)).toBe(false);
+    expect(target.toTarget(85000.5, 446000.25)).toEqual([85000.5, 446000.25]);
   });
 });
 

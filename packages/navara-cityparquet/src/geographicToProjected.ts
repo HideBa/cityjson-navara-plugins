@@ -1,11 +1,24 @@
 /**
- * The ONE seam that turns a stream's decoded source coordinates into its
- * metric CRS (roadmap task 6 replaces it with a direct geographic → ENU path).
+ * The ONE seam that says what a stream's coordinates ARE: its source CRS, and
+ * the space its index is expressed in.
  *
- * - EPSG:6697 (PLATEAU: JGD2011 geographic, gravity-related heights in metres)
- *   goes into the WGS84 UTM zone of a centre chosen ONCE per open, so every
- *   batch a stream yields shares one metric frame.
- * - A metre-based EPSG passes through unchanged.
+ * Two spaces, chosen by the caller:
+ *
+ * - `"projected"` — the original: EPSG:6697 (PLATEAU: JGD2011 geographic,
+ *   gravity-related heights in metres) goes into the WGS84 UTM zone of a centre
+ *   chosen ONCE per open, so every batch a stream yields shares one metric
+ *   frame. This is what the resident (non-streamed) path still does.
+ * - `"bucket"` — what the STREAMED path uses: EPSG:6697 goes into navara-core's
+ *   pinned local metric frame about that same centre, by arithmetic, with no
+ *   proj4 at all. The frame is an INDEX space, not geometry (see
+ *   `localMetricFrame.ts`): rings stay geographic and the worker converts each
+ *   cell into its own ENU frame. No EPSG code names such a frame, so the target
+ *   reports `epsg: null` and carries the frame's serialisable descriptor.
+ *
+ * In both spaces:
+ *
+ * - A metre-based EPSG passes through unchanged (`"bucket"` changes NOTHING for
+ *   a projected source — same identity target, same numbers).
  * - Anything else throws `NonMetricCrsError` (navara-core's units gate).
  *
  * The 6697 path reproduces the app's `normalizeCityParquetCrs` (resident
@@ -21,8 +34,17 @@
  * Engine-free: no `@navaramap/*` imports.
  */
 
-import type { BBox3, CityObject, Vec3 } from "@cityjson/navara-core";
-import { NonMetricCrsError, assertMetricCrs } from "@cityjson/navara-core";
+import type {
+  BBox3,
+  CityObject,
+  LocalMetricFrameDescriptor,
+  Vec3,
+} from "@cityjson/navara-core";
+import {
+  NonMetricCrsError,
+  assertMetricCrs,
+  makeLocalMetricFrame,
+} from "@cityjson/navara-core";
 import proj4 from "proj4";
 import { CityParquetError } from "./footer";
 
@@ -32,12 +54,24 @@ const JGD2011_GEOGRAPHIC_3D = 6697;
 /** proj4's spelling of JGD2011 geographic, as `normalizeCityParquetCrs` uses. */
 const JGD2011_LONGLAT = "+proj=longlat +ellps=GRS80 +no_defs";
 
+/** Which space a geographic source's coordinates are taken into. */
+export type CoordinateSpace =
+  /** A WGS84 UTM zone, through proj4 (the resident path's answer). */
+  | "projected"
+  /** navara-core's pinned local metric frame, by arithmetic (the stream's). */
+  | "bucket";
+
 export interface CoordinateTarget {
   /** The EPSG code the source coordinates are in. */
   readonly sourceEpsg: number;
   /** The metric EPSG code `toTarget` produces (equal to `sourceEpsg` for a
-   *  pass-through). */
-  readonly epsg: number;
+   *  pass-through), or `null` when it produces BUCKET metres — no EPSG code
+   *  names a local metric frame. */
+  readonly epsg: number | null;
+  /** The bucket frame `toTarget` maps into, as its `structuredClone`-able
+   *  descriptor; `null` exactly when {@link epsg} is set. Non-null means the
+   *  coordinates it produces are an INDEX, never geometry. */
+  readonly frame: LocalMetricFrameDescriptor | null;
   toTarget(x: number, y: number): [number, number];
 }
 
@@ -58,18 +92,53 @@ function validateLonLat(lon: number, lat: number): void {
 }
 
 /**
- * The metric target for `sourceEpsg`. For EPSG:6697 the UTM zone comes from
- * `lngLatCentre` — there is no metric answer without one, so a `null` centre
- * is refused like any other non-metric CRS.
+ * Throws unless (lon, lat) is a longitude/latitude pair at all. The bucket
+ * frame has no zones, so it is defined wherever the globe is (its own
+ * near-pole refusal lives in `makeLocalMetricFrame`) — but a value that is not
+ * a coordinate must still not become a silent origin.
+ */
+function validateGeographic(lon: number, lat: number): void {
+  if (
+    !Number.isFinite(lon) ||
+    !Number.isFinite(lat) ||
+    lon < -180 ||
+    lon > 180 ||
+    lat < -90 ||
+    lat > 90
+  ) {
+    throw new CityParquetError(
+      "Cannot place EPSG:6697 CityParquet coordinates: expected a longitude/latitude pair.",
+    );
+  }
+}
+
+/**
+ * The target for `sourceEpsg` in `space`. For EPSG:6697 both spaces are built
+ * about `lngLatCentre` — there is no metric answer without one, so a `null`
+ * centre is refused like any other non-metric CRS. A metric `sourceEpsg`
+ * ignores `space` entirely: it is already the answer.
  */
 export function coordinateTargetFor(
   sourceEpsg: number,
   lngLatCentre: readonly [number, number] | null,
+  space: CoordinateSpace = "projected",
 ): CoordinateTarget {
   if (sourceEpsg === JGD2011_GEOGRAPHIC_3D) {
     if (lngLatCentre === null)
       throw new NonMetricCrsError(sourceEpsg, "degree");
     const [lon, lat] = lngLatCentre;
+    if (space === "bucket") {
+      validateGeographic(lon, lat);
+      const frame = makeLocalMetricFrame(lon, lat);
+      return {
+        sourceEpsg,
+        epsg: null,
+        frame: frame.descriptor,
+        // Two multiplications and two subtractions, and the SAME ones every
+        // other user of this frame performs.
+        toTarget: (x, y) => frame.toMetric(x, y),
+      };
+    }
     validateLonLat(lon, lat);
     const zone = Math.min(60, Math.floor((lon + 180) / 6) + 1);
     const epsg = (lat >= 0 ? 32600 : 32700) + zone;
@@ -79,6 +148,7 @@ export function coordinateTargetFor(
     return {
       sourceEpsg,
       epsg,
+      frame: null,
       toTarget(x, y) {
         validateLonLat(x, y);
         const [px, py] = converter.forward([x, y]);
@@ -92,12 +162,27 @@ export function coordinateTargetFor(
     };
   }
   assertMetricCrs(sourceEpsg);
-  return { sourceEpsg, epsg: sourceEpsg, toTarget: (x, y) => [x, y] };
+  return {
+    sourceEpsg,
+    epsg: sourceEpsg,
+    frame: null,
+    toTarget: (x, y) => [x, y],
+  };
 }
 
 /** Whether `target` changes coordinates at all. */
 export function isIdentityTarget(target: CoordinateTarget): boolean {
   return target.epsg === target.sourceEpsg;
+}
+
+/**
+ * Whether `target` maps into a bucket frame rather than a metric CRS. Its
+ * output is an INDEX: a caller that places geometry must convert the source
+ * coordinates itself (per cell, into that cell's ENU frame), which is why the
+ * stream reader leaves rings alone for such a target.
+ */
+export function isBucketTarget(target: CoordinateTarget): boolean {
+  return target.frame !== null;
 }
 
 type MutableBBox = [number, number, number, number, number, number];
@@ -139,6 +224,9 @@ export function projectBBox(bbox: BBox3, target: CoordinateTarget): BBox3 {
  * of `objects` in place (the objects themselves are immutable). An object's
  * new bbox covers its projected source bbox (kept for geometryless parents)
  * and every projected vertex. An identity target changes nothing.
+ *
+ * NOT for a bucket target: it would put rings in index space, which is not
+ * where anything is drawn. The stream reader skips this call for one.
  */
 export function projectCityObjects(
   objects: Record<string, CityObject>,
