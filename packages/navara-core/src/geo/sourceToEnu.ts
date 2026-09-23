@@ -213,12 +213,14 @@ function extend(
  * The bbox is re-boxed FROM THE CONVERTED RINGS, because it is not decoration:
  * `buildCityMeshArrays` orients an exterior ring against the object's bbox
  * CENTRE, so a bbox left in the source's (or an index's) space flips roughly
- * half the surfaces. For the same reason the re-boxed value is TIGHT around
- * the rings actually present: where the old path handed `orientExteriorRing`
- * the file's own row box, a LoD-FILTERED bake here sees only the surviving
- * rings, so their centre — and with it a borderline surface's winding — can
- * come out the other way. Invisible with the city's double-sided material,
- * real for anything reading the normal G-buffer. An object with no rings
+ * half the surfaces. The re-boxed value is TIGHT around the rings actually
+ * present: where the old path handed `orientExteriorRing` the file's own row
+ * box, a LoD-FILTERED bake here sees only the surviving rings. For a bake that
+ * kept ONE planar surface the tight box then has its centre in that surface's
+ * own plane, which used to leave the winding to rounding noise — a measured
+ * sign flip, not a borderline case. `orientExteriorRing` now refuses a
+ * reference below 2.5e-4 of the object's diagonal and keeps the file's
+ * winding, so a tight box is safe here. An object with no rings
  * therefore comes out with
  * `bbox: null` — this function reads only rings, so it never has to trust, or
  * be told, which space the incoming bbox was in. (The stream worker hands the

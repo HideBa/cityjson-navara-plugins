@@ -507,6 +507,36 @@ function triangulateSurface(
   return { vertices, triangles, uvs: uvs ? uvs.flat() : null };
 }
 
+/**
+ * How far off its own plane the bbox centre must sit before it counts as an
+ * inside/outside reference, as a fraction of the object's bbox diagonal.
+ *
+ * The heuristic below reverses a face whose normal points AT the object's bbox
+ * centre. That reads "the centre is inside, the normal must point away from
+ * it" — which only says anything when the centre is off the face's plane. For
+ * an object that IS one planar face (an LoD-filtered roof-only bake, a bare
+ * LoD 0 footprint) the centre lies IN that plane, and all that survives is
+ * numerical residue whose sign is arbitrary. Measured: an upward-wound flat
+ * roof baked alone from a geographic source came out with normal z = -1 where
+ * the same roof with its ground surface present came out +1.
+ *
+ * 2.5e-4 sits between the two populations with about an order of magnitude of
+ * margin on each side, measured on the streamed geographic path:
+ *
+ * - noise: |toFace . n| / diagonal is 1.5e-6 for a 110 m roof at a cell origin
+ *   and 2.0e-5 for the same roof ~700 m out (already past any real cell plus
+ *   family overhang) — the residue of a constant geodetic height sagging away
+ *   from the cell's tangent plane. For a symmetric ring it collapses to pure
+ *   rounding, 2e-12.
+ * - real references: 1.0e-1 for a 30 m building, 1.0e-2 for a 3 m storey, and
+ *   3.4e-3 for a deliberately pathological 1 m-tall slab 150 m across.
+ *
+ * Erring high is the safe direction: refusing a flip leaves the file's own
+ * winding, which CityJSON already specifies as counter-clockwise seen from
+ * outside, and the city material is double-sided either way.
+ */
+const ORIENTATION_REFERENCE_TOLERANCE = 2.5e-4;
+
 function orientExteriorRing(
   ring: ReadonlyArray<Vec3> | undefined,
   objectBBox: BBox3 | null,
@@ -532,7 +562,18 @@ function orientExteriorRing(
   const dot =
     normal[0] * toFace[0] + normal[1] * toFace[1] + normal[2] * toFace[2];
 
-  return dot < 0 ? [...ring].reverse() : ring;
+  // `normal` is Newell's UNnormalised vector (its length is twice the face
+  // area), so the tolerance is scaled by it as well as by the object's size —
+  // otherwise the same shape would be judged differently at a different area.
+  const diagonal = Math.hypot(
+    objectBBox[3] - objectBBox[0],
+    objectBBox[4] - objectBBox[1],
+    objectBBox[5] - objectBBox[2],
+  );
+  const floor =
+    ORIENTATION_REFERENCE_TOLERANCE * diagonal * Math.sqrt(normalLengthSq);
+
+  return dot < -floor ? [...ring].reverse() : ring;
 }
 
 function computeRingCenter(ring: ReadonlyArray<Vec3>): Vec3 {

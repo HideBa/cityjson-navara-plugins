@@ -575,3 +575,60 @@ describe("multiple selected LoDs", () => {
     ).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The winding heuristic's reference
+// ---------------------------------------------------------------------------
+
+/**
+ * `orientExteriorRing` flips a face whose Newell normal points AT the object's
+ * bbox centre. That reference only carries information when the centre is off
+ * the face's own plane; for an object that IS one planar face the centre lies
+ * in it, the dot product is rounding noise, and the sign it happens to carry
+ * decides the normal. `geodeticRingsToEnu` re-boxes TIGHT around whatever rings
+ * survived the LoD filter, so a roof-only bake hits exactly that case (the
+ * milestone review's Important 1: measured normal z = -1 against +1 for the
+ * same input with a full-height box).
+ */
+describe("buildCityMeshArrays exterior orientation", () => {
+  const upwardSquare: Vec3[] = [
+    [0, 0, 6],
+    [10, 0, 6],
+    [10, 10, 6],
+    [0, 10, 6],
+  ];
+
+  function oneFace(bbox: CityObject["bbox"]): CityModel {
+    return makeModel({
+      a: {
+        ...makeObject("a", [makeSurface("RoofSurface", upwardSquare)]),
+        bbox,
+      },
+    });
+  }
+
+  it("keeps an upward-wound face upward when the bbox gives no reference", () => {
+    // The tight box of the face itself, with the sub-nanometre z span a
+    // geodetic -> ENU conversion leaves behind. The bbox centre is 2.5e-11 m
+    // ABOVE the face's centroid: a reference 12 orders of magnitude below the
+    // object's own 14 m diagonal, and therefore no reference at all.
+    const arrays = buildCityMeshArrays(
+      oneFace([0, 0, 6, 10, 10, 6 + 5e-11]),
+      "L",
+      [0, 0, 0],
+    );
+    expect(arrays.normals[2]).toBeGreaterThan(0.99);
+  });
+
+  it("still flips a face the bbox really does place below its centre", () => {
+    // The positive control: a solid whose box reaches 10 m above the face, so
+    // `toFace . n` is -5 m against a 17 m diagonal — a ratio of 0.29, four
+    // orders of magnitude above any rounding.
+    const arrays = buildCityMeshArrays(
+      oneFace([0, 0, 6, 10, 10, 16]),
+      "L",
+      [0, 0, 0],
+    );
+    expect(arrays.normals[2]).toBeLessThan(-0.99);
+  });
+});

@@ -17,6 +17,7 @@ import {
   geodeticToEcef,
   makeEnuFrame,
 } from "../../src/geo/enuFrame";
+import { buildCityMeshArrays } from "../../src/geometry/buildCityMeshArrays";
 import { geodeticRingsToEnu } from "../../src/geo/sourceToEnu";
 
 /** A cell of the real 6697 fixture's neighbourhood (Nagoya, PLATEAU). */
@@ -220,5 +221,62 @@ describe("geodeticRingsToEnu", () => {
       };
       expect(() => geodeticRingsToEnu(objects, frame, 0)).toThrow(RangeError);
     }
+  });
+});
+
+/**
+ * The milestone review's Important 1. A LoD-filtered bake sees only the rings
+ * that survived, so `geodeticRingsToEnu`'s TIGHT re-box of a roof-only object
+ * has its centre in the roof's own plane — and the sub-nanometre residue the
+ * conversion leaves there is what `orientExteriorRing` was reading as an
+ * inside/outside reference. Measured before the fix: normal z = -1 for the
+ * roof-only bake against +1 for the same roof with its ground surface present.
+ */
+describe("a roof-only bake's normals", () => {
+  const roofRing = (h: number): Vec3[] => {
+    const d = 0.0003; // ~27 m east, ~33 m north — counter-clockwise from above
+    return [
+      [CELL_LNG + 0.002, CELL_LAT + 0.002, h],
+      [CELL_LNG + 0.002 + d, CELL_LAT + 0.002, h],
+      [CELL_LNG + 0.002 + d, CELL_LAT + 0.002 + d, h],
+      [CELL_LNG + 0.002, CELL_LAT + 0.002 + d, h],
+    ];
+  };
+
+  const meshOf = (objects: Record<string, CityObject>) =>
+    buildCityMeshArrays(
+      {
+        sourceEncoding: "cityparquet",
+        metadata: {},
+        bbox: null,
+        objects,
+        vertexCount: 0,
+      },
+      "cell",
+      [0, 0, 0],
+    );
+
+  it("points an upward-wound flat roof UP with no other surface present", () => {
+    const frame = makeEnuFrame(CELL_LNG, CELL_LAT, 0);
+    const objects: Record<string, CityObject> = {
+      b: objectWith("b", [roofRing(18)], null),
+    };
+    geodeticRingsToEnu(objects, frame, 0);
+    // The tight box really is degenerate in z: a constant geodetic height
+    // over ~30 m at ~250 m from the frame origin leaves a z span of 2.1 mm
+    // against a 43 m diagonal, and the box centre sits inside the roof's
+    // plane, so what is left to read is rounding.
+    const box = objects.b!.bbox!;
+    expect(box[5] - box[2]).toBeLessThan(5e-3);
+    expect(meshOf(objects).normals[2]).toBeGreaterThan(0.99);
+  });
+
+  it("agrees with the same roof baked alongside its ground surface", () => {
+    const frame = makeEnuFrame(CELL_LNG, CELL_LAT, 0);
+    const objects: Record<string, CityObject> = {
+      b: objectWith("b", [roofRing(18), roofRing(0)], null),
+    };
+    geodeticRingsToEnu(objects, frame, 0);
+    expect(meshOf(objects).normals[2]).toBeGreaterThan(0.99);
   });
 });
