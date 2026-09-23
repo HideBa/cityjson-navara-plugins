@@ -207,9 +207,15 @@ function extend(
  * at Nagoya — below the geometry it is supposed to bound, and every ground
  * polygon then reads as ABOVE the object's centre.
  *
- * A non-finite corner is dropped rather than thrown on: the box is a reference,
- * the RINGS are the coordinate gate, and a source with one bad bbox column
- * should lose a winding hint, not a cell.
+ * A non-finite corner drops the whole box rather than throwing: the box is a
+ * reference, the RINGS are the coordinate gate, and a bad extent should cost a
+ * winding hint, not a cell. No CityParquet row reaches that branch — `readBBox`
+ * refuses a non-finite bbox column before the adapter ever builds an extent — so
+ * it is this module's gate on any OTHER caller's map, and it is load-bearing:
+ * `extend` compares with `<`/`>`, which are false against NaN, so a NaN seed
+ * would swallow every ring that follows and publish an all-NaN bbox, which
+ * disables the winding decision silently and travels on into the object record.
+ * Both halves are pinned in `tests/geo/geodeticRingsToEnu.test.ts`.
  */
 function enuBoxOfGeodeticBox(
   bbox: BBox3 | undefined,
@@ -277,6 +283,30 @@ function enuBoxOfGeodeticBox(
  * for a single planar face and for a step below 2.5e-4 of the box diagonal, and
  * not above that. An object with neither rings nor an extent comes out with
  * `bbox: null`.
+ *
+ * A PRESENT extent is not automatically a reference either, and the residue is
+ * not only the null path: the seed helps exactly as far as the box puts a face
+ * clearly on ONE side of its centre. Two shapes are on the other side of that,
+ * both measured and pinned in `tests/geo/geodeticRingsToEnu.test.ts`:
+ *
+ * - a z-DEGENERATE or near-flat extent, which is valid data — `readBBox`
+ *   accepts `zmin == zmax` and `familyIndex` accepts `minZ <= maxZ`, so the row
+ *   decodes, indexes and places with `invalidBBoxRows` at 0. The real shape is a
+ *   table whose only geometry is LoD 0 footprints: `zmin..zmax` IS the
+ *   footprint's own step, so the row box equals the tight box and the inversion
+ *   above returns on entirely correct data, with nothing reporting that the
+ *   reference carried no information.
+ * - an extent much TALLER than the geometry the read kept, where a face lands on
+ *   the far side of the box's centre: a roof at 8 m inside a 0..40 m row box
+ *   inverts, flipping at exactly `boxHeight / 2`. A child row carrying its
+ *   parent's extent, a tower's LoD dropped for a low block's LoD 0, or a
+ *   basement extent under a ground face all reach it.
+ *
+ * Neither is milestone-introduced — `projectCityObjects` seeds from the same box
+ * on the projected path — so they are the bbox-centre heuristic's own limit, and
+ * closing them needs a real inside/outside test (signed volume, or consistency
+ * across a closed shell) rather than a box centre. That is the follow-up in
+ * `docs/roadmap.md`.
  *
  * Objects are replaced, not mutated (a `CityObject` is immutable), so a caller
  * that must keep the geographic model passes a shallow copy of the record.

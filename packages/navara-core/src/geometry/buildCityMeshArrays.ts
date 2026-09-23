@@ -524,16 +524,25 @@ function triangulateSurface(
  * be judged against is its own FILE ROW box — the whole building, including the
  * surfaces a LoD filter dropped before the bake — which is what
  * `projectCityObjects` seeds on the projected path and what `geodeticRingsToEnu`
- * seeds from `fileExtents` on the streamed geographic one. The floor below only
- * covers the case where NO such box exists (a CityParquet child row whose bbox
- * columns are null), and it covers exactly one shape: an object that is ONE
- * planar face. It does NOT cover two or more faces in the same near-plane, which
- * hand each other a reference far above the floor — a two-part LoD 0 footprint
- * whose parts differ in height by more than 2.5e-4 of the box diagonal (2.2 cm
- * over 40 m) still has its upper part inverted when no file extent is available.
- * That residue is pinned by "still inverts the upper polygon with NO row box" in
- * `tests/geo/geodeticRingsToEnu.test.ts`, and widening it means judging the
- * box's degeneracy rather than one face's offset within it.
+ * seeds from `fileExtents` on the streamed geographic one. That box carries a
+ * precondition of its own: it is a reference only while it puts the face clearly
+ * on ONE side of its centre.
+ *
+ * The floor below covers one shape and one only: an object that is ONE planar
+ * face. It does NOT cover two or more faces in the same near-plane, which hand
+ * each other a reference far above the floor — a two-part LoD 0 footprint whose
+ * parts differ in height by more than 2.5e-4 of the box diagonal (2.2 cm over
+ * 40 m) still has its upper part inverted. That happens in three ways, none of
+ * them only the null-bbox path: no box at all (a CityParquet child row whose
+ * bbox columns are null), a VALID but z-degenerate or near-flat box (a table
+ * whose only geometry is LoD 0 footprints has one legitimately, and
+ * `invalidBBoxRows` stays 0), or a box far TALLER than the geometry the read kept
+ * (a roof at 8 m inside a 0..40 m row box inverts, at exactly `boxHeight / 2`).
+ * All three are pinned in `tests/geo/geodeticRingsToEnu.test.ts`, and none is
+ * milestone-introduced: the projected path seeds from the same box. Widening the
+ * fix means judging the box's degeneracy rather than one face's offset within it,
+ * and closing the class means a real inside/outside test (signed volume, or
+ * consistency across a closed shell) — the follow-up in `docs/roadmap.md`.
  *
  * 2.5e-4 sits between the two populations with about an order of magnitude of
  * margin on each side, measured on the streamed geographic path:
