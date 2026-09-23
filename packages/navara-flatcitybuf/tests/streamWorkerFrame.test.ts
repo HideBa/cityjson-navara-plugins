@@ -178,7 +178,14 @@ function geoObject(
   id: string,
   lng: number,
   lat: number,
-  opts: { lods?: [string, string]; height?: number } = {},
+  opts: {
+    lods?: [string, string];
+    height?: number;
+    /** Add a GroundSurface quad at z = 0, so the object has a FOOTPRINT. */
+    ground?: boolean;
+    /** The attribute `toObjectRecords` multiplies the footprint by. */
+    measuredHeight?: number;
+  } = {},
 ): CityObject {
   const [lodA, lodB] = opts.lods ?? ["2", "2"];
   const h = opts.height ?? 9;
@@ -188,9 +195,18 @@ function geoObject(
     [lng + d, lat, 0],
     [lng + d, lat + d, h],
     [lng, lat + d, h],
+    // 4..7: the same footprint flat on the ground, for `ground`.
+    [lng, lat, 0],
+    [lng + d, lat, 0],
+    [lng + d, lat + d, 0],
+    [lng, lat + d, 0],
   ];
   const raw = {
     type: "Building",
+    attributes:
+      opts.measuredHeight === undefined
+        ? {}
+        : { measuredHeight: opts.measuredHeight },
     geometry: [
       {
         type: "MultiSurface",
@@ -204,6 +220,16 @@ function geoObject(
         boundaries: [[[0, 1, 2]]],
         semantics: { surfaces: [{ type: "WallSurface" }], values: [0] },
       },
+      ...(opts.ground
+        ? [
+            {
+              type: "MultiSurface",
+              lod: lodA,
+              boundaries: [[[4, 5, 6, 7]]],
+              semantics: { surfaces: [{ type: "GroundSurface" }], values: [0] },
+            },
+          ]
+        : []),
     ],
   } as unknown as CityJSONObject;
   return parseCityObject(
@@ -652,7 +678,22 @@ describe("a child with no file bbox", () => {
 
 describe("metrics in the cell's own frame", () => {
   it("agree for the same building sitting in two different cells", async () => {
-    const building = geoObject("b", LNG, LAT, { height: 7 });
+    // A GroundSurface and a measuredHeight, so footprint area and volume are
+    // real numbers rather than the 0 and null a roof-and-wall-only object
+    // produces (the milestone review's minor 4: `?? 0` compared 0 with 0).
+    const measuredHeight = 12;
+    const building = geoObject("b", LNG, LAT, {
+      height: 7,
+      ground: true,
+      measuredHeight,
+    });
+    // Independent expectation for the ground quad, from the WGS84 radii at
+    // 35.5 deg N: the prime-vertical radius N = a / W = 6385354.6 m and the
+    // meridional M = a(1-e^2) / W^3 = 6356983.4 m with W^2 = 1 - e^2 sin^2 phi,
+    // so 0.0001 deg spans 0.0001 * pi/180 * N * cos(phi) = 9.0730 m east and
+    // 0.0001 * pi/180 * M = 11.0952 m north.
+    const expectedFootprint = 9.073 * 11.0952;
+    const expectedVolume = expectedFootprint * measuredHeight;
     const records = [];
     // Two datasets whose bucket frames (and therefore grids and cell centres)
     // differ: the same building lands in a different cell of each.
@@ -677,8 +718,13 @@ describe("metrics in the cell's own frame", () => {
     expect(records[0]!.key).not.toBe(records[1]!.key);
 
     const [a, b] = records.map((r) => r.record);
+    // Explicit values FIRST: an agreement test over two missing metrics would
+    // pass forever.
+    expect(a!.footprintAreaSqM).toBeCloseTo(expectedFootprint, 2);
+    expect(a!.volumeCuM).toBeCloseTo(expectedVolume, 1);
     expect(a!.footprintAreaSqM).toBeCloseTo(b!.footprintAreaSqM, 3); // 1 mm^2
-    expect(a!.volumeCuM ?? 0).toBeCloseTo(b!.volumeCuM ?? 0, 3);
+    expect(b!.volumeCuM).not.toBeNull();
+    expect(a!.volumeCuM!).toBeCloseTo(b!.volumeCuM!, 3);
     const roofA = a!.roofMetrics[0]!;
     const roofB = b!.roofMetrics[0]!;
     expect(roofA.areaSqM).toBeCloseTo(roofB.areaSqM, 3);
