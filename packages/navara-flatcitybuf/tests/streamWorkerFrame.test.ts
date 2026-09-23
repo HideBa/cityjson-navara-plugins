@@ -470,6 +470,12 @@ describe("the worker's bake for a geographic (EPSG:6697) source", () => {
         frame: null,
       }),
     );
+    // The spy's CONTROL. Reset here, after this test's own direct proj4 calls,
+    // so what follows counts only the worker's: the `toBe(0)` in "bakes
+    // without building a single proj4 converter" is vacuous unless the mock
+    // demonstrably reaches `streamWorkerCore`'s own `proj4` import, and this
+    // is the one bake that still goes through it.
+    proj4Calls.count = 0;
     await send(openReq());
     await send(
       fetchMsg(1, keysCovering(oldGrid, box2(oldExtent), 2), box2(oldExtent)),
@@ -478,6 +484,7 @@ describe("the worker's bake for a geographic (EPSG:6697) source", () => {
       key: c.key,
       positions: c.geometry.positions,
     }));
+    expect(proj4Calls.count).toBeGreaterThan(0);
 
     const match = matchToReference(
       baked,
