@@ -5,6 +5,7 @@ import {
   computeArea,
   computeRoofMetrics,
   parseCityJSON,
+  type BBox3,
   type CityJSONRoot,
   type CityModel,
 } from "@cityjson/navara-core";
@@ -214,6 +215,35 @@ describe("toObjectRecords", () => {
 
     const { records } = toObjectRecords(synthetic);
     expect(records.map((r) => r.id)).toEqual(["child"]);
+  });
+
+  /**
+   * The fix-round review's N4. Reverting the strict lookup in
+   * `objectRecords.ts` to `?? obj.bbox` left all 439 flatcitybuf tests green,
+   * because the stream worker now derives a box for every object and so never
+   * hands over a partial map. The invariant still has to be guarded: a future
+   * caller with a partial map would republish the missing object's OWN bbox,
+   * which for a streamed geographic cell is the CELL's ENU metres, as if it
+   * were an index coordinate — a plausible number hundreds of metres out, with
+   * nothing downstream able to tell.
+   */
+  it("drops an object the override map does not name, never falling back to its own box", () => {
+    const boxed = Object.values(model.objects).filter((o) => o.bbox !== null);
+    expect(boxed.length).toBeGreaterThan(1);
+    const [missing, ...named] = boxed;
+    const override: BBox3 = [1000, 2000, 0, 1010, 2010, 9];
+    const partial = new Map(named.map((o) => [o.id, override]));
+
+    const { records } = toObjectRecords(model, partial);
+
+    expect(records.map((r) => r.id).sort()).toEqual(
+      named.map((o) => o.id).sort(),
+    );
+    // The drop is the lookup's decision, not an absent bbox: the missing
+    // object has a perfectly good box, in the wrong space.
+    expect(missing!.bbox).not.toBeNull();
+    // And every record that IS published carries the map's box, not its own.
+    for (const record of records) expect(record.bbox).toEqual(override);
   });
 
   it("carries parents and children through unchanged", () => {
