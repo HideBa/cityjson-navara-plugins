@@ -34,12 +34,6 @@ export interface StreamHeader {
     readonly name: string;
     readonly rowCount: number;
   }>;
-  /** Whether the source carries geometry that names no LoD. CityParquet's
-   *  reader computes it and the worker's own bake selection reads it from the
-   *  stream; it is declared here because the posted header is the stream
-   *  header's projection, and a field the worker posts must not be one this
-   *  type denies exists. */
-  readonly unlabelledGeometry?: boolean;
   /** Rows of the source that carry no usable bounding box and therefore can
    *  never be placed in a cell — counted by the format that indexes rows
    *  (CityParquet's family index), `undefined` where the format has no such
@@ -130,10 +124,8 @@ export interface StreamSourceAdapter {
    *  `undefined` when the format carries none. */
   appearance(): CityAppearance | undefined;
   /** How `fetch` bakes `lod`: FlatCityBuf keeps today's exact-LoD filter
-   *  (`lod`), CityParquet bakes the highest available ≤ lod (an array). A
-   *  `null` ELEMENT of that array is the builder's unlabelled rung — the
-   *  surfaces of a geometry column that names no LoD — and ranks below every
-   *  label (`lodSelection.ts`). */
+   *  (`lod`), CityParquet bakes the highest available ≤ lod (an array of
+   *  the LoDs its geometry columns name; `lodSelection.ts`). */
   bakeLod(
     lod: string | null,
     lodsSeen: ReadonlyArray<string>,

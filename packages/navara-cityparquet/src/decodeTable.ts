@@ -552,15 +552,9 @@ interface RowGeometry {
 
 /**
  * Mirrors `parseCityObject`'s LoD tracking: the highest LoD by numeric value,
- * keeping the SOURCE spelling of the winner. A geometry column with no LoD (the
- * legacy bare `geometry`) contributes nothing, exactly as a CityJSON geometry
- * with no `"lod"` member does.
+ * keeping the SOURCE spelling of the winner.
  */
-function higherLod(
-  current: string | null,
-  candidate: string | null,
-): string | null {
-  if (candidate === null) return current;
+function higherLod(current: string | null, candidate: string): string {
   if (current === null) return candidate;
   return parseFloat(candidate) > parseFloat(current) ? candidate : current;
 }

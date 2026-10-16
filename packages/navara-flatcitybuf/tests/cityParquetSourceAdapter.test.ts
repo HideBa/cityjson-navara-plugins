@@ -95,7 +95,6 @@ describe("createCityParquetSourceAdapter — open", () => {
       frame: null,
       lods: ["0", "2.2"],
       invalidBBoxRows: 0,
-      unlabelledGeometry: false,
       tables: [{ name: "table-0", rowCount: 60 }],
     });
   });
@@ -471,21 +470,11 @@ describe("bakeLod", () => {
  * "every known rung", never "all surfaces"), and the mesh builder picks it
  * per object only when that object has no selected label.
  */
-describe("bakeLodSelection — unlabelled geometry", () => {
-  it("draws everything when the source has only unlabelled geometry", () => {
-    expect(bakeLodSelection(null, [], [], true)).toEqual([null]);
-    expect(bakeLodSelection("2", [], [], true)).toEqual([null]);
-  });
-
-  it("keeps the unlabelled rung below the labelled ones in a mixed source", () => {
-    const lods = ["0", "2"];
-    expect(bakeLodSelection(null, [], lods, true)).toEqual(["2", "0", null]);
-    expect(bakeLodSelection("1", [], lods, true)).toEqual(["0", null]);
-  });
-
-  it("omits the rung entirely when the source has no unlabelled column", () => {
-    expect(bakeLodSelection(null, [], ["0", "2"], false)).toEqual(["2", "0"]);
-    expect(bakeLodSelection("2", [], [], false)).toEqual([]);
+describe("bakeLodSelection", () => {
+  it("bakes every known LoD at or below the rung, highest first", () => {
+    expect(bakeLodSelection(null, [], ["0", "2"])).toEqual(["2", "0"]);
+    expect(bakeLodSelection("1", ["2.2"], ["0", "2"])).toEqual(["0"]);
+    expect(bakeLodSelection("2", [], [])).toEqual([]);
   });
 });
 

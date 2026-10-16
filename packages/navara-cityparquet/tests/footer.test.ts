@@ -77,7 +77,8 @@ describe("lodFromColumnName / propsColumnFor", () => {
   it("parses LoD suffixes", () => {
     expect(lodFromColumnName("geometry_lod2_2")).toEqual({ lod: "2.2" });
     expect(lodFromColumnName("geometry_lod0_0")).toEqual({ lod: "0" });
-    expect(lodFromColumnName("geometry")).toEqual({ lod: null });
+    // Every geometry column is suffixed: a bare `geometry` is not one.
+    expect(lodFromColumnName("geometry")).toBeNull();
     expect(lodFromColumnName("geometry_vertices_lod2_2")).toBeNull();
     expect(lodFromColumnName("b3_volume_lod2")).toBeNull();
   });
@@ -85,7 +86,7 @@ describe("lodFromColumnName / propsColumnFor", () => {
     expect(propsColumnFor("geometry_lod2_2")).toBe(
       "geometry_properties_lod2_2",
     );
-    expect(propsColumnFor("geometry")).toBe("geometry_properties");
+    expect(() => propsColumnFor("geometry")).toThrow(CityParquetError);
   });
 });
 

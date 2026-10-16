@@ -192,29 +192,19 @@ export function familyModels(
  * What a CityParquet fetch bakes for the requested rung: every known LoD at
  * or below it, highest first, so `buildCityMeshArrays` draws each object at
  * its own highest available one. Never the whole-selection `null`, which
- * would draw EVERY LoD of every object at once.
- *
- * A source with an unlabelled geometry column (a bare `geometry`, no LoD in
- * its name) ends the list with `null`, the builder's unlabelled rung. It is
- * in every selection such a source produces, including the one for
- * `lod === null` ("every known rung"), and it ranks below every label: an
- * object draws its unlabelled surfaces only when it has no labelled surface
- * at or below the rung. Without it, an object whose ONLY geometry is
- * unlabelled was silently invisible while the layer counted it as loaded
- * (Codex milestone review, Important).
+ * would draw EVERY LoD of every object at once. Every CityParquet geometry
+ * column carries an LoD, so the list never needs the builder's unlabelled
+ * rung.
  */
 export function bakeLodSelection(
   lod: string | null,
   lodsSeen: ReadonlyArray<string>,
   headerLods: ReadonlyArray<string>,
-  unlabelledGeometry: boolean,
-): readonly (string | null)[] {
+): readonly string[] {
   const known = [...new Set([...headerLods, ...lodsSeen])];
-  const selected: (string | null)[] = known
+  return known
     .filter((l) => lod === null || Number(l) <= Number(lod))
     .sort((a, b) => Number(b) - Number(a));
-  if (unlabelledGeometry) selected.push(null);
-  return selected;
 }
 
 /** An Error the worker core posts with its `code`. */
@@ -337,7 +327,6 @@ export function createCityParquetSourceAdapter(
         lod,
         lodsSeen,
         stream?.header.lods ?? [],
-        stream?.header.unlabelledGeometry ?? false,
       ),
 
     close(): void {

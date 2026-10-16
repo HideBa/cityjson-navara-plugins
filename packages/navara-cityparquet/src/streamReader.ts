@@ -135,12 +135,6 @@ export interface CityParquetStreamHeader {
   referenceSystem: string;
   /** Display LoDs of the geometry columns, ascending (`"0"`, `"2.2"`). */
   lods: string[];
-  /** Whether any table carries a geometry column with no LoD in its name (a
-   *  bare `geometry` column). Its surfaces decode with `lod: null`, so a
-   *  selection built only from {@link lods} would draw none of them — the
-   *  worker adapter folds this into its bake selection as the lowest rung
-   *  (Codex milestone review, Important). */
-  unlabelledGeometry: boolean;
   invalidBBoxRows: number;
 }
 
@@ -426,8 +420,8 @@ function isNonDegenerate(extent: BBox3): boolean {
   );
 }
 
-function lodAllowed(lod: string | null, maxLod: string | null): boolean {
-  return maxLod === null || lod === null || Number(lod) <= Number(maxLod);
+function lodAllowed(lod: string, maxLod: string | null): boolean {
+  return maxLod === null || Number(lod) <= Number(maxLod);
 }
 
 /** Geometry columns up to `maxLod`, stripped of their appearance columns. */
@@ -502,18 +496,8 @@ export async function openCityParquetStream(
   }
 
   const lods = [
-    ...new Set(
-      schemas.flatMap((s) =>
-        s.geometryColumns
-          .map((g) => g.lod)
-          .filter((l): l is string => l !== null),
-      ),
-    ),
+    ...new Set(schemas.flatMap((s) => s.geometryColumns.map((g) => g.lod))),
   ].sort((a, b) => Number(a) - Number(b));
-
-  const unlabelledGeometry = schemas.some((s) =>
-    s.geometryColumns.some((g) => g.lod === null),
-  );
 
   const header: CityParquetStreamHeader = {
     version: schemas[0]!.footer.version,
@@ -530,7 +514,6 @@ export async function openCityParquetStream(
     // rings are in.
     referenceSystem: `https://www.opengis.net/def/crs/EPSG/0/${String(target.epsg ?? target.sourceEpsg)}`,
     lods,
-    unlabelledGeometry,
     invalidBBoxRows: index.invalidBBoxRows,
   };
 

@@ -249,19 +249,30 @@ describe("readCityParquetTable (stubbed hyparquet)", () => {
     const seen = await readWithStub({
       city: {
         version: "1.0.0",
-        columns: [{ name: "geometry", encoding: "WKB" }],
+        columns: [{ name: "geometry_lod2_2", encoding: "WKB" }],
         // `absent` is declared but never written — a mirror may omit it.
         attributes: ["measuredHeight", "absent"],
       },
-      // No `feature_id`, no `other_attributes`, no properties sibling.
-      schemaColumns: ["id", "object_type", "geometry", "measuredHeight"],
+      // No `feature_id`, no `other`, no properties sibling.
+      schemaColumns: ["id", "object_type", "geometry_lod2_2", "measuredHeight"],
     });
     expect(seen.columns).toEqual([
       "id",
       "object_type",
-      "geometry",
+      "geometry_lod2_2",
       "measuredHeight",
     ]);
+  });
+
+  it("does not read a bare `geometry` column as geometry", async () => {
+    // Every geometry column carries an LoD suffix (spec "Levels of detail");
+    // an un-suffixed `geometry` is not a reserved name, so it is read only
+    // when the footer declares it as an attribute.
+    const seen = await readWithStub({
+      city: { version: "1.0.0", columns: [] },
+      schemaColumns: ["id", "object_type", "geometry"],
+    });
+    expect(seen.columns).toEqual(["id", "object_type"]);
   });
 
   it("does not mistake a declared attribute for a geometry column", async () => {

@@ -247,11 +247,10 @@ const LOD_SUFFIX = /^lod(\d{1,3})_(\d{1,3})$/;
  * (`Lod::column_suffix`). Without that, one dataset would offer LoD `"0"` as
  * CityJSON and `"0.0"` as CityParquet.
  *
- * A legacy bare `geometry` column — pre-dating the always-suffixed grammar —
- * is a geometry column of unknown LoD, hence `{lod: null}` rather than `null`.
+ * Every geometry column is suffixed (spec "Levels of detail"), so a bare
+ * `geometry` is not a geometry column.
  */
-export function lodFromColumnName(name: string): { lod: string | null } | null {
-  if (name === GEOMETRY_PREFIX) return { lod: null };
+export function lodFromColumnName(name: string): { lod: string } | null {
   const suffix = name.startsWith(`${GEOMETRY_PREFIX}_`)
     ? name.slice(GEOMETRY_PREFIX.length + 1)
     : null;

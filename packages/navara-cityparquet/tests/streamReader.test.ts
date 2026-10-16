@@ -103,10 +103,9 @@ describe("openCityParquetStream", () => {
     );
     expect(stream.header.version).toMatch(/\d/);
     expect(stream.header.invalidBBoxRows).toBe(0);
-    // Every geometry column of this fixture names its LoD, so the unlabelled
-    // rung is absent (Codex milestone review, Important — the flag is what
-    // lets the worker adapter keep a bare `geometry` column visible).
-    expect(stream.header.unlabelledGeometry).toBe(false);
+    // Every geometry column names its LoD, so the header has no notion of
+    // geometry without one.
+    expect("unlabelledGeometry" in stream.header).toBe(false);
     expect(stream.header.extent).toEqual(extent);
     expect(stream.index.rowCount).toBe(60);
   });

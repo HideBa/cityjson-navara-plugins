@@ -8,9 +8,9 @@
  *
  * Column discovery mirrors `cityparquet_arrow_schema` in
  * `cityparquet-rs/crates/cityparquet/src/reader.rs`: the LoD set comes from the
- * file's OWN schema, not from the footer's `columns` registry, so a legacy bare
- * `geometry` column (pre-dating the always-suffixed grammar) is still found;
- * and the columns the footer declares in `attributes` are excluded FIRST,
+ * file's OWN schema (every `geometry_lod<major>_<minor>` column), not from the
+ * footer's `columns` registry; and the columns the footer declares in
+ * `attributes` are excluded FIRST,
  * because §13.1 makes a declared attribute an attribute even when it is spelled
  * like a geometry column (`lodFromColumnName` is a name-grammar test and
  * cannot tell the difference on its own).
@@ -38,8 +38,8 @@ import {
 /** A geometry column found in the file's schema, paired with its semantics. */
 export interface GeometryColumnRef {
   name: string;
-  /** Display LoD (`"0"`, `"2.2"`), or `null` for a bare `geometry` column. */
-  lod: string | null;
+  /** Display LoD (`"0"`, `"2.2"`), from the column's suffix. */
+  lod: string;
   /** The `geometry_properties*` sibling, when the file actually carries it. */
   propsName: string | null;
   /** The paired `material_*` / `texture_*` JSON columns, when present. */

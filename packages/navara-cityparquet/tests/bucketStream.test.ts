@@ -325,7 +325,6 @@ describe("a streamed projected (EPSG:7415) source", () => {
       frame: null,
       referenceSystem: "https://www.opengis.net/def/crs/EPSG/0/7415",
       lods: ["0", "2.2"],
-      unlabelledGeometry: false,
       invalidBBoxRows: 0,
     });
   });
