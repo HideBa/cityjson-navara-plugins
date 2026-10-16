@@ -89,6 +89,7 @@ describe("readCityParquetTable", () => {
       "geometry_lod2_2",
       "geometry_properties_lod0_0",
       "geometry_properties_lod2_2",
+      "other",
       "measuredHeight",
       "roofType",
     ]) {
@@ -99,7 +100,7 @@ describe("readCityParquetTable", () => {
     for (const skipped of [
       "address",
       "template",
-      "other",
+      "other_attributes",
       "children_roles",
     ]) {
       expect(keys).not.toContain(skipped);

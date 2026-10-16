@@ -290,7 +290,9 @@ describe("decodeTableObjects (fixture)", () => {
 // ---------------------------------------------------------------------------
 
 describe("decodeTableObjects (synthetic rows)", () => {
-  it("keeps attribute names verbatim and merges other_attributes", () => {
+  it("restores every 'other' entry into the attributes, by its key", () => {
+    // Spec "The `other` column": no key is interpreted, not even one spelled
+    // like a reserved column or an extension name.
     const objects = decodeTableObjects(
       tableOf(
         [
@@ -300,10 +302,13 @@ describe("decodeTableObjects (synthetic rows)", () => {
             ex_height: 12.5,
             plain: "kept",
             absent: null,
-            other_attributes: '{"diverted":1,"bbox":"a string"}',
+            other: '{"diverted":1,"bbox":"a string","energy_x":[1,2]}',
           },
+          // A JSON-annotated column comes back from hyparquet already parsed.
+          { id: "b", object_type: "Building", other: { nested: { a: 1 } } },
+          { id: "c", object_type: "Building", other: null },
         ],
-        { attributes: ["ex_height", "plain", "absent"] },
+        { attributes: ["ex_height", "plain", "absent"], extensions: ["energy"] },
       ),
     );
     expect(at(objects, "a").attributes).toEqual({
@@ -311,7 +316,52 @@ describe("decodeTableObjects (synthetic rows)", () => {
       plain: "kept",
       diverted: 1,
       bbox: "a string",
+      energy_x: [1, 2],
     });
+    expect(at(objects, "b").attributes).toEqual({ nested: { a: 1 } });
+    expect(at(objects, "c").attributes).toEqual({});
+  });
+
+  it("does not read a column named 'other_attributes'", () => {
+    const objects = decodeTableObjects(
+      tableOf([
+        { id: "a", object_type: "Building", other_attributes: '{"x":1}' },
+      ]),
+    );
+    expect(at(objects, "a").attributes).toEqual({});
+  });
+
+  it("refuses an 'other' cell that is not a JSON object", () => {
+    for (const other of ["[1,2]", "3", '"text"', "null", "{not json", ""]) {
+      expect(() =>
+        decodeTableObjects(
+          tableOf([{ id: "a", object_type: "Building", other }]),
+        ),
+      ).toThrow(CityParquetError);
+    }
+  });
+
+  it("refuses an 'other' entry that duplicates a column attribute", () => {
+    // Both the column's own name and the name it restores to collide: either
+    // way one copy would have to be discarded.
+    for (const other of ['{"plain":2}', '{"+heat":2}']) {
+      expect(() =>
+        decodeTableObjects(
+          tableOf(
+            [
+              {
+                id: "a",
+                object_type: "Building",
+                plain: 1,
+                energy_heat: 1,
+                other,
+              },
+            ],
+            { attributes: ["plain", "energy_heat"], extensions: ["energy"] },
+          ),
+        ),
+      ).toThrow(/duplicates/);
+    }
   });
 
   it("restores the '+' spelling of attributes in a declared extension namespace", () => {
@@ -754,7 +804,7 @@ describe("decodeTableObjects (synthetic rows)", () => {
         {
           id: "a",
           object_type: "Building",
-          other_attributes:
+          other:
             '{"hasOwnProperty":1,"toString":"kept","__proto__":{"injected":true}}',
         },
       ]),

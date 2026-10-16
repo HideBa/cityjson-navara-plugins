@@ -57,10 +57,9 @@ export interface CityParquetTableData {
 /**
  * The reserved non-geometry columns this reader reads, in spec order.
  *
- * The allow-list is the skip-list: `address`, `template`, `other`,
- * `children_roles`, `material_*` and `texture_*` are all real reserved columns
- * that a viewer does not draw, so they are simply never projected — reading
- * them would cost pages of decode per file for data nothing consumes.
+ * The allow-list is the skip-list: a reserved column that is not here (and
+ * is not a geometry or appearance column, which are projected per LoD) is never
+ * read.
  */
 const IDENTITY_COLUMNS = [
   "id",
@@ -69,10 +68,8 @@ const IDENTITY_COLUMNS = [
   "parents",
   "children",
   "bbox",
+  "other",
 ] as const;
-
-/** The catch-all attribute container, when the writer emitted one. */
-const OTHER_ATTRIBUTES_COLUMN = "other_attributes";
 
 /**
  * Keeps a GEOMETRY/GEOGRAPHY-annotated column's cells as their raw WKB bytes.
@@ -245,7 +242,7 @@ function requireWkb(footer: CityFooter): void {
  * The projection for `parquetReadObjects`, intersected with the file's schema.
  *
  * A name that is absent from the schema is dropped rather than passed through:
- * `feature_id`, `other_attributes` and even a footer-declared attribute are all
+ * `other` and even a footer-declared attribute are all
  * optional in practice (the mirrors are independently generated), and hyparquet
  * gives no guarantee about how it treats a column it cannot find.
  */
@@ -266,7 +263,6 @@ export function buildProjection(
       .flatMap((g) => [g.materialName, g.textureName])
       .filter((n): n is string => n !== null),
     ...footer.attributes,
-    OTHER_ATTRIBUTES_COLUMN,
   ];
   const projection: string[] = [];
   const seen = new Set<string>();

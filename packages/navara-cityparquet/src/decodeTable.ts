@@ -95,8 +95,9 @@ const KNOWN_BUILDING_SURFACE_TYPES: ReadonlySet<string> = new Set([
   "Door",
 ]);
 
-/** The catch-all attribute container, when the writer emitted one. */
-const OTHER_ATTRIBUTES_COLUMN = "other_attributes";
+/** The escape hatch for source data no column carries (spec "The `other`
+ *  column"). */
+const OTHER_COLUMN = "other";
 
 type JsonObject = Record<string, unknown>;
 
@@ -118,8 +119,8 @@ function isEmptyCell(value: unknown): boolean {
 /**
  * A map with NO prototype, for keys that come out of a third-party file.
  *
- * Every string key in this module — an object id, an attribute name, a diverted
- * `other_attributes` key, a semantic surface's attribute — is written by
+ * Every string key in this module — an object id, an attribute name, an
+ * `other` key, a semantic surface's attribute — is written by
  * whoever produced the file, and a plain `{}` gives those keys meanings they
  * must not have. `map["__proto__"] = value` invokes the inherited setter
  * instead of creating an entry, so the object silently vanishes and, worse, the
@@ -148,7 +149,7 @@ function hasOwn(target: object, key: string): boolean {
  * Console warnings, deduplicated by kind.
  *
  * Every condition this decoder warns about is systematic: a writer that emits
- * one unreadable `other_attributes` cell emits a million of them, and a package
+ * one unreadable `surfaces` list emits a million of them, and a package
  * has a row per city object. So the FIRST of each kind is reported in full,
  * naming the object it happened on, and the rest are counted and summarised
  * once — a bug stays discoverable without the console (and the main thread)
@@ -295,19 +296,17 @@ function attributeColumnsOf(footer: CityFooter): AttributeColumn[] {
 
 /**
  * A row's attributes: one entry per non-null footer-declared column, plus
- * whatever the `other_attributes` container diverted.
+ * every entry of the row's `other` cell, keyed by its map key.
  *
- * A column attribute wins a name collision. The two sets are non-colliding by
- * construction (the writer diverts an attribute precisely because it could not
- * have a column of its own, and the Rust decoder treats a collision as a
- * corrupt file), so this only decides what a broken file does — and keeping the
- * typed column value is the better of two bad outcomes.
+ * An `other` entry whose key duplicates an attribute the row carries in a
+ * column — by the column's name or by the name it restores to — is invalid
+ * input: the two copies cannot be reconciled, so the file is refused rather
+ * than one copy silently dropped.
  */
 function readAttributes(
   row: Record<string, unknown>,
   columns: ReadonlyArray<AttributeColumn>,
   id: string,
-  warnings: DecodeWarnings,
 ): JsonObject {
   const attributes = bareMap<unknown>();
   for (const { column, key } of columns) {
@@ -317,53 +316,46 @@ function readAttributes(
     attributes[key] = attributeValue(cell);
   }
 
-  const diverted = readOtherAttributes(
-    row[OTHER_ATTRIBUTES_COLUMN],
-    id,
-    warnings,
-  );
-  for (const [key, value] of Object.entries(diverted)) {
-    if (hasOwn(attributes, key)) continue;
+  const other = readOther(row[OTHER_COLUMN], id);
+  if (other === null) return attributes;
+  for (const [key, value] of Object.entries(other)) {
+    if (
+      hasOwn(attributes, key) ||
+      columns.some((c) => c.column === key && hasOwn(attributes, c.key))
+    ) {
+      throw new CityParquetError(
+        `Object '${id}' has an 'other' entry '${key}' that duplicates an attribute stored in its own column, so the file is invalid.`,
+      );
+    }
     attributes[key] = attributeValue(value);
   }
   return attributes;
 }
 
 /**
- * The `other_attributes` container, keyed by each attribute's SOURCE name (the
- * writer diverts here exactly so the name survives un-normalised). It is a JSON
- * string column, but a writer that annotated it `JSON` would have hyparquet
- * hand back the parsed object already, so both are accepted. A malformed or
- * non-object cell costs the diverted attributes and nothing else — a viewer
- * that refused the whole file over it would be trading a complete model for a
- * few labels.
+ * The `other` cell as a JSON object, or `null` for a null cell. It is a JSON
+ * column, which hyparquet hands back already parsed; a writer that left it
+ * plain UTF8 yields the text, which is parsed here. Anything that is not a
+ * JSON object — an array, a scalar, text that is not JSON — is invalid input
+ * and refused (spec "The `other` column").
  */
-function readOtherAttributes(
-  cell: unknown,
-  id: string,
-  warnings: DecodeWarnings,
-): JsonObject {
-  if (isEmptyCell(cell)) return {};
-  if (isPlainObject(cell)) return cell;
-  if (typeof cell !== "string" || cell === "") return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cell);
-  } catch {
-    warnings.report(
-      "other_attributes",
-      `object '${id}' has an 'other_attributes' cell that is not valid JSON; its diverted attributes were skipped.`,
-      (more) => `${more} more object(s) had an unreadable 'other_attributes'.`,
-    );
-    return {};
+function readOther(cell: unknown, id: string): JsonObject | null {
+  if (isEmptyCell(cell)) return null;
+  let parsed: unknown = cell;
+  if (typeof cell === "string") {
+    try {
+      parsed = JSON.parse(cell);
+    } catch (cause) {
+      throw new CityParquetError(
+        `Object '${id}' has an 'other' cell that is not valid JSON, so the file is invalid.`,
+        { cause },
+      );
+    }
   }
   if (!isPlainObject(parsed)) {
-    warnings.report(
-      "other_attributes",
-      `object '${id}' has an 'other_attributes' cell that is not a JSON object; its diverted attributes were skipped.`,
-      (more) => `${more} more object(s) had an unreadable 'other_attributes'.`,
+    throw new CityParquetError(
+      `Object '${id}' has an 'other' cell that is not a JSON object, so the file is invalid.`,
     );
-    return {};
   }
   return parsed;
 }
@@ -748,9 +740,10 @@ function readRowGeometry(
  * `surfaces: []`, because the attribute-inheritance display walks from a picked
  * part to its parent and needs that parent to exist.
  *
- * Throws a `CityParquetError` if a geometry blob cannot be decoded: a file that
- * fails there is corrupt, and a viewer that silently dropped the bad geometry
- * would show a plausible but incomplete city. Rows that are unusable for
+ * Throws a `CityParquetError` if a geometry blob cannot be decoded, or an
+ * `other` cell is not a JSON object or collides with a column attribute: a
+ * file that fails there is corrupt, and a viewer that silently dropped the bad
+ * data would show a plausible but incomplete city. Rows that are unusable for
  * structural reasons (no id, no type) are skipped with a warning instead —
  * the spec makes both non-null, so this is defence against a hand-rolled file
  * rather than a path a valid one takes.
@@ -803,7 +796,7 @@ export function decodeTableObjects(
     objects[id] = {
       id,
       objectType: cityJsonTypeForObjectType(storedType, namespaces),
-      attributes: readAttributes(row, attributeColumns, id, warnings),
+      attributes: readAttributes(row, attributeColumns, id),
       surfaces: geometry.surfaces,
       bbox: readBBox(row.bbox),
       children: readIdList(row.children),

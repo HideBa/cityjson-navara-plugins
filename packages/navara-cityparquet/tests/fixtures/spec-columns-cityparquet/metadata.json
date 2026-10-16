@@ -1,0 +1,144 @@
+{
+  "type": "Feature",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://cityjson.github.io/stac-city3d/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
+    "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+  ],
+  "id": "spec-columns-cityparquet",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          4.368172680858491,
+          51.99892985818743
+        ],
+        [
+          4.368319931829193,
+          51.99892985818743
+        ],
+        [
+          4.368319931829193,
+          51.99900302414781
+        ],
+        [
+          4.368172680858491,
+          51.99900302414781
+        ],
+        [
+          4.368172680858491,
+          51.99892985818743
+        ]
+      ]
+    ]
+  },
+  "bbox": [
+    4.368172680858491,
+    51.99892985818743,
+    -0.0,
+    4.368319931829193,
+    51.99900302414781,
+    6.0
+  ],
+  "properties": {
+    "datetime": "2026-10-16T16:14:01Z",
+    "city3d:version": "2.0",
+    "city3d:city_objects": 4,
+    "city3d:lods": [
+      "1.0",
+      "2.2"
+    ],
+    "city3d:co_types": [
+      "Building",
+      "CityObjectGroup",
+      "SolitaryVegetationObject",
+      "energy_ThermalZone"
+    ],
+    "city3d:attributes": [
+      {
+        "name": "_ID",
+        "type": "String"
+      },
+      {
+        "name": "__ID",
+        "type": "String"
+      },
+      {
+        "name": "energy_heatCapacity",
+        "type": "Number"
+      },
+      {
+        "name": "function",
+        "type": "String"
+      },
+      {
+        "name": "species",
+        "type": "String"
+      },
+      {
+        "name": "yearOfConstruction",
+        "type": "Number"
+      }
+    ],
+    "city3d:semantic_surfaces": true,
+    "city3d:textures": false,
+    "city3d:materials": false,
+    "cityparquet:version": "0.1.0-draft",
+    "proj:code": "EPSG:7415"
+  },
+  "links": [],
+  "assets": {
+    "energy.parquet": {
+      "href": "./energy.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data",
+        "cityparquet-objects"
+      ],
+      "file:size": 25805,
+      "file:checksum": "122048eb388d744d9a266d3b32fb631979653c5d0eb7d5bfc1343ecf4112bc7e7946"
+    },
+    "generics.parquet": {
+      "href": "./generics.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data",
+        "cityparquet-objects"
+      ],
+      "file:size": 13655,
+      "file:checksum": "1220b7876d8c9f2b3688d0ce97604882277510f35adb9839df2b054a0c4dc8032850"
+    },
+    "building.parquet": {
+      "href": "./building.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data",
+        "cityparquet-objects"
+      ],
+      "file:size": 19653,
+      "file:checksum": "1220ee07f6ee4dd9102948fa3b7b6abe39ede23821c4727e0dbfb741185d67a8f3c1"
+    },
+    "vegetation.parquet": {
+      "href": "./vegetation.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data",
+        "cityparquet-objects"
+      ],
+      "file:size": 13666,
+      "file:checksum": "122087e8e3b113055ad9319f1ef32113365babc9c5defaebed40d8aa1203a9ebb481"
+    },
+    "implicit_geometries.parquet": {
+      "href": "./implicit_geometries.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": [
+        "data",
+        "cityparquet-sidecar"
+      ],
+      "file:size": 5591,
+      "file:checksum": "122054d7328d7aefc9347c21ce23ffb78762d309138e71360eb7e19346edb37429ac"
+    }
+  }
+}

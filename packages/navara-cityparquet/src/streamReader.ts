@@ -18,7 +18,7 @@
  * `epsg: null` and the frame's descriptor.
  *
  * `readRows` reads the identity columns, the footer's attribute columns,
- * `other_attributes` and every geometry column (with its semantic-surface
+ * `other` and every geometry column (with its semantic-surface
  * sibling) up to a LoD, for row ranges only — with `useOffsetIndex`, so a
  * range inside a row group decodes just the pages covering it. Appearance
  * columns are never read: a stream draws no textures. A batch of a PROJECTED

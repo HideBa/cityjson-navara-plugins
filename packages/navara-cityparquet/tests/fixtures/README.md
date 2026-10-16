@@ -94,6 +94,27 @@ interior ring survives exactly (ring order, vertex order and winding all come
 back as written), and the synthesized LoD0 footprint is the OUTER ring only —
 it does not carry the hole down.
 
+### `spec-columns-cityparquet/` — the reserved columns and naming rules
+
+From `spec-columns.city.json` (hand-written here, and committed), which puts
+one of each of these in a package: an extension attribute and an extension
+City Object type (`Energy`, namespace `energy`), attributes spelled like a
+reserved column (`ID`, `_ID`), an object member the format has no column for
+(`roofColour`, which goes to `other`), an `address` with a `location`, a
+`CityObjectGroup` with `children_roles`, and a `GeometryInstance` with a
+transformation matrix and its template.
+
+```bash
+"$CLI" convert -o spec-columns-cityparquet --overwrite spec-columns.city.json
+"$CLI" export spec-columns-cityparquet spec-columns.export.city.json
+```
+
+Yields `building.parquet`, `energy.parquet`, `generics.parquet`,
+`vegetation.parquet`, `implicit_geometries.parquet` and `metadata.json`;
+`"$CLI" validate spec-columns-cityparquet` reports 0 errors and 0 warnings.
+`spec-columns.export.city.json` is the export, re-indented: it is the
+reference reader's own decode of these bytes, and the test oracle.
+
 ## Rewritten fixtures (not from the reference writer)
 
 ### `multigroup-cityparquet/` and `multigroup-noindex-cityparquet/` — range reads
