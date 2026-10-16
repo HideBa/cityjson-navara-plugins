@@ -168,6 +168,20 @@ describe("CityModelMesh", () => {
     m.dispose();
   });
 
+  it("setHighlight repaints without re-running the style evaluator", () => {
+    const m = new CityModelMesh({ ...opts, lod: "2" });
+    const evaluator = vi.fn(() => [0, 1, 0] as [number, number, number]);
+    m.setStyle(evaluator);
+    const evaluations = evaluator.mock.calls.length;
+    expect(evaluations).toBeGreaterThan(0);
+    m.setHighlight([{ kind: "object", layerId: "L1", objectId: "B1" }], null);
+    m.setHighlight([], { kind: "object", layerId: "L1", objectId: "B1" });
+    m.setHighlight([], null);
+    expect(evaluator.mock.calls.length).toBe(evaluations);
+    expect(m.object3d.geometry.getAttribute("color").getY(0)).toBeGreaterThan(0.9);
+    m.dispose();
+  });
+
   // Task B5 carry-forward: `paintLayers` cannot check `Selection.layerId`
   // (vertices carry no layer id), so filtering to this mesh's own layer is the
   // caller's job — and CityModelMesh IS that caller.

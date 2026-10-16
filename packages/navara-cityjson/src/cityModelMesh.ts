@@ -364,7 +364,7 @@ export class CityModelMesh {
       material.needsUpdate = true;
     });
     this.maskedSource = null;
-    this.repaint();
+    this.paint();
   }
 
   /** `source` with white over every vertex whose image is on screen. */
@@ -385,6 +385,12 @@ export class CityModelMesh {
 
   /** Recompute style colors, then repaint the live color attribute. */
   private repaint(): void {
+    this.restyle();
+    this.paint();
+  }
+
+  /** Re-run the style evaluator over every surface. Not for highlight changes. */
+  private restyle(): void {
     const previousStyle = this.styleColors;
     this.styleColors = this.evaluator
       ? computeStyleColors(
@@ -399,7 +405,10 @@ export class CityModelMesh {
     // `computeStyleColors` allocates fresh on every call, so the identity
     // check only holds for the null case; a live evaluator always refreshes.
     if (this.styleColors !== previousStyle) this.maskedSource = null;
+  }
 
+  /** Repaint the live color attribute from the cached style and the highlight. */
+  private paint(): void {
     const attr = this.geometry.getAttribute("color");
     // Mask BEFORE the highlight pass: a selected textured face still tints.
     // Cached: hover repaints must not copy the whole colour array each time.
@@ -618,7 +627,9 @@ export class CityModelMesh {
   ): void {
     this.selections = selections.filter((s) => s.layerId === this.id);
     this.hovered = hovered?.layerId === this.id ? hovered : null;
-    this.repaint();
+    // The style does not depend on the highlight: hover moves at pointer rate,
+    // and re-running every rule over every surface for it is the cost.
+    this.paint();
   }
 
   resolveVertex(vertexIndex: number): SurfaceSelection | null {
