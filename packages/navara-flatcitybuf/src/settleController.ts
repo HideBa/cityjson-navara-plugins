@@ -21,10 +21,9 @@
  *   "settles settleMs after moveend" case stands. `onMoveStart` clears the
  *   armed timer anyway, so a second burst (a fast follow-up gesture) defers
  *   the commit instead of double-committing.
- * - Commit is keyed off **`moveend`, never `idle`**: §5(c) measured that
- *   `view.setCamera` emits *no* `move*` events at all but *does* produce the
- *   ambient `idle`, so an idle-keyed commit would fire on every programmatic
- *   camera write (share-link restore, fitAll). `idle` therefore only ever
+ * - Commit is keyed off **`moveend`, never `idle`**: `view.setCamera`
+ *   produces the ambient `idle`, so an idle-keyed commit would fire on every
+ *   programmatic camera write (share-link restore, fitAll). `idle` therefore only ever
  *   *flushes* a debounce that a `moveend` already armed (~270–460 ms of
  *   latency saved), and idle ticks on a static scene are ignored.
  * - **Wheel zoom is NOT silent** (measured 2026-08-05, the gap B1 left open —
@@ -34,11 +33,12 @@
  *   disarm is what turns a four-notch zoom into one commit at the end.
  *   Nothing here has to arm on `move` or `frustumChanged` to see a zoom, and
  *   doing so would break the "no commit mid-drag" rule below.
- * - `PROGRAMMATIC_MOVE_EMITS` is **split**: `flyTo` emits a full
+ * - Programmatic moves emit camera events: `flyTo` a full
  *   `movestart…moveend` burst that is indistinguishable from a drag (§5b),
- *   while `setCamera` (§5c) and `resize` (§5d, `resize` + `frustumChanged`
- *   only) emit no `move*`. The trailing quiet window is therefore
- *   **load-bearing, not defensive**: `flyTo` is the case it exists for, and
+ *   `setCamera` a `move` and a `moveend` since Navara 0.2; only `resize`
+ *   (§5d, `resize` + `frustumChanged`) emits no `move*`. The trailing quiet
+ *   window is therefore **load-bearing, not defensive**: it is what keeps a
+ *   programmatic `moveend` from arming a commit, `flyTo` is the case it exists for, and
  *   `suppressUntil` — which holds the gate until the flight's promise settles
  *   and only then starts the quiet window — is the shape an awaited `flyTo`
  *   needs, because a plain `suppress(fn)` would start counting when the call
@@ -182,8 +182,8 @@ export function createSettleController(
     },
     onIdle() {
       if (gated()) return;
-      // Only ever a flush: `idle` also follows a bare `setCamera` (B1 §5c),
-      // which must not commit anything.
+      // Only ever a flush: `idle` also follows a bare `setCamera`, which must
+      // not commit anything.
       if (armed) fire();
     },
     suppress<T>(fn: () => T, quietMs: number = opts.settleMs): T {
