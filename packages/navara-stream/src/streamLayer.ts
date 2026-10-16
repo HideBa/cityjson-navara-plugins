@@ -1435,7 +1435,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
     if (this.warnedUnresolvablePick) return;
     this.warnedUnresolvablePick = true;
     console.warn(
-      `[navara-flatcitybuf] layer "${this.id}": an engine pick event carried no surface indices, so it cannot be resolved — PickableMeshWrapper allocates one uniform batch id per mesh, not per triangle. Use the "own-raycast" strategy (the default) and route picks as screen points.`,
+      `[navara-stream] layer "${this.id}": an engine pick event carried no surface indices, so it cannot be resolved — PickableMeshWrapper allocates one uniform batch id per mesh, not per triangle. Use the "own-raycast" strategy (the default) and route picks as screen points.`,
     );
   }
 

@@ -1491,7 +1491,7 @@ describe("StreamLayerHandle interaction parity", () => {
     ).toBeNull();
     // Once per layer, however many clicks arrive.
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]![0]).toContain("[navara-flatcitybuf]");
+    expect(warn.mock.calls[0]![0]).toContain("[navara-stream]");
 
     // A feature ROUTED AWAY is not an unresolvable pick — it belongs to
     // another layer, which is a normal outcome and must stay silent.

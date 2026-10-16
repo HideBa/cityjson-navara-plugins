@@ -637,7 +637,7 @@ export class StreamLayerRegistry {
     error?: unknown,
   ): void {
     console.warn(
-      `[navara-flatcitybuf] layer "${id}": the geoid sample at ${lngDeg.toFixed(4)}, ${latDeg.toFixed(4)} ` +
+      `[navara-stream] layer "${id}": the geoid sample at ${lngDeg.toFixed(4)}, ${latDeg.toFixed(4)} ` +
         (timedOut
           ? `did not resolve within ${GEOID_TIMEOUT_MS} ms`
           : `failed`) +
