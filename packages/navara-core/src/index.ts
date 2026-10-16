@@ -193,3 +193,42 @@ export {
   buildRuleColorsFromArrays,
   compileRuleEvaluator,
 } from "./styling/ruleColors";
+
+export type {
+  Validity,
+  Utf8Column,
+  Float64Column,
+  BoolColumn,
+  DictColumn,
+  JsonColumn,
+  AttrColumn,
+} from "./columnar/columns";
+export {
+  buildAttrColumn,
+  buildDictColumn,
+  buildUtf8Column,
+  columnValue,
+  dictionaryValues,
+  dictValue,
+  isValid,
+  utf8Value,
+  utf8Values,
+} from "./columnar/columns";
+export type {
+  FeatureTable,
+  SurfaceGeometry,
+  TextureThemeColumns,
+  InstanceTable,
+  CityBatch,
+} from "./columnar/cityBatch";
+export {
+  GEOMETRY_TYPE_NAMES,
+  batchTransferables,
+  geometryTypeCode,
+  geometryTypeOfCode,
+  measureBatch,
+  rowOf,
+  surfaceFromBlock,
+  surfaceRingsOf,
+} from "./columnar/cityBatch";
+export { cityBatchFromModel } from "./columnar/fromCityModel";
