@@ -251,3 +251,75 @@ describe("computeRoofMetrics", () => {
     expect(metrics.elevationM).toBe(0);
   });
 });
+
+describe("computeRoofMetrics — interior rings", () => {
+  // A 10 x 10 flat roof with a 2 x 3 hole (a skylight or a courtyard). CityJSON
+  // winds an interior ring opposite to the exterior one; the area must not
+  // depend on that, because not every producer honours it.
+  const OUTER: ReadonlyArray<Vec3> = [
+    [0, 0, 5],
+    [10, 0, 5],
+    [10, 10, 5],
+    [0, 10, 5],
+  ];
+  const HOLE_CW: ReadonlyArray<Vec3> = [
+    [2, 2, 5],
+    [2, 5, 5],
+    [4, 5, 5],
+    [4, 2, 5],
+  ];
+  const HOLE_CCW: ReadonlyArray<Vec3> = [...HOLE_CW].reverse();
+
+  const roof = (rings: ReadonlyArray<ReadonlyArray<Vec3>>): Surface => ({
+    type: "RoofSurface",
+    rings,
+    attributes: {},
+    lod: null,
+  });
+
+  it("subtracts a hole from the area", () => {
+    expect(computeRoofMetrics(roof([OUTER, HOLE_CW])).areaSqM).toBeCloseTo(94, 6);
+  });
+
+  it("subtracts a hole whatever its winding", () => {
+    expect(computeRoofMetrics(roof([OUTER, HOLE_CCW])).areaSqM).toBeCloseTo(94, 6);
+  });
+
+  it("subtracts every hole", () => {
+    const second: ReadonlyArray<Vec3> = [
+      [6, 6, 5],
+      [6, 7, 5],
+      [7, 7, 5],
+      [7, 6, 5],
+    ];
+    expect(
+      computeRoofMetrics(roof([OUTER, HOLE_CW, second])).areaSqM,
+    ).toBeCloseTo(93, 6);
+  });
+
+  it("subtracts a hole on a sloped roof in the plane of the roof", () => {
+    // The 45-degree slope scaled: the exterior is 10 x 10 * sqrt(2), the hole 1 x 1 * sqrt(2).
+    const outer: ReadonlyArray<Vec3> = [
+      [0, 0, 0],
+      [10, 0, 0],
+      [10, 10, 10],
+      [0, 10, 10],
+    ];
+    const hole: ReadonlyArray<Vec3> = [
+      [4, 4, 4],
+      [4, 5, 5],
+      [5, 5, 5],
+      [5, 4, 4],
+    ];
+    expect(computeRoofMetrics(roof([outer, hole])).areaSqM).toBeCloseTo(
+      99 * Math.SQRT2,
+      6,
+    );
+  });
+
+  it("never reports a negative area", () => {
+    expect(
+      computeRoofMetrics(roof([HOLE_CW, OUTER])).areaSqM,
+    ).toBeGreaterThanOrEqual(0);
+  });
+});

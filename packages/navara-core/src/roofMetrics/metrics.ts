@@ -161,7 +161,12 @@ export function computeElevation(ring: ReadonlyArray<Vec3>): number {
 }
 
 /**
- * Compute all roof metrics for a surface from its exterior ring.
+ * Compute all roof metrics for a surface.
+ *
+ * Orientation and elevation come from the exterior ring. The area is the
+ * exterior's less every interior ring's (a skylight, a courtyard), each
+ * measured unsigned, so a producer that winds a hole the same way as its
+ * exterior still gets it subtracted.
  */
 export function computeRoofMetrics(surface: Surface): RoofMetrics {
   const ring = surface.rings[0];
@@ -169,8 +174,13 @@ export function computeRoofMetrics(surface: Surface): RoofMetrics {
     return { areaSqM: 0, inclinationDeg: 0, azimuthDeg: null, elevationM: 0 };
   }
 
+  let area = computeArea(ring);
+  for (let i = 1; i < surface.rings.length; i++) {
+    area -= computeArea(surface.rings[i]!);
+  }
+
   return {
-    areaSqM: computeArea(ring),
+    areaSqM: Math.max(0, area),
     inclinationDeg: computeInclination(ring),
     azimuthDeg: computeAzimuth(ring),
     elevationM: computeElevation(ring),
