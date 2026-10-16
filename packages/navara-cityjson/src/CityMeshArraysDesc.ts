@@ -56,6 +56,9 @@ export class CityMeshArraysDesc extends MeshDescWithSelectiveEffect<CityMeshArra
   createMesh(): Mesh {
     this.cityMesh = new CityMeshArraysMesh({
       ...this.descConfig.cityMeshArrays,
+      // The engine renders on demand; `requestUpdate` emits the
+      // `needsUpdate` it listens to for every mesh.
+      requestRender: () => this.requestUpdate(),
       // The engine's cascaded-shadow registry (`SunLightDesc` listens): a
       // material it has never seen receives no shadow. See `cityMaterial.ts`.
       shadowMaterials: {

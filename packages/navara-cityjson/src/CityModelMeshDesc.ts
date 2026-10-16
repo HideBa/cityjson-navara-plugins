@@ -105,6 +105,9 @@ export class CityModelMeshDesc extends MeshDescWithSelectiveEffect<CityModelDesc
         register: (m) => this.ctx.applyShadowMaterial(m),
         unregister: (m) => this.ctx.removeShadowMaterial(m),
       },
+      // The engine renders on demand; `requestUpdate` emits the
+      // `needsUpdate` it listens to for every mesh.
+      requestRender: () => this.requestUpdate(),
       // No `makePlacementMatrix` override: the default is core's
       // `makeEnuFrame` via `buildPlacement`.
     });

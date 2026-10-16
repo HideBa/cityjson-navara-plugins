@@ -104,6 +104,13 @@ export interface CityModelMeshOptions {
    *  `CityModelMeshDesc`; a mesh built outside the engine leaves it unset. */
   readonly shadowMaterials?: ShadowMaterialHooks;
   /**
+   * Asks the engine for a frame. The engine renders on demand, and a write
+   * into this mesh's three objects (colours, visibility, placement, theme,
+   * textures) is invisible to it; `CityModelMeshDesc` wires this to the
+   * descriptor's `requestUpdate`.
+   */
+  readonly requestRender?: () => void;
+  /**
    * Test seam: replaces ONLY the ENU->ECEF matrix (so matrix assertions can
    * read `makeTranslation(1, 2, 3)` instead of ECEF megametres). The frame the
    * vertices are projected into always comes from `buildPlacement`, so an
@@ -181,8 +188,12 @@ export class CityModelMesh {
   private readonly colors: ResolvedCityColors;
   private readonly shadowMaterials: ShadowMaterialHooks;
 
+  /** See `CityModelMeshOptions.requestRender`. */
+  private readonly requestRender: () => void;
+
   constructor(options: CityModelMeshOptions) {
     this.id = options.id;
+    this.requestRender = options.requestRender ?? (() => {});
     this.model = options.model;
     // Before `buildArrays` runs (the constructor builds once), because the
     // palette is baked into the base colours.
@@ -426,10 +437,13 @@ export class CityModelMesh {
       this.colors,
     );
     attr.needsUpdate = true;
+    this.requestRender();
   }
 
   setVisible(visible: boolean): void {
+    if (this.object3d.visible === visible) return;
     this.object3d.visible = visible;
+    this.requestRender();
   }
 
   /**
@@ -530,6 +544,7 @@ export class CityModelMesh {
     if (geometry.boundingBox) geometry.computeBoundingBox();
     // The edge lines copied the old positions.
     this.theme.geometryReplaced();
+    this.requestRender();
   }
 
   /** The frame/matrix/offset bundle this mesh is currently placed by — what
@@ -558,6 +573,7 @@ export class CityModelMesh {
    *  picking are untouched by it. */
   setThemeStyle(style: ThemeStyle): void {
     this.theme.apply(style);
+    this.requestRender();
   }
 
   setStyle(evaluator: SurfaceStyleEvaluator | null): void {

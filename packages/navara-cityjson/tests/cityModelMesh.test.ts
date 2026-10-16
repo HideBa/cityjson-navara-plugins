@@ -182,6 +182,35 @@ describe("CityModelMesh", () => {
     m.dispose();
   });
 
+  it("asks for a frame after every change the engine cannot see", () => {
+    // The engine renders on demand: a vertex-colour, visibility, theme or
+    // placement write inside three is invisible to it until it is told.
+    const requestRender = vi.fn();
+    const m = new CityModelMesh({ ...opts, lod: "2", requestRender });
+    const asked = () => {
+      const n = requestRender.mock.calls.length;
+      requestRender.mockClear();
+      return n;
+    };
+    asked();
+    m.setHighlight([{ kind: "object", layerId: "L1", objectId: "B1" }], null);
+    expect(asked()).toBeGreaterThan(0);
+    m.setStyle(() => [0, 1, 0]);
+    expect(asked()).toBeGreaterThan(0);
+    m.setVisible(false);
+    expect(asked()).toBeGreaterThan(0);
+    m.setHeightOffset(40);
+    expect(asked()).toBeGreaterThan(0);
+    m.setThemeStyle({ fill: "tint", tintRGB: [0.5, 0.5, 0.5], edges: null });
+    expect(asked()).toBeGreaterThan(0);
+    m.setLod("1");
+    expect(asked()).toBeGreaterThan(0);
+    // No change, no frame.
+    m.setHeightOffset(40);
+    expect(asked()).toBe(0);
+    m.dispose();
+  });
+
   // Task B5 carry-forward: `paintLayers` cannot check `Selection.layerId`
   // (vertices carry no layer id), so filtering to this mesh's own layer is the
   // caller's job — and CityModelMesh IS that caller.

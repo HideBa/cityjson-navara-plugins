@@ -59,6 +59,10 @@ export interface AddCityMeshArraysOptions {
    *  engine's cascaded shadow maps (see `cityMaterial.ts`). Filled by
    *  `CityMeshArraysDesc`; a mesh built outside the engine leaves it unset. */
   readonly shadowMaterials?: ShadowMaterialHooks;
+  /** Asks the engine for a frame after a write it cannot see (colours,
+   *  visibility, theme, textures); `CityMeshArraysDesc` wires it to the
+   *  descriptor's `requestUpdate`. */
+  readonly requestRender?: () => void;
 }
 
 /**
@@ -116,7 +120,11 @@ export class CityMeshArraysMesh {
   private readonly textures: TextureCache | null;
   private readonly shadowMaterials: ShadowMaterialHooks;
 
+  /** See `AddCityMeshArraysOptions.requestRender`. */
+  private readonly requestRender: () => void;
+
   constructor(options: AddCityMeshArraysOptions) {
+    this.requestRender = options.requestRender ?? (() => {});
     this.arrays = options.arrays;
     this.shadowMaterials = options.shadowMaterials ?? NO_SHADOW_MATERIALS;
     this.pickStrategy = options.pickStrategy ?? DEFAULT_PICK_STRATEGY;
@@ -198,6 +206,7 @@ export class CityMeshArraysMesh {
       material.map = entry?.status === "ready" ? entry.texture : null;
       material.needsUpdate = true;
     });
+    this.requestRender();
   }
 
   /**
@@ -211,16 +220,20 @@ export class CityMeshArraysMesh {
     const attr = this.object3d.geometry.getAttribute("color");
     (attr.array as Float32Array).set(colors);
     attr.needsUpdate = true;
+    this.requestRender();
   }
 
   setVisible(visible: boolean): void {
+    if (this.object3d.visible === visible) return;
     this.object3d.visible = visible;
+    this.requestRender();
   }
 
   /** Scene theme, applied through the module both mesh classes share so a
    *  streamed cell and a static layer look identical under one. */
   setThemeStyle(style: ThemeStyle): void {
     this.theme.apply(style);
+    this.requestRender();
   }
 
   triangleCount(): number {

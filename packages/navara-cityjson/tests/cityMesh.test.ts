@@ -92,6 +92,21 @@ describe("CityMeshArraysMesh", () => {
     expect((mesh.object3d.material as { side: number }).side).toBe(DoubleSide);
   });
 
+  it("asks for a frame after every change the engine cannot see", () => {
+    const requestRender = vi.fn();
+    const mesh = new CityMeshArraysMesh(opts({ requestRender }));
+    requestRender.mockClear();
+    mesh.setColors(new Float32Array(9).fill(0.5));
+    expect(requestRender).toHaveBeenCalledTimes(1);
+    mesh.setVisible(false);
+    expect(requestRender).toHaveBeenCalledTimes(2);
+    mesh.setVisible(false);
+    expect(requestRender).toHaveBeenCalledTimes(2);
+    mesh.setThemeStyle({ fill: "tint", tintRGB: [0.5, 0.5, 0.5], edges: null });
+    expect(requestRender).toHaveBeenCalledTimes(3);
+    mesh.dispose();
+  });
+
   it("setColors writes through to the live color attribute", () => {
     const mesh = new CityMeshArraysMesh(opts());
     const attr = mesh.object3d.geometry.getAttribute(
