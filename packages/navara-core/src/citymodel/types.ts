@@ -139,6 +139,26 @@ export interface Surface {
 // City objects (normalized)
 // ---------------------------------------------------------------------------
 
+/**
+ * One address of a city object, under CityJSON's member names (the names of
+ * the CityJSON specification's worked example, plus `postBox`,
+ * `administrativeArea` and `freeText`). A member the source left empty is
+ * absent.
+ */
+export interface CityAddress {
+  readonly thoroughfareName?: string;
+  readonly thoroughfareNumber?: string;
+  readonly postBox?: string;
+  readonly postcode?: string;
+  readonly locality?: string;
+  readonly administrativeArea?: string;
+  readonly country?: string;
+  readonly freeText?: string;
+  /** The address's geolocation points, in the same coordinates as the
+   *  object's rings. Absent when the address has no location. */
+  readonly location?: ReadonlyArray<Vec3>;
+}
+
 /** A normalized city object — one entry per feature in the model. */
 export interface CityObject {
   /** Unique ID within the model. */
@@ -155,6 +175,11 @@ export interface CityObject {
   readonly children: ReadonlyArray<string>;
   /** IDs of parent objects. */
   readonly parents: ReadonlyArray<string>;
+  /** One role per entry of {@link children}, positionally aligned, `null` for
+   *  a child with no role. Absent when the source names no roles. */
+  readonly childrenRoles?: ReadonlyArray<string | null>;
+  /** The object's addresses. Absent when the source carries none. */
+  readonly address?: ReadonlyArray<CityAddress>;
   /** Level of detail string from the source geometry (e.g. "2", "2.2"). */
   readonly lod: string | null;
 }

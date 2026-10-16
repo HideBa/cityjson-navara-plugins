@@ -24,6 +24,7 @@ export type {
   CityAppearance,
   AppearanceTheme,
   CityObject,
+  CityAddress,
   CityModelMetadata,
   CityModel,
 } from "./citymodel/types";

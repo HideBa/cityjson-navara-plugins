@@ -220,10 +220,11 @@ export function projectBBox(bbox: BBox3, target: CoordinateTarget): BBox3 {
 }
 
 /**
- * Projects every object's rings and bbox into `target`, replacing the entries
- * of `objects` in place (the objects themselves are immutable). An object's
- * new bbox covers its projected source bbox (kept for geometryless parents)
- * and every projected vertex. An identity target changes nothing.
+ * Projects every object's rings, bbox and address locations into `target`,
+ * replacing the entries of `objects` in place (the objects themselves are
+ * immutable). An object's new bbox covers its projected source bbox (kept
+ * for geometryless parents) and every projected ring vertex. An identity
+ * target changes nothing.
  *
  * REFUSES a bucket target: its output is an INDEX, and writing it into rings
  * would place geometry tens of metres out with nothing downstream able to tell.
@@ -257,6 +258,21 @@ export function projectCityObjects(
         }),
       ),
     }));
-    objects[id] = { ...object, surfaces, bbox: box };
+    const project = (point: Vec3): Vec3 => {
+      const [x, y] = target.toTarget(point[0], point[1]);
+      return [x, y, point[2]];
+    };
+    objects[id] = {
+      ...object,
+      surfaces,
+      bbox: box,
+      ...(object.address
+        ? {
+            address: object.address.map((a) =>
+              a.location ? { ...a, location: a.location.map(project) } : a,
+            ),
+          }
+        : {}),
+    };
   }
 }

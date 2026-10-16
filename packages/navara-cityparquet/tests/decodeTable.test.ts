@@ -111,6 +111,22 @@ class WkbWriter {
   }
 }
 
+/** MultiPointZ (type 1004) of `points`. */
+function wkbMultiPointZ(points: ReadonlyArray<Vec3>): Uint8Array {
+  const w = new WkbWriter();
+  w.u8(1);
+  w.u32(1004);
+  w.u32(points.length);
+  for (const p of points) {
+    w.u8(1);
+    w.u32(1001);
+    w.f64(p[0]);
+    w.f64(p[1]);
+    w.f64(p[2]);
+  }
+  return w.done();
+}
+
 /** MultiPolygonZ (type 1006) of `faces`; every ring is closed on write. */
 function wkbMultiPolygonZ(
   faces: ReadonlyArray<ReadonlyArray<Vec3[]>>,
@@ -412,6 +428,98 @@ describe("decodeTableObjects (synthetic rows)", () => {
     expect(at(objects, "z").objectType).toBe("+ThermalZone");
     expect(at(objects, "s").objectType).toBe("BuildingStorey");
     expect(at(objects, "n").objectType).toBe("noise_Barrier");
+  });
+
+  it("restores children_roles positionally, nulls included", () => {
+    const objects = decodeTableObjects(
+      tableOf([
+        {
+          id: "g",
+          object_type: "CityObjectGroup",
+          children: ["a", "b", "c"],
+          children_roles: ["owner", null, "tenant"],
+        },
+        { id: "a", object_type: "Building", children: ["x"] },
+      ]),
+    );
+    expect(at(objects, "g").childrenRoles).toEqual(["owner", null, "tenant"]);
+    expect(at(objects, "a").childrenRoles).toBeUndefined();
+  });
+
+  it("refuses children_roles whose length differs from children", () => {
+    expect(() =>
+      decodeTableObjects(
+        tableOf([
+          {
+            id: "g",
+            object_type: "CityObjectGroup",
+            children: ["a", "b"],
+            children_roles: ["owner"],
+          },
+        ]),
+      ),
+    ).toThrow(CityParquetError);
+  });
+
+  it("restores each address entry, omitting null fields", () => {
+    const location = wkbMultiPointZ([
+      [1, 2, 3],
+      [4, 5, 6],
+    ]);
+    const objects = decodeTableObjects(
+      tableOf([
+        {
+          id: "a",
+          object_type: "Building",
+          address: [
+            {
+              street: "Mekelweg",
+              house_number: "5",
+              po_box: null,
+              zip_code: "2628 CD",
+              city: "Delft",
+              state: "Zuid-Holland",
+              country: "NL",
+              free_text: "TU Delft",
+              location,
+            },
+            { street: null, city: "Rotterdam", location: null },
+          ],
+        },
+        { id: "b", object_type: "Building", address: null },
+      ]),
+    );
+    expect(at(objects, "a").address).toEqual([
+      {
+        thoroughfareName: "Mekelweg",
+        thoroughfareNumber: "5",
+        postcode: "2628 CD",
+        locality: "Delft",
+        administrativeArea: "Zuid-Holland",
+        country: "NL",
+        freeText: "TU Delft",
+        location: [
+          [1, 2, 3],
+          [4, 5, 6],
+        ],
+      },
+      { locality: "Rotterdam" },
+    ]);
+    expect(at(objects, "b").address).toBeUndefined();
+  });
+
+  it("refuses an address location that is not points", () => {
+    expect(() =>
+      decodeTableObjects(
+        tableOf([
+          {
+            id: "a",
+            object_type: "Building",
+            address: [{ location: wkbMultiPolygonZ([[[[0, 0, 0], [1, 0, 0], [1, 1, 0]]]]) }],
+          },
+        ]),
+      ),
+    ).toThrow(CityParquetError);
   });
 
   it("reverses the leading-underscore escape of a reserved-colliding attribute", () => {

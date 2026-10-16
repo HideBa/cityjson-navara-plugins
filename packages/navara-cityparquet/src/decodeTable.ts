@@ -30,6 +30,7 @@
 import type {
   BBox3,
   BuildingSurfaceType,
+  CityAddress,
   CityObject,
   Surface,
   SurfaceTexture,
@@ -203,6 +204,90 @@ function readIdList(value: unknown): string[] {
   return value.filter(
     (item: unknown): item is string => typeof item === "string",
   );
+}
+
+/**
+ * The `children_roles` cell, aligned with the `children` the object keeps.
+ * `undefined` when the row names no roles. The two lists are positionally
+ * aligned in the file, so a length mismatch is invalid input; a child entry
+ * {@link readIdList} drops (a null item) drops its role with it, so the roles
+ * stay aligned with `CityObject.children`.
+ */
+function readChildrenRoles(
+  row: Record<string, unknown>,
+  id: string,
+): Array<string | null> | undefined {
+  const roles = row.children_roles;
+  if (!Array.isArray(roles)) return undefined;
+  const children: unknown[] = Array.isArray(row.children) ? row.children : [];
+  if (roles.length !== children.length) {
+    throw new CityParquetError(
+      `Object '${id}' has ${String(roles.length)} children_roles for ${String(children.length)} children, so the file is invalid.`,
+    );
+  }
+  const out: Array<string | null> = [];
+  for (let i = 0; i < children.length; i++) {
+    if (typeof children[i] !== "string") continue;
+    const role: unknown = roles[i];
+    out.push(typeof role === "string" ? role : null);
+  }
+  return out;
+}
+
+/** The `address` struct fields, by the CityJSON member each restores to (the
+ *  same names cityparquet-rs exports). */
+const ADDRESS_MEMBERS = [
+  ["street", "thoroughfareName"],
+  ["house_number", "thoroughfareNumber"],
+  ["po_box", "postBox"],
+  ["zip_code", "postcode"],
+  ["city", "locality"],
+  ["state", "administrativeArea"],
+  ["country", "country"],
+  ["free_text", "freeText"],
+] as const;
+
+/**
+ * The `address` cell: one {@link CityAddress} per list item, its `location`
+ * (a WKB `MultiPointZ`) decoded to points. `undefined` for a null cell. A
+ * location that is not points, or not WKB, is invalid input.
+ */
+function readAddress(cell: unknown, id: string): CityAddress[] | undefined {
+  if (!Array.isArray(cell)) return undefined;
+  const out: CityAddress[] = [];
+  for (const item of cell) {
+    if (!isPlainObject(item)) continue;
+    const address: { -readonly [K in keyof CityAddress]: CityAddress[K] } = {};
+    for (const [field, member] of ADDRESS_MEMBERS) {
+      const value = item[field];
+      if (typeof value === "string") address[member] = value;
+    }
+    if (!isEmptyCell(item.location)) {
+      address.location = readAddressLocation(item.location, id);
+    }
+    out.push(address);
+  }
+  return out;
+}
+
+function readAddressLocation(cell: unknown, id: string): Vec3[] {
+  let decoded: DecodedWkb | null = null;
+  if (cell instanceof Uint8Array) {
+    try {
+      decoded = decodeWkb(cell);
+    } catch (cause) {
+      throw new CityParquetError(
+        `The address location of object '${id}' could not be read as WKB.`,
+        { cause },
+      );
+    }
+  }
+  if (decoded?.kind !== "points") {
+    throw new CityParquetError(
+      `The address location of object '${id}' is not a WKB MultiPointZ, so the file is invalid.`,
+    );
+  }
+  return decoded.points;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -732,6 +817,15 @@ function readRowGeometry(
 // Rows → objects
 // ---------------------------------------------------------------------------
 
+/** `{ [key]: value }`, or nothing when `value` is undefined — so an optional
+ *  `CityObject` member is absent rather than present-and-undefined. */
+function optional<K extends string, V>(
+  key: K,
+  value: V | undefined,
+): { [P in K]?: V } {
+  return value === undefined ? {} : ({ [key]: value } as { [P in K]?: V });
+}
+
 /**
  * Every row of a CityParquet table as a normalised `CityObject`, keyed by id.
  *
@@ -801,6 +895,8 @@ export function decodeTableObjects(
       bbox: readBBox(row.bbox),
       children: readIdList(row.children),
       parents: readIdList(row.parents),
+      ...optional("childrenRoles", readChildrenRoles(row, id)),
+      ...optional("address", readAddress(row.address, id)),
       lod: geometry.lod,
     };
   }

@@ -67,6 +67,8 @@ const IDENTITY_COLUMNS = [
   "object_type",
   "parents",
   "children",
+  "children_roles",
+  "address",
   "bbox",
   "other",
 ] as const;

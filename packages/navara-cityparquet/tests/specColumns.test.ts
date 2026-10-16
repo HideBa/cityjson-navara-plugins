@@ -95,6 +95,39 @@ describe("a package written by the reference writer", () => {
     }
   });
 
+  it("restores a group's children_roles, aligned with its children", async () => {
+    const [parquet, { raw }] = await Promise.all([readPackage(), readExport()]);
+    const group = parquet.objects.g1!;
+    expect(group.children).toEqual(raw.CityObjects.g1!.children);
+    expect(group.childrenRoles).toEqual(
+      (raw.CityObjects.g1 as unknown as { children_roles: string[] })
+        .children_roles,
+    );
+    // An object that names no roles carries none.
+    expect(parquet.objects.b1!.childrenRoles).toBeUndefined();
+  });
+
+  it("restores the address under its CityJSON member names, with its location", async () => {
+    const [parquet, { raw }] = await Promise.all([readPackage(), readExport()]);
+    const exported = (
+      raw.CityObjects.b1 as unknown as {
+        address: Array<Record<string, unknown> & { location: unknown }>;
+      }
+    ).address;
+    const { location: exportedLocation, ...members } = exported[0]!;
+    const index = (exportedLocation as { boundaries: number[] }).boundaries[0]!;
+    const { scale, translate } = raw.transform!;
+    const v = raw.vertices[index]!;
+    const point = [0, 1, 2].map((k) => v[k]! * scale[k]! + translate[k]!);
+
+    const address = parquet.objects.b1!.address!;
+    expect(address).toHaveLength(1);
+    const { location, ...decoded } = address[0]!;
+    expect(decoded).toEqual(members);
+    expect(location!.map(grid)).toEqual([point]);
+    expect(parquet.objects.g1!.address).toBeUndefined();
+  });
+
   it("restores the 'other' column into the attributes", async () => {
     const parquet = await readPackage();
     expect(parquet.objects.b1!.attributes.roofColour).toEqual({

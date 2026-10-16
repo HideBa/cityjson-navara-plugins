@@ -154,6 +154,21 @@ function objectAt(lon: number, lat: number): CityObject {
 }
 
 describe("projectCityObjects", () => {
+  it("projects an address location with the rings", () => {
+    const target = coordinateTargetFor(6697, [139.6, 35.45]);
+    const objects: Record<string, CityObject> = {
+      a: {
+        ...objectAt(139.6, 35.45),
+        address: [{ locality: "Yokohama", location: [[139.6, 35.45, 4]] }],
+      },
+    };
+    projectCityObjects(objects, target);
+    const [x, y] = target.toTarget(139.6, 35.45);
+    expect(objects.a!.address).toEqual([
+      { locality: "Yokohama", location: [[x, y, 4]] },
+    ]);
+  });
+
   it("projects rings and bbox into the target, heights unchanged", () => {
     const target = coordinateTargetFor(6697, [139.6, 35.45]);
     const objects: Record<string, CityObject> = {

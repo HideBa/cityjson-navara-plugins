@@ -84,6 +84,8 @@ describe("readCityParquetTable", () => {
       "object_type",
       "parents",
       "children",
+      "children_roles",
+      "address",
       "bbox",
       "geometry_lod0_0",
       "geometry_lod2_2",
@@ -95,14 +97,8 @@ describe("readCityParquetTable", () => {
     ]) {
       expect(keys).toContain(wanted);
     }
-    // Present in the schema but deliberately skipped — appearance, templates
-    // and the containers this reader does not model.
-    for (const skipped of [
-      "address",
-      "template",
-      "other_attributes",
-      "children_roles",
-    ]) {
+    // Present in the schema but not modelled by this reader.
+    for (const skipped of ["implicit_geometry"]) {
       expect(keys).not.toContain(skipped);
     }
     // Appearance columns are read now (as JSON text), paired with their
