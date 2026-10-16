@@ -1,8 +1,9 @@
 /**
- * The family index over a stream's packed `bbox` + `parents` columns.
+ * The family index over a stream's packed `bbox` + `feature_id` columns.
  *
- * A family is a root row (no parents) plus the contiguous non-root rows after
- * it; a query must hand back whole families only, because a building's parts
+ * A family is a contiguous run of rows sharing one `feature_id`, packed as a
+ * flag on each run's first row; a query must hand back whole families only,
+ * because a building's parts
  * are drawn with (and pick through) their root. Ranges merge across small gaps
  * so a dense viewport becomes a few long reads, but never so far that a sparse
  * hit pattern degenerates into a whole-table read.
@@ -14,7 +15,9 @@ import { MERGE_GAP_ROWS, buildFamilyIndex } from "../src/familyIndex";
 
 /** One synthetic row: its 2D footprint centre, or `null` for a missing bbox. */
 interface SyntheticRow {
-  root: boolean;
+  /** Whether this row starts a family (its feature_id differs from the
+   *  previous row's). */
+  starts: boolean;
   at: readonly [number, number] | null;
 }
 
@@ -27,10 +30,10 @@ function pack(rows: ReadonlyArray<SyntheticRow>): FamilyColumns {
     maxX: new Float64Array(n),
     maxY: new Float64Array(n),
     maxZ: new Float64Array(n),
-    isRoot: new Uint8Array(n),
+    startsFamily: new Uint8Array(n),
   };
   rows.forEach((row, i) => {
-    cols.isRoot[i] = row.root ? 1 : 0;
+    cols.startsFamily[i] = row.starts ? 1 : 0;
     const [x, y] = row.at ?? [Number.NaN, Number.NaN];
     cols.minX[i] = x - 2;
     cols.minY[i] = y - 2;
@@ -92,7 +95,7 @@ function clusteredTables(): { tables: FamilyColumns[]; families: Family[] } {
           const at: [number, number] | null = invalid
             ? null
             : [cx + rand() * 400, cy + rand() * 400];
-          rows.push({ root: k === 0, at });
+          rows.push({ starts: k === 0, at });
           if (at) {
             const [x, y] = at;
             box = box
@@ -138,7 +141,7 @@ describe("buildFamilyIndex", () => {
       (n, t) => n + Array.from(t.minX).filter((v) => Number.isNaN(v)).length,
       0,
     );
-    const total = tables.reduce((n, t) => n + t.isRoot.length, 0);
+    const total = tables.reduce((n, t) => n + t.startsFamily.length, 0);
     expect(invalid).toBeGreaterThan(0);
     expect(index.invalidBBoxRows).toBe(invalid);
     expect(index.rowCount).toBe(total - invalid);
@@ -166,7 +169,7 @@ describe("buildFamilyIndex", () => {
       for (const f of hits) expect(covered(ranges, f)).toBe(true);
 
       for (const r of ranges) {
-        const rows = tables[r.table]!.isRoot.length;
+        const rows = tables[r.table]!.startsFamily.length;
         expect(r.start).toBeGreaterThanOrEqual(0);
         expect(r.end).toBeLessThanOrEqual(rows);
         expect(r.end).toBeGreaterThan(r.start);
@@ -186,7 +189,7 @@ describe("buildFamilyIndex", () => {
     const box = [0, 0, 400, 400] as const;
     const ranges = index.query(box).filter((r) => r.table === 0);
     expect(ranges.length).toBeGreaterThan(1);
-    const rows = tables[0]!.isRoot.length;
+    const rows = tables[0]!.startsFamily.length;
     const read = ranges.reduce((n, r) => n + (r.end - r.start), 0);
     expect(read).toBeLessThan(rows / 2);
   });
@@ -209,13 +212,13 @@ describe("buildFamilyIndex", () => {
 });
 
 describe("family boundaries", () => {
-  it("makes a leading non-root run at a table start its own family", () => {
+  it("starts a table's first family at row 0, whatever its flag says", () => {
     const index = buildFamilyIndex([
       pack([
-        { root: false, at: [0, 0] },
-        { root: false, at: [100, 0] },
-        { root: true, at: [200, 0] },
-        { root: false, at: [300, 0] },
+        { starts: false, at: [0, 0] },
+        { starts: false, at: [100, 0] },
+        { starts: true, at: [200, 0] },
+        { starts: false, at: [300, 0] },
       ]),
     ]);
     expect(index.query([99, -1, 101, 1])).toEqual([
@@ -229,10 +232,10 @@ describe("family boundaries", () => {
   it("finds a family by any valid member, and excludes a family with none", () => {
     const index = buildFamilyIndex([
       pack([
-        { root: true, at: null },
-        { root: false, at: [500, 500] },
-        { root: true, at: null },
-        { root: false, at: null },
+        { starts: true, at: null },
+        { starts: false, at: [500, 500] },
+        { starts: true, at: null },
+        { starts: false, at: null },
       ]),
     ]);
     expect(index.invalidBBoxRows).toBe(3);
@@ -250,8 +253,8 @@ describe("family boundaries", () => {
     // a row with xmin > xmax raised `rowCount` while being unreachable by any
     // query through the place it meant to describe.
     const cols = pack([
-      { root: true, at: [0, 0] },
-      { root: true, at: [100, 0] },
+      { starts: true, at: [0, 0] },
+      { starts: true, at: [100, 0] },
     ]);
     // Invert row 1's x span in place: minX 98 -> 102, maxX 102 -> 98.
     cols.minX[1] = 102;
@@ -266,12 +269,12 @@ describe("family boundaries", () => {
 
   it("merges families across a gap of MERGE_GAP_ROWS, not one row more", () => {
     const rows = (gap: number): SyntheticRow[] => [
-      { root: true, at: [0, 0] },
+      { starts: true, at: [0, 0] },
       ...Array.from({ length: gap }, () => ({
-        root: true,
+        starts: true,
         at: [9000, 9000] as const,
       })),
-      { root: true, at: [0, 0] },
+      { starts: true, at: [0, 0] },
     ];
     const box = [-1, -1, 1, 1] as const;
     const merged = buildFamilyIndex([pack(rows(MERGE_GAP_ROWS))]).query(box);
@@ -296,7 +299,7 @@ describe("a sparse hit pattern", () => {
       const hit = Math.floor((start + size - 1) / EVERY) * EVERY >= start;
       for (let k = 0; k < size; k++) {
         rows.push({
-          root: k === 0,
+          starts: k === 0,
           at: hit ? [0, 0] : [10_000 + start, 10_000],
         });
       }

@@ -2,12 +2,13 @@
  * The family index of a CityParquet stream: which row ranges to read for a
  * viewport box.
  *
- * A **family** is a root row (its `parents` is null or empty) plus the
- * contiguous following rows that do have parents — a Building and its parts,
- * as the CityParquet writer lays them out. A leading non-root run at a table's
- * start (no root before it) is a family of its own. Families are the unit of
- * reading: a query returns whole families only, because a part is drawn with,
- * and picks through, its root.
+ * A **family** is a contiguous run of rows sharing one `feature_id` — a
+ * Building and its parts, or the members of a group whose own row is in
+ * another table. The specification makes each family contiguous within a
+ * table (spec "Feature families are contiguous"), so a run is the whole of
+ * that family in this table. Families are the unit of reading: a query
+ * returns whole families only, because a part is drawn with, and picks
+ * through, its root.
  *
  * A family's box is the union of its VALID rows' boxes (all six coordinates
  * finite, and each span running min-to-max); a family with no valid row cannot
@@ -56,7 +57,7 @@ export interface FamilyIndex {
   readCost(bbox: readonly [number, number, number, number]): number;
 }
 
-/** One table's packed `bbox` + `parents` columns, one entry per row. */
+/** One table's packed `bbox` + `feature_id` columns, one entry per row. */
 export interface FamilyColumns {
   readonly minX: Float64Array;
   readonly minY: Float64Array;
@@ -64,8 +65,9 @@ export interface FamilyColumns {
   readonly maxX: Float64Array;
   readonly maxY: Float64Array;
   readonly maxZ: Float64Array;
-  /** 1 where `parents` is null/empty. */
-  readonly isRoot: Uint8Array;
+  /** 1 where a row starts a family: its `feature_id` differs from the
+   *  previous row's. Row 0 starts one whatever its flag. */
+  readonly startsFamily: Uint8Array;
 }
 
 /** One table's families, packed: `[start, end)` and a 2D union box each. */
@@ -113,7 +115,7 @@ export function buildFamilyIndex(
   const packed: TableFamilies[] = [];
 
   for (const cols of tables) {
-    const n = cols.isRoot.length;
+    const n = cols.startsFamily.length;
     for (const column of [
       cols.minX,
       cols.minY,
@@ -156,7 +158,7 @@ export function buildFamilyIndex(
           invalidBBoxRows += 1;
         }
         i += 1;
-      } while (i < n && cols.isRoot[i] === 0);
+      } while (i < n && cols.startsFamily[i] === 0);
 
       if (valid === 0) continue;
       rowCount += valid;

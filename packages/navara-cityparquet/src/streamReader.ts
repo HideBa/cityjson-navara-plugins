@@ -3,7 +3,7 @@
  * range buffers, index their families, and read whole families by row range.
  *
  * Opening reads, per table, the Parquet footer and then the `bbox` and
- * `parents` columns ONE ROW GROUP AT A TIME, packing them straight into typed
+ * `feature_id` columns ONE ROW GROUP AT A TIME, packing them straight into typed
  * arrays (six `Float64Array`s and a `Uint8Array`, 49 bytes a row) — never a
  * whole table of JS row objects. It enforces one source EPSG across the
  * tables, picks the stream's INDEX space once, converts the packed boxes into
@@ -85,9 +85,8 @@ export class AdmissionRefusedError extends CityParquetError {
 export interface StreamRow {
   readonly table: number;
   readonly row: number;
-  /** Id of the family's first row: its root, or a leading non-root row at a
-   *  table's start. */
-  readonly familyRoot: string;
+  /** The row's `feature_id`: the family it is read with. */
+  readonly featureId: string;
 }
 
 export interface ReadBatch {
@@ -143,9 +142,9 @@ export interface CityParquetStream {
   readonly header: CityParquetStreamHeader;
   readonly index: FamilyIndex;
   /** One batch per FamilyRange; `rows` keys are object ids (task 4 of the
-   *  roadmap reuses them for attribute lookups). Each range must start at a
-   *  family boundary (as `index.query` output does), or `familyRoot` labels
-   *  its first row as a root. `maxLod` compares numerically (`"2"` excludes
+   *  roadmap reuses them for attribute lookups). Each range should start at a
+   *  family boundary, as `index.query` output does, or it reads part of a
+   *  family. `maxLod` compares numerically (`"2"` excludes
    *  `"2.2"`), so pass a value from `header.lods`; `null` reads every LoD.
    *
    *  Callers must SERIALISE requests: `signal` is installed on every buffer
@@ -215,20 +214,19 @@ interface TableProjection {
   readonly geometryColumns: GeometryColumnRef[];
 }
 
-/** One opened table: its buffer, schema, row-group layout and root flags. */
+/** One opened table: its buffer, schema and row-group layout. */
 interface OpenTable {
   readonly buffer: RangeBuffer;
   readonly schema: CityParquetSchema;
   readonly rowCount: number;
   /** First row of each row group, plus a final entry equal to `rowCount`. */
   readonly rowGroupStarts: ReadonlyArray<number>;
-  readonly isRoot: Uint8Array;
 }
 
 /**
  * Throws unless a row-range read returned exactly `rowEnd - rowStart` rows:
- * every packed column and every row-number lookup (`isRoot`, `familyRoot`)
- * indexes by `rowStart + i`, so a short or long read would silently shift
+ * every packed column and every row-number lookup indexes by
+ * `rowStart + i`, so a short or long read would silently shift
  * rows onto the wrong entries.
  */
 export function assertRowCount(
@@ -257,12 +255,31 @@ function rowGroupStartsOf(schema: CityParquetSchema): number[] {
   return starts;
 }
 
-/** Whether a `parents` cell names at least one parent. */
-function hasParents(value: unknown): boolean {
-  return (
-    Array.isArray(value) &&
-    value.some((item: unknown) => typeof item === "string")
-  );
+/**
+ * Flags, in `out` from `offset`, each row of `featureIds` whose `feature_id`
+ * differs from the row before it; `previous` is the `feature_id` of the row
+ * before the first (`null` at a table's start, which always starts a family).
+ * Returns the last row's, to carry a run across row groups. A null or
+ * non-string cell is invalid input: every row MUST carry a `feature_id`.
+ */
+export function markFamilyStarts(
+  featureIds: ReadonlyArray<unknown>,
+  previous: string | null,
+  out: Uint8Array,
+  offset: number,
+): string | null {
+  let last = previous;
+  for (let i = 0; i < featureIds.length; i++) {
+    const featureId = featureIds[i];
+    if (typeof featureId !== "string") {
+      throw new CityParquetError(
+        `Row ${String(offset + i)} of this CityParquet table has no feature_id, so the file is invalid.`,
+      );
+    }
+    out[offset + i] = featureId === last ? 0 : 1;
+    last = featureId;
+  }
+  return last;
 }
 
 /** The one EPSG code every table declares, or a refusal. */
@@ -289,10 +306,11 @@ function consensusSourceEpsg(
 }
 
 /**
- * Reads one table's `bbox` + `parents` into packed columns, a row group at a
- * time. A missing or partial bbox packs as NaN (an invalid row).
+ * Reads one table's `bbox` + `feature_id` into packed columns, a row group at
+ * a time. A missing or partial bbox packs as NaN (an invalid row); a table
+ * without a `feature_id` column is invalid input.
  */
-async function packFamilyColumns(
+export async function packFamilyColumns(
   buffer: RangeBuffer,
   schema: CityParquetSchema,
   rowGroupStarts: ReadonlyArray<number>,
@@ -305,11 +323,16 @@ async function packFamilyColumns(
     maxX: new Float64Array(n).fill(Number.NaN),
     maxY: new Float64Array(n).fill(Number.NaN),
     maxZ: new Float64Array(n).fill(Number.NaN),
-    isRoot: new Uint8Array(n).fill(1),
+    startsFamily: new Uint8Array(n),
   };
   const present = new Set(schema.schemaColumns);
-  const columns = ["bbox", "parents"].filter((c) => present.has(c));
-  if (columns.length === 0) return cols;
+  if (!present.has("feature_id")) {
+    throw new CityParquetError(
+      "This CityParquet table has no feature_id column, so its families cannot be found.",
+    );
+  }
+  const columns = ["bbox", "feature_id"].filter((c) => present.has(c));
+  let previous: string | null = null;
 
   for (let g = 0; g + 1 < rowGroupStarts.length; g++) {
     const rowStart = rowGroupStarts[g]!;
@@ -320,10 +343,15 @@ async function packFamilyColumns(
       rowEnd,
     });
     assertRowCount(rows.length, rowStart, rowEnd);
+    previous = markFamilyStarts(
+      rows.map((row) => row.feature_id),
+      previous,
+      cols.startsFamily,
+      rowStart,
+    );
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]!;
       const r = rowStart + i;
-      cols.isRoot[r] = hasParents(row.parents) ? 0 : 1;
       const bbox = readBBox(row.bbox);
       if (bbox === null) continue;
       cols.minX[r] = bbox[0];
@@ -346,7 +374,7 @@ function sourceCentre(
   let x1 = -Infinity;
   let y1 = -Infinity;
   for (const cols of columns) {
-    for (let i = 0; i < cols.isRoot.length; i++) {
+    for (let i = 0; i < cols.startsFamily.length; i++) {
       const a = cols.minX[i]!;
       const b = cols.minY[i]!;
       const c = cols.maxX[i]!;
@@ -371,7 +399,7 @@ function projectPackedBoxes(
   cols: FamilyColumns,
   target: CoordinateTarget,
 ): void {
-  for (let i = 0; i < cols.isRoot.length; i++) {
+  for (let i = 0; i < cols.startsFamily.length; i++) {
     const box: BBox3 = [
       cols.minX[i]!,
       cols.minY[i]!,
@@ -475,7 +503,6 @@ export async function openCityParquetStream(
       schema,
       rowCount: rowGroupStarts[rowGroupStarts.length - 1]!,
       rowGroupStarts,
-      isRoot: cols.isRoot,
     });
   }
 
@@ -620,7 +647,6 @@ export async function openCityParquetStream(
 
       const objects: Record<string, CityObject> = Object.create(null);
       const rows = new Map<string, StreamRow>();
-      let familyRoot = "";
       for (const piece of piecesOf(range, table.rowGroupStarts)) {
         throwIfAborted(signal);
         let raw: Record<string, unknown>[];
@@ -650,13 +676,15 @@ export async function openCityParquetStream(
             const row = piece.rowStart + off + i;
             const id = chunk[i]!.id;
             const key = typeof id === "string" ? id : "";
-            if (row === range.start || table.isRoot[row] === 1) {
-              familyRoot = key;
-            }
             const object = key === "" ? undefined : decoded[key];
             if (object === undefined) continue;
+            const featureId = chunk[i]!.feature_id;
             objects[key] = object;
-            rows.set(key, { table: range.table, row, familyRoot });
+            rows.set(key, {
+              table: range.table,
+              row,
+              featureId: typeof featureId === "string" ? featureId : key,
+            });
           }
         }
       }

@@ -127,7 +127,8 @@ describe("a streamed EPSG:6697 source", () => {
   });
 });
 
-/** One table's `bbox` + `parents` columns, packed as the reader packs them. */
+/** One table's `bbox` + `feature_id` columns, packed as the reader packs
+ *  them. */
 function columnsOf(
   rows: ReadonlyArray<Record<string, unknown>>,
 ): FamilyColumns {
@@ -139,14 +140,11 @@ function columnsOf(
     maxX: new Float64Array(n).fill(Number.NaN),
     maxY: new Float64Array(n).fill(Number.NaN),
     maxZ: new Float64Array(n).fill(Number.NaN),
-    isRoot: new Uint8Array(n).fill(1),
+    startsFamily: new Uint8Array(n),
   };
   rows.forEach((row, i) => {
-    const parents = row.parents;
-    cols.isRoot[i] =
-      Array.isArray(parents) && parents.some((p) => typeof p === "string")
-        ? 0
-        : 1;
+    cols.startsFamily[i] =
+      i === 0 || row.feature_id !== rows[i - 1]!.feature_id ? 1 : 0;
     const box = readBBox(row.bbox);
     if (box === null) return;
     cols.minX[i] = box[0];
@@ -169,7 +167,7 @@ function indexIn(
   space: Space,
 ): FamilyIndex {
   const cols = columnsOf(rows);
-  for (let i = 0; i < cols.isRoot.length; i++) {
+  for (let i = 0; i < cols.startsFamily.length; i++) {
     const box = [
       cols.minX[i]!,
       cols.minY[i]!,
@@ -242,7 +240,7 @@ describe("the bucket index covers what the UTM index returned", () => {
     let y0 = Infinity;
     let x1 = -Infinity;
     let y1 = -Infinity;
-    for (let i = 0; i < cols.isRoot.length; i++) {
+    for (let i = 0; i < cols.startsFamily.length; i++) {
       x0 = Math.min(x0, cols.minX[i]!);
       y0 = Math.min(y0, cols.minY[i]!);
       x1 = Math.max(x1, cols.maxX[i]!);

@@ -420,11 +420,11 @@ describe("familyModels", () => {
         b: object("b", [30, 0, 0, 40, 10, 5]),
       },
       rows: new Map([
-        ["a", { table: 0, row: 0, familyRoot: "a" }],
-        ["a-part", { table: 0, row: 1, familyRoot: "a" }],
-        ["gap", { table: 0, row: 2, familyRoot: "gap" }],
-        ["noBox", { table: 0, row: 3, familyRoot: "noBox" }],
-        ["b", { table: 0, row: 4, familyRoot: "b" }],
+        ["a", { table: 0, row: 0, featureId: "a" }],
+        ["a-part", { table: 0, row: 1, featureId: "a" }],
+        ["gap", { table: 0, row: 2, featureId: "gap" }],
+        ["noBox", { table: 0, row: 3, featureId: "noBox" }],
+        ["b", { table: 0, row: 4, featureId: "b" }],
       ]),
     };
     // x 15..35 touches only a's PART and b: a still comes back whole.

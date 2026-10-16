@@ -1,6 +1,6 @@
 /**
  * The CityParquet stream reader, on the multi-row-group fixture read through
- * range buffers: an open that reads the footer plus the `bbox` and `parents`
+ * range buffers: an open that reads the footer plus the `bbox` and `feature_id`
  * columns only, and `readRows` that reads whole families by row range.
  *
  * The fixture is 20 copies of `two-buildings` (copy k = rows 3k..3k+2, k*50 m
@@ -18,10 +18,15 @@ import type { ReadBatch } from "../src/streamReader";
 import {
   AdmissionRefusedError,
   assertRowCount,
+  markFamilyStarts,
   openCityParquetStream,
+  packFamilyColumns,
 } from "../src/streamReader";
 import { CityParquetError } from "../src/footer";
-import { readCityParquetTable } from "../src/tableReader";
+import {
+  readCityParquetSchema,
+  readCityParquetTable,
+} from "../src/tableReader";
 
 const fixture = (dir: string) =>
   fileURLToPath(new URL(`./fixtures/${dir}/building.parquet`, import.meta.url));
@@ -110,7 +115,7 @@ describe("openCityParquetStream", () => {
     expect(stream.index.rowCount).toBe(60);
   });
 
-  it("reads only the footer and the bbox/parents columns to open", async () => {
+  it("reads only the footer and the bbox/feature_id columns to open", async () => {
     const bytes = await bytesOf("multigroup-cityparquet");
     const tail = new DataView(bytes.buffer, bytes.byteLength - 8, 4);
     const footerStart = bytes.byteLength - 8 - tail.getUint32(0, true);
@@ -196,17 +201,17 @@ describe("readRows", () => {
     expect(rows.get("NL.IMBAG.Pand.0001_9")).toEqual({
       table: 0,
       row: 27,
-      familyRoot: "NL.IMBAG.Pand.0001_9",
+      featureId: "NL.IMBAG.Pand.0001_9",
     });
     expect(rows.get("NL.IMBAG.Pand.0001-part1_9")).toEqual({
       table: 0,
       row: 28,
-      familyRoot: "NL.IMBAG.Pand.0001_9",
+      featureId: "NL.IMBAG.Pand.0001_9",
     });
     expect(rows.get("NL.IMBAG.Pand.0002_9")).toEqual({
       table: 0,
       row: 29,
-      familyRoot: "NL.IMBAG.Pand.0002_9",
+      featureId: "NL.IMBAG.Pand.0002_9",
     });
   });
 
@@ -346,4 +351,55 @@ describe("estimateReadBytes", () => {
       expect(estimate).toBeLessThan(actual * 4);
     },
   );
+});
+
+describe("families are runs of feature_id", () => {
+  const VEGETATION = fileURLToPath(
+    new URL(
+      "./fixtures/rs-minimal-implicit-cityparquet/vegetation.parquet",
+      import.meta.url,
+    ),
+  );
+
+  async function vegetation(): Promise<RangeBuffer> {
+    const file = await readFile(VEGETATION);
+    return asyncBufferFromBlob(new Blob([new Uint8Array(file)]));
+  }
+
+  it("starts a family where feature_id changes, not where parents is empty", async () => {
+    // Row 0 roots its own family; rows 1..14 are members of a group that lives
+    // in another table (feature_id = the group's id, parents = [group]), so a
+    // parents-based reader glued them onto row 0.
+    const buffer = await vegetation();
+    const schema = await readCityParquetSchema(buffer);
+    const starts = [0, Number(schema.metadata.num_rows)];
+    const cols = await packFamilyColumns(buffer, schema, starts);
+    expect([...cols.startsFamily]).toEqual([1, 1, ...Array(13).fill(0)]);
+  });
+
+  it("refuses a table without a feature_id column", async () => {
+    const buffer = await vegetation();
+    const schema = await readCityParquetSchema(buffer);
+    const withoutFeatureId = {
+      ...schema,
+      schemaColumns: schema.schemaColumns.filter((c) => c !== "feature_id"),
+    };
+    await expect(
+      packFamilyColumns(buffer, withoutFeatureId, [0, 15]),
+    ).rejects.toThrow(CityParquetError);
+  });
+
+  it("carries a run across a row-group boundary", () => {
+    const out = new Uint8Array(5);
+    const last = markFamilyStarts(["a", "a", "b"], null, out, 0);
+    expect(last).toBe("b");
+    markFamilyStarts(["b", "c"], last, out, 3);
+    expect([...out]).toEqual([1, 0, 1, 0, 1]);
+  });
+
+  it.each([null, undefined, 7])("refuses a feature_id cell of %s", (cell) => {
+    expect(() =>
+      markFamilyStarts(["a", cell], null, new Uint8Array(2), 0),
+    ).toThrow(CityParquetError);
+  });
 });

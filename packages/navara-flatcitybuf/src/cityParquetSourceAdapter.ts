@@ -136,7 +136,7 @@ function toBucketBBox(bbox: BBox3, frame: LocalMetricFrame): BBox3 {
 }
 
 /**
- * A batch as one `CityModel` per family (`StreamRow.familyRoot`), keeping
+ * A batch as one `CityModel` per family (`StreamRow.featureId`), keeping
  * only the families whose union bbox intersects `bbox`: a batch also holds
  * the rows of its merge gaps, which no viewport asked for. A family with no
  * object bbox cannot be placed and is dropped. `referenceSystem` (the
@@ -158,7 +158,7 @@ export function familyModels(
 ): CityModel[] {
   const families = new Map<string, CityObject[]>();
   for (const [id, object] of Object.entries(batch.objects)) {
-    const root = batch.rows.get(id)?.familyRoot ?? id;
+    const root = batch.rows.get(id)?.featureId ?? id;
     let members = families.get(root);
     if (!members) {
       members = [];
