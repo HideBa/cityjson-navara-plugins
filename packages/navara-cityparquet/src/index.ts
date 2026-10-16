@@ -24,15 +24,18 @@ export {
   readCityParquetRows,
   readCityParquetSchema,
   readCityParquetTable,
+  readImplicitGeometriesTable,
 } from "./tableReader";
 
-export { decodeTableObjects } from "./decodeTable";
+export { decodeImplicitTemplates, decodeTableObjects } from "./decodeTable";
 
 export type {
   AssembleOptions,
   CityParquetFamily,
   CityParquetManifest,
   CityParquetPackageFile,
+  CityParquetSidecarHrefs,
+  CityParquetSidecarKind,
 } from "./packageAssembly";
 export {
   CITYPARQUET_SIDECAR_NAMES,

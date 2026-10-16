@@ -115,6 +115,26 @@ Yields `building.parquet`, `energy.parquet`, `generics.parquet`,
 `spec-columns.export.city.json` is the export, re-indented: it is the
 reference reader's own decode of these bytes, and the test oracle.
 
+### `rs-minimal-implicit-cityparquet/` — implicit geometries from real data
+
+Copied, unchanged, from duckdb-cityjson's `test/data/cityparquet_rs_minimal/`
+at its `develop` commit **`b5939d8`** ("regenerate cityparquet_rs_minimal from
+the current cityparquet-rs"): `vegetation.parquet` (15 vegetation objects,
+every one an implicit geometry, 14 of them members of a group that lives in
+the package's `generics.parquet`) and `implicit_geometries.parquet` (their 3
+templates). The rest of that package is not copied.
+
+`rs-minimal-implicit.oracle.json` is the reference reader's decode of the
+whole package, reduced to its implicit geometries by `make_oracle.py`: per
+object its template, its absolute reference point and its matrix, and the
+templates' boundaries and vertices.
+
+```bash
+"$CLI" export cityparquet_rs_minimal rs_minimal.export.city.json
+python3 -I rs-minimal-implicit-cityparquet/make_oracle.py \
+  rs_minimal.export.city.json rs-minimal-implicit.oracle.json
+```
+
 ## Rewritten fixtures (not from the reference writer)
 
 ### `multigroup-cityparquet/` and `multigroup-noindex-cityparquet/` — range reads

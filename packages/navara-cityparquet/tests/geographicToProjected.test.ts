@@ -169,6 +169,28 @@ describe("projectCityObjects", () => {
     ]);
   });
 
+  it("projects an implicit geometry's reference point, not its matrix", () => {
+    const target = coordinateTargetFor(6697, [139.6, 35.45]);
+    const matrix = [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1];
+    const objects: Record<string, CityObject> = {
+      a: {
+        ...objectAt(139.6, 35.45),
+        implicitGeometry: {
+          templateId: 3,
+          referencePoint: [139.6, 35.45, 4],
+          transformationMatrix: matrix,
+        },
+      },
+    };
+    projectCityObjects(objects, target);
+    const [x, y] = target.toTarget(139.6, 35.45);
+    expect(objects.a!.implicitGeometry).toEqual({
+      templateId: 3,
+      referencePoint: [x, y, 4],
+      transformationMatrix: matrix,
+    });
+  });
+
   it("projects rings and bbox into the target, heights unchanged", () => {
     const target = coordinateTargetFor(6697, [139.6, 35.45]);
     const objects: Record<string, CityObject> = {

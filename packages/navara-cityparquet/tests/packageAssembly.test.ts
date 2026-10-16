@@ -89,6 +89,26 @@ describe("parseCityParquetManifest", () => {
     ]);
   });
 
+  it("lists every sidecar the manifest declares, by kind", () => {
+    const item = {
+      type: "Feature",
+      assets: {
+        a: { href: "./building.parquet", roles: ["cityparquet-objects"] },
+        m: { href: "./materials.parquet", roles: ["cityparquet-sidecar"] },
+        t: { href: "./textures.parquet", roles: ["cityparquet-sidecar"] },
+        i: {
+          href: "./implicit_geometries.parquet",
+          roles: ["cityparquet-sidecar"],
+        },
+      },
+    };
+    expect(parseCityParquetManifest(item).sidecars).toEqual({
+      materials: "materials.parquet",
+      textures: "textures.parquet",
+      implicitGeometries: "implicit_geometries.parquet",
+    });
+  });
+
   it("keeps each object table's file:size, keyed by its normalised href", async () => {
     const meta: unknown = JSON.parse(
       await readFile(
@@ -219,7 +239,7 @@ describe("parseCityParquetManifest", () => {
         data: { href: "./building.parquet" },
         materials: { href: "./materials.parquet" },
         textures: { href: "./textures.parquet" },
-        templates: { href: "./geometry_templates.parquet" },
+        templates: { href: "./implicit_geometries.parquet" },
       },
     };
     expect(parseCityParquetManifest(roleless).families).toEqual([
@@ -229,7 +249,7 @@ describe("parseCityParquetManifest", () => {
 
   it("names the three sidecar files a role-less package must skip", () => {
     expect([...CITYPARQUET_SIDECAR_NAMES].sort()).toEqual([
-      "geometry_templates.parquet",
+      "implicit_geometries.parquet",
       "materials.parquet",
       "textures.parquet",
     ]);

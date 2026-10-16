@@ -87,6 +87,7 @@ describe("readCityParquetTable", () => {
       "children_roles",
       "address",
       "bbox",
+      "implicit_geometry",
       "geometry_lod0_0",
       "geometry_lod2_2",
       "geometry_properties_lod0_0",
@@ -96,10 +97,6 @@ describe("readCityParquetTable", () => {
       "roofType",
     ]) {
       expect(keys).toContain(wanted);
-    }
-    // Present in the schema but not modelled by this reader.
-    for (const skipped of ["implicit_geometry"]) {
-      expect(keys).not.toContain(skipped);
     }
     // Appearance columns are read now (as JSON text), paired with their
     // geometry column by suffix.

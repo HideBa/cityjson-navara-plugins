@@ -17,8 +17,9 @@
  * row — about 4 s of Yokohama's 7.2 s open. The header then reports
  * `epsg: null` and the frame's descriptor.
  *
- * `readRows` reads the identity columns (`children_roles` and `address`
- * among them), the footer's attribute columns, `other` and every geometry
+ * `readRows` reads the identity columns (`children_roles`, `address` and
+ * `implicit_geometry` among them), the footer's attribute columns, `other`
+ * and every geometry
  * column (with its semantic-surface sibling) up to a LoD, for row ranges only — with `useOffsetIndex`, so a
  * range inside a row group decodes just the pages covering it. Appearance
  * columns are never read: a stream draws no textures. A batch of a PROJECTED

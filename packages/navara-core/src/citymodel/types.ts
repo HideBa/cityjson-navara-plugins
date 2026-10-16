@@ -159,6 +159,35 @@ export interface CityAddress {
   readonly location?: ReadonlyArray<Vec3>;
 }
 
+/**
+ * An object's implicit geometry: a shared relative geometry (an
+ * {@link ImplicitTemplate}, by id) placed at the object. Each template vertex
+ * `v` sits at `M · (v, 1) + (p, 0)`, where `M` is {@link transformationMatrix}
+ * and `p` is {@link referencePoint}.
+ */
+export interface ImplicitGeometryRef {
+  /** The id of the template, a key of {@link CityModel.implicitTemplates}. */
+  readonly templateId: number;
+  /** Where the template is placed, in the same coordinates as the object's
+   *  rings. */
+  readonly referencePoint: Vec3;
+  /** A row-major 4×4 affine matrix, always 16 values with a last row of
+   *  `0, 0, 0, 1`; the identity when the source gave none. */
+  readonly transformationMatrix: ReadonlyArray<number>;
+}
+
+/** A relative geometry that implicit geometries place, in its own local
+ *  coordinates. */
+export interface ImplicitTemplate {
+  readonly id: number;
+  /** The template's name in the source document, when it had one. */
+  readonly name: string | null;
+  /** The template's surfaces, in local coordinates (not placed). */
+  readonly surfaces: ReadonlyArray<Surface>;
+  /** The template's LoD, or null when it carries no geometry. */
+  readonly lod: string | null;
+}
+
 /** A normalized city object — one entry per feature in the model. */
 export interface CityObject {
   /** Unique ID within the model. */
@@ -180,6 +209,9 @@ export interface CityObject {
   readonly childrenRoles?: ReadonlyArray<string | null>;
   /** The object's addresses. Absent when the source carries none. */
   readonly address?: ReadonlyArray<CityAddress>;
+  /** The object's implicit geometry. Absent when it has none. Its template is
+   *  not part of {@link surfaces}. */
+  readonly implicitGeometry?: ImplicitGeometryRef;
   /** Level of detail string from the source geometry (e.g. "2", "2.2"). */
   readonly lod: string | null;
 }
@@ -210,4 +242,7 @@ export interface CityModel {
   readonly vertexCount: number;
   /** Materials and textures, when the source carries any. */
   readonly appearance?: CityAppearance;
+  /** The relative geometries {@link CityObject.implicitGeometry} refers to,
+   *  by id. Absent when the source carries none. */
+  readonly implicitTemplates?: ReadonlyMap<number, ImplicitTemplate>;
 }

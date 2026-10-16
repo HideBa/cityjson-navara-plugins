@@ -31,8 +31,11 @@
 import type { BBox3, CityModel, CityObject, Vec3 } from "@cityjson/navara-core";
 import { mergeBBox } from "@cityjson/navara-core";
 import { CityParquetError } from "./footer";
-import { decodeTableObjects } from "./decodeTable";
-import { readCityParquetTable } from "./tableReader";
+import { decodeImplicitTemplates, decodeTableObjects } from "./decodeTable";
+import {
+  readCityParquetTable,
+  readImplicitGeometriesTable,
+} from "./tableReader";
 import {
   buildPackageAppearance,
   readPackageAppearance,
@@ -58,7 +61,7 @@ const PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet";
 export const CITYPARQUET_SIDECAR_NAMES: ReadonlySet<string> = new Set([
   "materials.parquet",
   "textures.parquet",
-  "geometry_templates.parquet",
+  "implicit_geometries.parquet",
 ]);
 
 /**
@@ -105,9 +108,9 @@ export interface CityParquetManifest {
    * relative name and an absolute one identically.
    */
   objectTables: string[];
-  /** The appearance sidecars the manifest declares (hrefs, like
-   *  `objectTables`), by kind — absent when not shipped. */
-  sidecars: { textures?: string; materials?: string };
+  /** The sidecars the manifest declares (hrefs, like `objectTables`), by
+   *  kind — absent when not shipped. */
+  sidecars: CityParquetSidecarHrefs;
   /**
    * Each object table's declared byte size (STAC `file:size`), keyed by its
    * href as in {@link objectTables}. Only finite, non-negative numbers are
@@ -123,11 +126,24 @@ export interface CityParquetManifest {
   families: ReadonlyArray<CityParquetFamily>;
 }
 
+/** The kinds of sidecar a package can ship, as {@link CityParquetSidecars}
+ *  names them. */
+export type CityParquetSidecarKind =
+  | "textures"
+  | "materials"
+  | "implicitGeometries";
+
+/** A package's sidecar hrefs, by kind. */
+export type CityParquetSidecarHrefs = {
+  [K in CityParquetSidecarKind]?: string;
+};
+
 /** Which sidecar a file name denotes, by its base name. */
-export function sidecarKindOf(href: string): "textures" | "materials" | null {
+export function sidecarKindOf(href: string): CityParquetSidecarKind | null {
   const name = baseName(href);
   if (name === "textures.parquet") return "textures";
   if (name === "materials.parquet") return "materials";
+  if (name === "implicit_geometries.parquet") return "implicitGeometries";
   return null;
 }
 
@@ -298,7 +314,7 @@ export function parseCityParquetManifest(
       "This CityParquet package declares no object tables, so there is nothing to load.",
     );
   }
-  const sidecars: { textures?: string; materials?: string } = {};
+  const sidecars: CityParquetSidecarHrefs = {};
   for (const asset of assets) {
     const kind = sidecarKindOf(asset.href);
     if (kind === null) continue;
@@ -429,7 +445,7 @@ function countRingVertices(object: CityObject): number {
  * on it, so counting what the format actually stores beats reporting 0.
  */
 export interface AssembleOptions {
-  /** The package's appearance sidecars, when the loader found any. */
+  /** The package's sidecars, when the loader found any. */
   readonly sidecars?: CityParquetSidecars;
 }
 
@@ -487,6 +503,15 @@ export async function assembleCityParquetModel(
     vertexCount += countRingVertices(object);
   }
 
+  // Templates are decoded after the object tables so their appearance lands
+  // in the same context; their local coordinates are never projected.
+  const implicitTemplates = options.sidecars?.implicitGeometries
+    ? decodeImplicitTemplates(
+        await readImplicitGeometriesTable(options.sidecars.implicitGeometries),
+        appearance,
+      )
+    : undefined;
+
   const builtAppearance = buildPackageAppearance(appearance);
   return {
     sourceEncoding: "cityparquet",
@@ -497,5 +522,6 @@ export async function assembleCityParquetModel(
     objects,
     vertexCount,
     ...(builtAppearance ? { appearance: builtAppearance } : {}),
+    ...(implicitTemplates ? { implicitTemplates } : {}),
   };
 }

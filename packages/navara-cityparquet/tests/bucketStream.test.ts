@@ -333,7 +333,7 @@ describe("a streamed projected (EPSG:7415) source", () => {
     const stream = await openCityParquetStream([await bufferOf(PROJECTED)]);
     const ranges = stream.index.query([84999, 445999, 85036, 446013]);
     expect(ranges).toEqual([{ table: 0, start: 0, end: 3 }]);
-    expect(stream.estimateReadBytes(ranges, null)).toBe(2950);
+    expect(stream.estimateReadBytes(ranges, null)).toBe(3124);
 
     const batches = await collect(stream, ranges);
     expect(batches).toHaveLength(1);

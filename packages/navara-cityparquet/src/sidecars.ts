@@ -30,6 +30,9 @@ import type { AsyncBuffer } from "./vendor/hyparquet/index.js";
 export interface CityParquetSidecars {
   readonly textures?: Uint8Array;
   readonly materials?: Uint8Array;
+  /** `implicit_geometries.parquet`: the relative geometries implicit
+   *  geometries place. */
+  readonly implicitGeometries?: Uint8Array;
 }
 
 /** What a package's object tables decode their appearance columns against. */

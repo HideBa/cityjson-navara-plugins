@@ -220,7 +220,8 @@ export function projectBBox(bbox: BBox3, target: CoordinateTarget): BBox3 {
 }
 
 /**
- * Projects every object's rings, bbox and address locations into `target`,
+ * Projects every object's rings, bbox, address locations and implicit
+ * geometry reference point into `target`,
  * replacing the entries of `objects` in place (the objects themselves are
  * immutable). An object's new bbox covers its projected source bbox (kept
  * for geometryless parents) and every projected ring vertex. An identity
@@ -271,6 +272,16 @@ export function projectCityObjects(
             address: object.address.map((a) =>
               a.location ? { ...a, location: a.location.map(project) } : a,
             ),
+          }
+        : {}),
+      // Only the reference point is in the file CRS; the template and its
+      // matrix are in the template's local frame.
+      ...(object.implicitGeometry
+        ? {
+            implicitGeometry: {
+              ...object.implicitGeometry,
+              referencePoint: project(object.implicitGeometry.referencePoint),
+            },
           }
         : {}),
     };

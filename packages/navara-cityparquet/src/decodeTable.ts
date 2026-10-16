@@ -32,6 +32,8 @@ import type {
   BuildingSurfaceType,
   CityAddress,
   CityObject,
+  ImplicitGeometryRef,
+  ImplicitTemplate,
   Surface,
   SurfaceTexture,
   UV,
@@ -41,7 +43,11 @@ import type { CityFooter } from "./footer";
 import { CityParquetError } from "./footer";
 import { attributeKeyForColumn, decodeExtensionName } from "./naming";
 import type { PackageAppearance } from "./sidecars";
-import type { CityParquetTableData, GeometryColumnRef } from "./tableReader";
+import type {
+  CityParquetTableData,
+  GeometryColumnRef,
+  ImplicitGeometriesTableData,
+} from "./tableReader";
 import type { DecodedWkb } from "./wkb";
 import { WkbError, decodeWkb } from "./wkb";
 
@@ -288,6 +294,81 @@ function readAddressLocation(cell: unknown, id: string): Vec3[] {
     );
   }
   return decoded.points;
+}
+
+/** The identity matrix, row-major: what an absent `transformationMatrix`
+ *  means. */
+const IDENTITY_MATRIX: ReadonlyArray<number> = Object.freeze([
+  1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+]);
+
+/**
+ * The `implicit_geometry` struct (spec "implicit_geometries.parquet"):
+ * `undefined` for a null cell. A non-null struct MUST carry a template `id`
+ * and a WKB `PointZ` reference `point`; its `transformationMatrix` is 16
+ * finite values, row-major, whose last row is `0, 0, 0, 1`, and is the
+ * identity when absent. Anything else is invalid input.
+ */
+function readImplicitGeometry(
+  cell: unknown,
+  id: string,
+): ImplicitGeometryRef | undefined {
+  if (isEmptyCell(cell)) return undefined;
+  const invalid = (what: string): CityParquetError =>
+    new CityParquetError(
+      `The implicit geometry of object '${id}' ${what}, so the file is invalid.`,
+    );
+  if (!isPlainObject(cell)) throw invalid("is not a struct");
+  const templateId = templateIdOf(cell.id);
+  if (templateId === null) throw invalid("has no usable template id");
+  const referencePoint = readPointZ(cell.point);
+  if (referencePoint === null) {
+    throw invalid("has no WKB PointZ reference point");
+  }
+  const matrix = cell.transformationMatrix;
+  let transformationMatrix = IDENTITY_MATRIX;
+  if (!isEmptyCell(matrix)) {
+    const values = Array.isArray(matrix) ? matrix.map(Number) : [];
+    if (values.length !== 16 || !values.every((v) => Number.isFinite(v))) {
+      throw invalid("has a transformation matrix that is not 16 numbers");
+    }
+    if (
+      values[12] !== 0 ||
+      values[13] !== 0 ||
+      values[14] !== 0 ||
+      values[15] !== 1
+    ) {
+      throw invalid(
+        "has a projective transformation matrix (its last row is not 0, 0, 0, 1)",
+      );
+    }
+    transformationMatrix = values;
+  }
+  return { templateId, referencePoint, transformationMatrix };
+}
+
+/** A template id: a non-negative integer, as a number. */
+function templateIdOf(value: unknown): number | null {
+  const n = typeof value === "bigint" ? Number(value) : value;
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+/** A WKB `PointZ` cell as its coordinate, or `null` for anything else. */
+function readPointZ(cell: unknown): Vec3 | null {
+  if (!(cell instanceof Uint8Array) || cell.byteLength < 5) return null;
+  const view = new DataView(cell.buffer, cell.byteOffset, cell.byteLength);
+  const type = view.getUint32(1, cell[0] === 1);
+  // ISO (1001) or EWKB (Z flag on type 1) — never a multi-point.
+  if ((type & 0x0fffffff) % 1000 !== 1) return null;
+  let decoded: DecodedWkb;
+  try {
+    decoded = decodeWkb(cell);
+  } catch {
+    return null;
+  }
+  return decoded.kind === "points" && decoded.points.length === 1
+    ? decoded.points[0]!
+    : null;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -897,6 +978,10 @@ export function decodeTableObjects(
       parents: readIdList(row.parents),
       ...optional("childrenRoles", readChildrenRoles(row, id)),
       ...optional("address", readAddress(row.address, id)),
+      ...optional(
+        "implicitGeometry",
+        readImplicitGeometry(row.implicit_geometry, id),
+      ),
       lod: geometry.lod,
     };
   }
@@ -904,4 +989,46 @@ export function decodeTableObjects(
   warnings.flush();
 
   return objects;
+}
+
+/**
+ * The relative geometries of an `implicit_geometries.parquet` sidecar, by
+ * `id`, in their local coordinates. Their appearance resolves against the
+ * package's sidecars like an object table's. A row without a usable `id`, or
+ * an `id` that repeats, is invalid input.
+ */
+export function decodeImplicitTemplates(
+  table: ImplicitGeometriesTableData,
+  appearance: PackageAppearance | null = null,
+): Map<number, ImplicitTemplate> {
+  const templates = new Map<number, ImplicitTemplate>();
+  const warnings = new DecodeWarnings();
+  for (const row of table.rows) {
+    const id = templateIdOf(row.id);
+    if (id === null) {
+      throw new CityParquetError(
+        "implicit_geometries.parquet has a row without a usable 'id', so the file is invalid.",
+      );
+    }
+    if (templates.has(id)) {
+      throw new CityParquetError(
+        `implicit_geometries.parquet has more than one row with id ${String(id)}, so the file is invalid.`,
+      );
+    }
+    const geometry = readRowGeometry(
+      row,
+      table.geometryColumns,
+      `implicit geometry ${String(id)}`,
+      warnings,
+      appearance,
+    );
+    templates.set(id, {
+      id,
+      name: typeof row.name === "string" ? row.name : null,
+      surfaces: geometry.surfaces,
+      lod: geometry.lod,
+    });
+  }
+  warnings.flush();
+  return templates;
 }

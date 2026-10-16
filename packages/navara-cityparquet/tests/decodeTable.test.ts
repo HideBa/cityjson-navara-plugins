@@ -975,3 +975,88 @@ describe("cityJsonTypeForObjectType", () => {
     expect(t("+SolarPanel")).toBe("+SolarPanel");
   });
 });
+
+describe("decodeTableObjects (implicit_geometry)", () => {
+  const MATRIX = [2, 0, 0, 0.5, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 1];
+  const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+  function decodeOne(implicit: unknown): CityObject {
+    return at(
+      decodeTableObjects(
+        tableOf([
+          {
+            id: "t",
+            object_type: "SolitaryVegetationObject",
+            implicit_geometry: implicit,
+          },
+        ]),
+      ),
+      "t",
+    );
+  }
+
+  it("reads the template id, the reference point and the matrix", () => {
+    const object = decodeOne({
+      id: 7n,
+      point: wkbPointZ([85000.5, 446000, 2]),
+      transformationMatrix: MATRIX,
+    });
+    expect(object.implicitGeometry).toEqual({
+      templateId: 7,
+      referencePoint: [85000.5, 446000, 2],
+      transformationMatrix: MATRIX,
+    });
+    // The template is not the object's own geometry.
+    expect(object.surfaces).toEqual([]);
+  });
+
+  it("reads an absent matrix as the identity", () => {
+    const object = decodeOne({
+      id: 0,
+      point: wkbPointZ([1, 2, 3]),
+      transformationMatrix: null,
+    });
+    expect(object.implicitGeometry?.transformationMatrix).toEqual(IDENTITY);
+  });
+
+  it("leaves the member absent for a null struct", () => {
+    expect(decodeOne(null).implicitGeometry).toBeUndefined();
+    expect(
+      at(
+        decodeTableObjects(tableOf([{ id: "t", object_type: "Building" }])),
+        "t",
+      ).implicitGeometry,
+    ).toBeUndefined();
+  });
+
+  const ORIGIN = wkbPointZ([0, 0, 0]);
+  it.each([
+    ["no id", { id: null, point: ORIGIN }],
+    ["no point", { id: 0, point: null }],
+    ["a point that is not a PointZ", { id: 0, point: wkbMultiPointZ([[0, 0, 0]]) }],
+    ["a point that is not WKB", { id: 0, point: new Uint8Array([1, 2]) }],
+    [
+      "a matrix of 12 values",
+      { id: 0, point: ORIGIN, transformationMatrix: MATRIX.slice(0, 12) },
+    ],
+    [
+      "a projective matrix",
+      {
+        id: 0,
+        point: ORIGIN,
+        transformationMatrix: [...MATRIX.slice(0, 12), 0, 0, 1, 1],
+      },
+    ],
+    [
+      "a matrix with a non-finite value",
+      {
+        id: 0,
+        point: ORIGIN,
+        transformationMatrix: [Number.NaN, ...MATRIX.slice(1)],
+      },
+    ],
+    ["a negative id", { id: -1, point: ORIGIN }],
+  ])("refuses an implicit geometry with %s", (_, implicit) => {
+    expect(() => decodeOne(implicit)).toThrow(CityParquetError);
+  });
+});

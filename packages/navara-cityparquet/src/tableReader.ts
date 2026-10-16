@@ -70,6 +70,7 @@ const IDENTITY_COLUMNS = [
   "children_roles",
   "address",
   "bbox",
+  "implicit_geometry",
   "other",
 ] as const;
 
@@ -359,4 +360,37 @@ export async function readCityParquetTable(
   const columns = buildProjection(schemaColumns, footer, geometryColumns);
   const rows = await readCityParquetRows(file, metadata, columns);
   return { footer, rows, geometryColumns };
+}
+
+/** The rows of an `implicit_geometries.parquet` sidecar and its geometry
+ *  columns (spec "implicit_geometries.parquet"). */
+export interface ImplicitGeometriesTableData {
+  rows: ReadonlyArray<Record<string, unknown>>;
+  geometryColumns: ReadonlyArray<GeometryColumnRef>;
+}
+
+/**
+ * Reads an `implicit_geometries.parquet` sidecar: its `id` and `name` columns
+ * and its per-LoD geometry, properties and appearance columns, under the same
+ * column grammar and decode conventions as an object table.
+ */
+export async function readImplicitGeometriesTable(
+  bytes: Uint8Array,
+): Promise<ImplicitGeometriesTableData> {
+  const file = asyncBufferOf(bytes);
+  const { metadata, schemaColumns, geometryColumns } =
+    await readCityParquetSchema(file);
+  const present = new Set(schemaColumns);
+  const columns = [
+    "id",
+    "name",
+    ...geometryColumns.flatMap((g) => [
+      g.name,
+      g.propsName,
+      g.materialName ?? null,
+      g.textureName ?? null,
+    ]),
+  ].filter((n): n is string => n !== null && present.has(n));
+  const rows = await readCityParquetRows(file, metadata, columns);
+  return { rows, geometryColumns };
 }

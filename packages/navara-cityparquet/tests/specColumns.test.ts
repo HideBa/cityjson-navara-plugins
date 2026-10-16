@@ -42,7 +42,17 @@ async function readPackage(): Promise<CityModel> {
       bytes: new Uint8Array(await readFile(new URL(href, PACKAGE))),
     })),
   );
-  return assembleCityParquetModel(files);
+  const sidecar = async (
+    href: string | undefined,
+  ): Promise<Uint8Array | undefined> =>
+    href === undefined
+      ? undefined
+      : new Uint8Array(await readFile(new URL(href, PACKAGE)));
+  return assembleCityParquetModel(files, {
+    sidecars: {
+      implicitGeometries: await sidecar(manifest.sidecars.implicitGeometries),
+    },
+  });
 }
 
 async function readExport(): Promise<{ raw: CityJSONRoot; model: CityModel }> {
@@ -134,5 +144,59 @@ describe("a package written by the reference writer", () => {
       name: "red",
       rgb: [200, 30, 30],
     });
+  });
+});
+
+describe("implicit geometry from the reference writer", () => {
+  it("places the object's template by its reference point and matrix", async () => {
+    const [parquet, { raw }] = await Promise.all([readPackage(), readExport()]);
+    const instance = (
+      raw.CityObjects.t1 as unknown as {
+        geometry: Array<{
+          template: number;
+          boundaries: number[];
+          transformationMatrix: number[];
+        }>;
+      }
+    ).geometry[0]!;
+    const { scale, translate } = raw.transform!;
+    const v = raw.vertices[instance.boundaries[0]!]!;
+    const point = [0, 1, 2].map((k) => v[k]! * scale[k]! + translate[k]!);
+
+    const implicit = parquet.objects.t1!.implicitGeometry!;
+    expect(implicit.templateId).toBe(instance.template);
+    expect(grid(implicit.referencePoint)).toEqual(point);
+    expect(implicit.transformationMatrix).toEqual(
+      instance.transformationMatrix,
+    );
+    expect(parquet.objects.b1!.implicitGeometry).toBeUndefined();
+  });
+
+  it("reads the templates in their local coordinates", async () => {
+    const [parquet, { raw }] = await Promise.all([readPackage(), readExport()]);
+    const exported = (
+      raw as unknown as {
+        "geometry-templates": {
+          templates: Array<{ lod: string; boundaries: number[][][] }>;
+          "vertices-templates": Vec3[];
+        };
+      }
+    )["geometry-templates"];
+    const templates = parquet.implicitTemplates!;
+    expect([...templates.keys()]).toEqual(exported.templates.map((_, i) => i));
+    for (const [i, template] of exported.templates.entries()) {
+      const decoded = templates.get(i)!;
+      expect(decoded.id).toBe(i);
+      expect(Number(decoded.lod)).toBe(Number(template.lod));
+      expect(
+        decoded.surfaces.map((s) => s.rings.map((ring) => ring.map(grid))),
+      ).toEqual(
+        template.boundaries.map((face) =>
+          face.map((ring) =>
+            ring.map((index) => grid(exported["vertices-templates"][index]!)),
+          ),
+        ),
+      );
+    }
   });
 });
