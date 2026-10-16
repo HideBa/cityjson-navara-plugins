@@ -1,21 +1,20 @@
 /**
  * Everything a textured city mesh needs beyond its arrays: resolving a
  * texture's image path against the DATASET's URL, loading images through an
- * injectable seam, one material per texture group, and the per-vertex
- * "white-out" that lets an image show unmodulated where it has loaded.
+ * injectable seam, and one material per texture group.
  *
  * Engine-free (imports `three` only) and Node-importable: the default
  * `TextureSource` wraps three's `TextureLoader`, which touches the DOM only
  * when `load` is called, and every test injects a fake instead.
  *
- * Why images are a MASK rather than a colour: both mesh classes multiply the
- * material's `map` by the vertex colour (`vertexColors: true`), and the vertex
- * colour is also how rules, hover and selection are drawn. Writing WHITE over
- * the vertices of a group whose image is ready shows the image as-is; leaving
- * the semantic colour where an image is still loading, failed, or could not
- * be resolved (a relative path in a local file) degrades to the plain look
- * for exactly those faces. Highlights are painted after the mask, so a
- * selected textured face tints — it is still visibly selected.
+ * Why images are a FLAG rather than a colour: both mesh classes multiply the
+ * material's `map` by the surface's style colour, and that colour is also how
+ * rules, hover and selection are drawn. A slot whose image is ready carries
+ * `SLOT_TEXTURED`, which the shader draws white, so the image shows as-is;
+ * a slot whose image is still loading, failed, or could not be resolved (a
+ * relative path in a local file) keeps its colour and degrades to the plain
+ * look for exactly those faces. Selection and hover take precedence over the
+ * flag, so a selected textured face tints — it is still visibly selected.
  */
 import {
   ClampToEdgeWrapping,
@@ -23,11 +22,11 @@ import {
   RepeatWrapping,
   SRGBColorSpace,
   TextureLoader,
-  type MeshLambertMaterial,
   type Texture,
 } from "three";
 import type { CityTexture, TextureGroup } from "@cityjson/navara-core";
 import { createCityMaterial } from "./cityMaterial";
+import type { CityStyleMaterial, CityStyleUniforms } from "./cityStyle";
 
 /**
  * The image-loading seam. `load` starts fetching `url` and reports through
@@ -224,41 +223,23 @@ export function applyTextureSettings(
 }
 
 /**
- * One city material per group — the same lit, double-sided, vertex-coloured
- * material as the untextured mesh (`createCityMaterial`), plus a `map` where
- * the group's image is ready. Group `g` uses material `g`. The CALLER
- * registers these with its shadow hooks; this builder has no engine seam.
+ * One city material per group — the same lit, double-sided material as the
+ * untextured mesh (`createCityMaterial`), reading the mesh's style texture
+ * through `uniforms`, plus a `map` where the group's image is ready. Group
+ * `g` uses material `g`. The CALLER registers these with its shadow hooks;
+ * this builder has no engine seam.
  */
 export function buildGroupMaterials(
   groups: ReadonlyArray<TextureGroup>,
   cache: TextureCache,
-): MeshLambertMaterial[] {
+  uniforms: CityStyleUniforms,
+): CityStyleMaterial[] {
   return groups.map((group) => {
-    const material = createCityMaterial();
+    const material = createCityMaterial(uniforms);
     if (group.textureIndex >= 0) {
       const entry = cache.request(group.textureIndex);
       if (entry.status === "ready") material.map = entry.texture;
     }
     return material;
   });
-}
-
-/**
- * Write white over every vertex of a group whose image is ready, so the map
- * shows unmodulated; every other vertex keeps `source`'s colour. Returns
- * `source` itself when nothing is masked, so callers can skip a copy.
- */
-export function maskReadyTextures(
-  source: Float32Array,
-  groups: ReadonlyArray<TextureGroup> | null | undefined,
-  isReady: (textureIndex: number) => boolean,
-): Float32Array {
-  if (!groups) return source;
-  let out: Float32Array | null = null;
-  for (const group of groups) {
-    if (group.textureIndex < 0 || !isReady(group.textureIndex)) continue;
-    out ??= Float32Array.from(source);
-    out.fill(1, group.start * 3, (group.start + group.count) * 3);
-  }
-  return out ?? source;
 }

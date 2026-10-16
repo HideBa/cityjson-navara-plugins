@@ -5,6 +5,11 @@
  */
 
 import { describe, it, expect } from "vitest";
+import {
+  vertexColors,
+  vertexObjectIndices,
+  vertexSurfaceIndices,
+} from "./vertexView";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildCityMeshArrays } from "../../src/geometry/buildCityMeshArrays";
@@ -121,8 +126,10 @@ describe("buildCityMeshArrays without a theme", () => {
     expect(arrays.uvs).toBeNull();
     expect(arrays.textureGroups).toBeNull();
     // Untextured build keeps file order: object 0's surfaces come first.
-    expect(arrays.objectIndices[0]).toBe(0);
-    expect(arrays.objectIndices[arrays.objectIndices.length - 1]).toBe(1);
+    expect(vertexObjectIndices(arrays)[0]).toBe(0);
+    expect(
+      vertexObjectIndices(arrays)[vertexObjectIndices(arrays).length - 1],
+    ).toBe(1);
   });
 });
 
@@ -303,7 +310,10 @@ describe("buildCityMeshArrays with a texture theme", () => {
     const tex = (i: number): Surface["texture"] => ({
       rgb: { textureIndex: i, uvs: [squareUv] },
     });
-    const s = (type: Surface["type"], texture?: Surface["texture"]): Surface => ({
+    const s = (
+      type: Surface["type"],
+      texture?: Surface["texture"],
+    ): Surface => ({
       type,
       rings: [square],
       attributes: {},
@@ -328,7 +338,7 @@ describe("buildCityMeshArrays with a texture theme", () => {
     ]);
     // Identity travels with the vertex: (obj, surface) per range.
     const ids = (v: number): string =>
-      `${arrays.objectIndices[v]}:${arrays.surfaceIndices[v]}`;
+      `${vertexObjectIndices(arrays)[v]}:${vertexSurfaceIndices(arrays)[v]}`;
     expect(ids(0)).toBe("0:1"); // a's wall, untextured
     expect(ids(6)).toBe("1:0"); // b's roof, texture 0
     expect(ids(12)).toBe("0:0"); // a's roof, texture 1 (file order kept)
@@ -336,7 +346,9 @@ describe("buildCityMeshArrays with a texture theme", () => {
     expect(arrays.objectKeys).toEqual(["a", "b"]);
     // Untextured vertices carry (0,0); colours stay semantic everywhere.
     expect(arrays.uvs![0]).toBe(0);
-    expect(arrays.colors[0]).toBeCloseTo(SURFACE_COLORS_LINEAR.WallSurface.r);
+    expect(vertexColors(arrays)[0]).toBeCloseTo(
+      SURFACE_COLORS_LINEAR.WallSurface.r,
+    );
   });
 
   it("treats a surface without that theme, or with bad UV lengths, as untextured (alongside a textured one)", () => {
@@ -391,11 +403,15 @@ describe("buildCityMeshArrays with a texture theme", () => {
     expect(covered).toBe(arrays.triangleCount * 3);
     expect(groups[0]!.textureIndex).toBe(-1);
     for (let i = 1; i < groups.length; i++) {
-      expect(groups[i]!.textureIndex).toBeGreaterThan(groups[i - 1]!.textureIndex);
+      expect(groups[i]!.textureIndex).toBeGreaterThan(
+        groups[i - 1]!.textureIndex,
+      );
     }
     for (const u of arrays.uvs!) expect(Number.isFinite(u)).toBe(true);
     // Same triangles as the untextured build, just reordered.
-    expect(arrays.triangleCount).toBe(buildCityMeshArrays(m, "L").triangleCount);
+    expect(arrays.triangleCount).toBe(
+      buildCityMeshArrays(m, "L").triangleCount,
+    );
   });
 });
 
@@ -423,9 +439,12 @@ describe("buildCityMeshArrays with a material theme", () => {
       { kind: "material", name: "paint" },
     );
     const grey = srgbToLinear([0.5, 0.5, 0.5]);
-    expect(arrays.colors[0]).toBeCloseTo(grey[0], 6);
-    expect(arrays.colors[1]).toBeCloseTo(grey[1], 6);
-    expect(arrays.colors[6 * 3]).toBeCloseTo(SURFACE_COLORS_LINEAR.WallSurface.r, 6);
+    expect(vertexColors(arrays)[0]).toBeCloseTo(grey[0], 6);
+    expect(vertexColors(arrays)[1]).toBeCloseTo(grey[1], 6);
+    expect(vertexColors(arrays)[6 * 3]).toBeCloseTo(
+      SURFACE_COLORS_LINEAR.WallSurface.r,
+      6,
+    );
     expect(arrays.uvs).toBeNull();
     expect(arrays.textureGroups).toBeNull();
   });

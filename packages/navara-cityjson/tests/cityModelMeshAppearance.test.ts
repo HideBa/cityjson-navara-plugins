@@ -38,10 +38,7 @@ const uvs = [
   ],
 ] as const;
 
-function surface(
-  type: Surface["type"],
-  extra: Partial<Surface> = {},
-): Surface {
+function surface(type: Surface["type"], extra: Partial<Surface> = {}): Surface {
   return { type, rings: [ring], attributes: {}, lod: "2", ...extra };
 }
 
@@ -101,8 +98,7 @@ function materialsOf(m: CityModelMesh): MeshBasicMaterial[] {
 }
 
 function colorAt(m: CityModelMesh, vertex: number): number[] {
-  const attr = m.object3d.geometry.getAttribute("color");
-  return [attr.getX(vertex), attr.getY(vertex), attr.getZ(vertex)];
+  return m.drawnColorAt(vertex);
 }
 
 describe("CityModelMesh with a texture theme", () => {
@@ -260,12 +256,14 @@ describe("CityModelMesh with a texture theme", () => {
     // Positions are ENU deltas around the bbox centre (~0,0); the roof at
     // z≈+3 (bbox mid 3) is under the ray.
     expect(hit).not.toBeNull();
-    expect(m.resolveVertexIndices(hit!.objectIndex, hit!.surfaceIndex)).toEqual({
-      kind: "surface",
-      layerId: "L1",
-      objectId: "B1",
-      surfaceIndex: hit!.surfaceIndex,
-    });
+    expect(m.resolveVertexIndices(hit!.objectIndex, hit!.surfaceIndex)).toEqual(
+      {
+        kind: "surface",
+        layerId: "L1",
+        objectId: "B1",
+        surfaceIndex: hit!.surfaceIndex,
+      },
+    );
     m.dispose();
   });
 

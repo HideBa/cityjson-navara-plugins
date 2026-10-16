@@ -1,9 +1,11 @@
 /**
  * Converts normalized CityModel surfaces into plain typed arrays.
  *
- * Triangulates polygon surfaces, computes flat face normals, assigns vertex
- * colors from the semantic surface type, and emits per-vertex object/surface
- * indices for picking. Contains no GPU/DOM types, so it runs unchanged on the
+ * Triangulates polygon surfaces and computes flat face normals. Every drawn
+ * surface is a SLOT: each vertex names its slot, and per slot the arrays say
+ * which object and surface it is, its base colour and its image. Colour,
+ * highlight and picking all go through the slot, so restyling never touches
+ * a vertex. Contains no GPU/DOM types, so it runs unchanged on the
  * main thread and inside a Web Worker; renderers wrap the arrays in their own
  * buffer objects. Triangulation itself is `triangulate.ts`.
  */
@@ -43,9 +45,6 @@ export interface TextureGroup {
 export interface CityMeshArrays {
   readonly positions: Float32Array;
   readonly normals: Float32Array;
-  readonly colors: Float32Array;
-  readonly objectIndices: Uint32Array;
-  readonly surfaceIndices: Uint32Array;
   readonly objectKeys: string[];
   readonly triangleCount: number;
   /** Per-vertex texture coordinates (2 per vertex). Only under a texture
@@ -54,6 +53,19 @@ export interface CityMeshArrays {
   /** Vertex ranges per texture, untextured first. Only under a texture
    *  theme; `null`/absent otherwise. */
   readonly textureGroups?: ReadonlyArray<TextureGroup> | null;
+  /** Per vertex, its SLOT: the drawn surface it belongs to, numbered in
+   *  write order. A vertex never belongs to two slots. */
+  readonly slots: Uint32Array;
+  /** Per slot, its object index (into `objectKeys`). */
+  readonly slotObjects: Uint32Array;
+  /** Per slot, its surface index within the object's own surfaces. */
+  readonly slotSurfaces: Uint32Array;
+  /** Per slot, the image it is drawn with, or -1 (untextured, or no texture
+   *  theme). */
+  readonly slotTextures: Int32Array;
+  /** Per slot, its base colour (semantic or material), linear rgb, 3 per
+   *  slot — what a style texture starts from. */
+  readonly slotColors: Float32Array;
 }
 
 /** One drawable surface, resolved in pass 1 and written in pass 2. */
@@ -72,7 +84,7 @@ interface PendingSurface {
 
 /**
  * Convert normalized CityModel surfaces into plain typed arrays: positions,
- * per-triangle face normals, vertex colors, and picking indices.
+ * per-triangle face normals, and the slot tables.
  *
  * Uses a two-pass approach for large-model performance:
  * Pass 1: count total triangles to pre-allocate typed arrays.
@@ -98,7 +110,7 @@ interface PendingSurface {
  * no triangles but still takes its `objectKeys` slot and its object index —
  * object indices must be identical to an unfiltered build, or every consumer
  * that maps an index back through `objectKeys` (`computeStyleColors`,
- * `paintLayers`, `resolveVertexIndices`) shifts by the number of hidden
+ * `paintSlotFlags`, `resolveVertexIndices`) shifts by the number of hidden
  * objects before it.
  *
  * `appearance` selects one of the model's appearance themes:
@@ -109,8 +121,9 @@ interface PendingSurface {
  *  - a TEXTURE theme writes surfaces SORTED by texture index (untextured
  *    first, file order within a bucket) so each image is one contiguous
  *    vertex range (`textureGroups`), and emits per-vertex `uvs`. Colours stay
- *    semantic: a renderer whites them out only where an image has actually
- *    loaded, so a missing image degrades to the plain look. A texture theme
+ *    semantic: a renderer draws a slot white only once its image
+ *    (`slotTextures`) has loaded, so a missing image degrades to the plain
+ *    look. A texture theme
  *    that covers no visible surface emits neither (`uvs`/`textureGroups`
  *    null), so a model without images costs nothing extra.
  * With no theme (the default) `uvs`/`textureGroups` are null and the
@@ -215,8 +228,8 @@ export function buildCityMeshArrays(
   }
 
   // Under a texture theme, one contiguous range per image. A stable sort
-  // keeps file order inside each bucket; per-vertex object/surface indices
-  // carry identity, so the write order is free to change.
+  // keeps file order inside each bucket; the slot tables carry identity, so
+  // the write order is free to change.
   if (textureTheme !== null) {
     pending.sort((a, b) => a.textureIndex - b.textureIndex);
   }
@@ -229,16 +242,27 @@ export function buildCityMeshArrays(
   // Pre-allocate typed arrays (avoids dynamic array growth and copy)
   const posArray = new Float32Array(vertexCount * 3);
   const normalArray = new Float32Array(vertexCount * 3);
-  const colorArray = new Float32Array(vertexCount * 3);
-  const objIdxArray = new Uint32Array(vertexCount);
-  const surfIdxArray = new Uint32Array(vertexCount);
   const uvArray = anyTextured ? new Float32Array(vertexCount * 2) : null;
   const textureGroups: TextureGroup[] | null = anyTextured ? [] : null;
+  const slotCount = pending.length;
+  const slots = new Uint32Array(vertexCount);
+  const slotObjects = new Uint32Array(slotCount);
+  const slotSurfaces = new Uint32Array(slotCount);
+  const slotTextures = new Int32Array(slotCount);
+  const slotColors = new Float32Array(slotCount * 3);
 
   // Pass 2: write directly into typed arrays
   let writeIdx = 0;
-  for (const entry of pending) {
+  for (let slot = 0; slot < slotCount; slot++) {
+    const entry = pending[slot]!;
     const { objectIdx, surfaceIdx, triangulation, color, textureIndex } = entry;
+    slotObjects[slot] = objectIdx;
+    slotSurfaces[slot] = surfaceIdx;
+    slotTextures[slot] = textureIndex;
+    slotColors[slot * 3] = color.r;
+    slotColors[slot * 3 + 1] = color.g;
+    slotColors[slot * 3 + 2] = color.b;
+    slots.fill(slot, writeIdx, writeIdx + triangulation.triangles.length * 3);
 
     if (textureGroups) {
       const last = textureGroups[textureGroups.length - 1];
@@ -323,23 +347,6 @@ export function buildCityMeshArrays(
         normalArray[base + 7] = ny;
         normalArray[base + 8] = nz;
 
-        colorArray[base] = color.r;
-        colorArray[base + 1] = color.g;
-        colorArray[base + 2] = color.b;
-        colorArray[base + 3] = color.r;
-        colorArray[base + 4] = color.g;
-        colorArray[base + 5] = color.b;
-        colorArray[base + 6] = color.r;
-        colorArray[base + 7] = color.g;
-        colorArray[base + 8] = color.b;
-
-        objIdxArray[writeIdx] = objectIdx;
-        objIdxArray[writeIdx + 1] = objectIdx;
-        objIdxArray[writeIdx + 2] = objectIdx;
-        surfIdxArray[writeIdx] = surfaceIdx;
-        surfIdxArray[writeIdx + 1] = surfaceIdx;
-        surfIdxArray[writeIdx + 2] = surfaceIdx;
-
         writeIdx += 3;
       }
     }
@@ -348,13 +355,15 @@ export function buildCityMeshArrays(
   return {
     positions: posArray,
     normals: normalArray,
-    colors: colorArray,
-    objectIndices: objIdxArray,
-    surfaceIndices: surfIdxArray,
     objectKeys,
     triangleCount: totalTriangles,
     uvs: uvArray,
     textureGroups,
+    slots,
+    slotObjects,
+    slotSurfaces,
+    slotTextures,
+    slotColors,
   };
 }
 

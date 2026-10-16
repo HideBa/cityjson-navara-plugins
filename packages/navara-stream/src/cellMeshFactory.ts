@@ -23,6 +23,7 @@ import {
   addCityMeshArrays,
   type CityMeshArraysViewLike,
   type CityMeshHandle,
+  type HighlightRGB,
   type PickStrategy,
   type TextureCache,
 } from "@cityjson/navara-cityjson";
@@ -42,6 +43,9 @@ export interface CellMeshFactoryDeps {
   /** The layer's shared image cache (`layerTextures.ts`); a cell built under
    *  a texture theme draws its groups through it. */
   readonly textures?: TextureCache;
+  /** The layer's selection and hover colours, baked into each cell's
+   *  material uniforms. */
+  readonly colors?: HighlightRGB;
 }
 
 export function createCellMeshFactory(
@@ -57,15 +61,13 @@ export function createCellMeshFactory(
       }
       return addCityMeshArrays(view, {
         id: `${deps.layerId}:${key}`,
-        // Both colour branches are COPIED here (`entryToArrays`): the engine
-        // wraps the buffer it is given, and the cache entry's colours are the
-        // restore baseline every later recolor and highlight reads from.
         arrays: entryToArrays(entry),
         frame,
         layerId: deps.layerId,
         cellKey: key,
         pickStrategy: deps.pickStrategy,
         textures: deps.textures,
+        colors: deps.colors,
       });
     },
   };

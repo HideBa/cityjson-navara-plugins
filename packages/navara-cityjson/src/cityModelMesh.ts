@@ -48,14 +48,14 @@ import {
 } from "./enuPlacement";
 import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
-import { computeStyleColors, paintLayers } from "./surfaceColorLayers";
+import { computeStyleColors } from "./surfaceColorLayers";
+import { CityStyleDepthMaterial, SlotStyle } from "./cityStyle";
 import { resolveCityColors, type ResolvedCityColors } from "./cityColors";
 import type { Selection, SurfaceSelection } from "./selection";
 import { ThemeStyleController, type ThemeStyle } from "./themeStyle";
 import {
   buildGroupMaterials,
   defaultTextureSource,
-  maskReadyTextures,
   TextureCache,
   type TextureSource,
 } from "./texturedMaterials";
@@ -158,15 +158,18 @@ export class CityModelMesh {
 
   private model: CityModel;
   private readonly originOffset: Vec3;
-  private readonly makePlacementMatrix:
-    | ((lle: Lle) => Matrix4)
-    | undefined;
+  private readonly makePlacementMatrix: ((lle: Lle) => Matrix4) | undefined;
   private placement: Placement;
   private lod: string | readonly string[] | null;
   private hiddenTypes: ReadonlySet<string>;
   private visibleObjectIds: ReadonlySet<string> | null;
   private arrays: CityMeshArrays;
-  private baseColors: Float32Array;
+  /** The style texture every material of this mesh reads (`cityStyle.ts`):
+   *  colours, highlight and the texture mask are writes into it. */
+  private readonly style: SlotStyle;
+  /** What the mesh renders into the shadow map, when the engine supplies
+   *  one: a clone of the material that keeps the style patch. */
+  private readonly depthMaterial: CityStyleDepthMaterial;
   private styleColors: Float32Array | null = null;
   private evaluator: SurfaceStyleEvaluator | null = null;
   private selections: readonly Selection[] = [];
@@ -181,10 +184,6 @@ export class CityModelMesh {
    *  repaint per burst of loads, not one per image (148 on Rotterdam). */
   private pendingTextureChanges = new Set<number>();
   private textureFlushQueued = false;
-  /** The style-or-base colours with the ready-image mask applied, reused by
-   *  every hover/selection repaint until the style, the mask or the
-   *  geometry changes. */
-  private maskedSource: Float32Array | null = null;
   private readonly colors: ResolvedCityColors;
   private readonly shadowMaterials: ShadowMaterialHooks;
 
@@ -196,7 +195,7 @@ export class CityModelMesh {
     this.requestRender = options.requestRender ?? (() => {});
     this.model = options.model;
     // Before `buildArrays` runs (the constructor builds once), because the
-    // palette is baked into the base colours.
+    // palette is baked into the slots' base colours.
     this.colors = options.colors ?? resolveCityColors();
     // Both halves of the CRS gate: resolvable by proj4 AND metre-based. A
     // foot-based CRS reprojects fine horizontally but would scale heights and
@@ -221,16 +220,24 @@ export class CityModelMesh {
     this.shadowMaterials = options.shadowMaterials ?? NO_SHADOW_MATERIALS;
 
     this.arrays = this.buildArrays();
-    this.baseColors = Float32Array.from(this.arrays.colors);
+    this.style = new SlotStyle(this.arrays, this.colors);
 
+    const material = createCityMaterial(this.style.uniforms);
     this.object3d = new Mesh(
       geometryFromMeshArrays(this.arrays),
-      // LIT, vertex-coloured, double-sided — the ONE city material; the
+      // LIT, styled per surface, double-sided — the ONE city material; the
       // reasoning (and why it is no longer unlit albedo) is on
       // `createCityMaterial`.
-      createCityMaterial(),
+      material,
     );
-    this.shadowMaterials.register(this.object3d.material as Material);
+    // The shadow pass draws through a plain depth material that reads the
+    // same style texture, so a hidden surface casts no shadow. Not a clone of
+    // the lit material: that samples the shadow maps it would be drawing
+    // into, which WebGL refuses as a feedback loop, and nothing casts. Every
+    // material of this mesh shares the uniforms, so one serves them all.
+    this.depthMaterial = new CityStyleDepthMaterial(this.style.uniforms);
+    this.object3d.customDepthMaterial = this.depthMaterial;
+    this.shadowMaterials.register(material);
     this.object3d.name = `cityModel:${this.id}`;
     this.object3d.userData.layerId = this.id;
     this.object3d.castShadow = true;
@@ -317,7 +324,7 @@ export class CityModelMesh {
       this.textures = null;
       if (Array.isArray(this.object3d.material)) {
         this.releaseMaterials(this.object3d.material);
-        this.object3d.material = createCityMaterial();
+        this.object3d.material = createCityMaterial(this.style.uniforms);
         this.shadowMaterials.register(this.object3d.material);
         this.theme.materialsReplaced();
       }
@@ -331,7 +338,11 @@ export class CityModelMesh {
       warn: (message) => console.warn(`[cityModel:${this.id}] ${message}`),
     });
     const previous = this.object3d.material;
-    const next = buildGroupMaterials(groups, this.textures);
+    const next = buildGroupMaterials(
+      groups,
+      this.textures,
+      this.style.uniforms,
+    );
     this.object3d.material = next;
     for (const m of next) this.shadowMaterials.register(m);
     this.releaseMaterials(previous);
@@ -348,9 +359,9 @@ export class CityModelMesh {
     }
   }
 
-  /** An image landed (or failed): give its group the map, then repaint so
-   *  the mask whites out exactly the groups that now show an image. Loads
-   *  arrive in bursts, so the repaint is coalesced onto a microtask. */
+  /** An image landed (or failed): give its group the map, then flag the
+   *  slots that now show an image. Loads arrive in bursts, so the update is
+   *  coalesced onto a microtask. */
   private textureChanged(textureIndex: number): void {
     this.pendingTextureChanges.add(textureIndex);
     if (this.textureFlushQueued) return;
@@ -374,19 +385,14 @@ export class CityModelMesh {
       material.map = entry?.status === "ready" ? entry.texture : null;
       material.needsUpdate = true;
     });
-    this.maskedSource = null;
-    this.paint();
+    this.applyTextured();
+    this.requestRender();
   }
 
-  /** `source` with white over every vertex whose image is on screen. */
-  private maskTextured(source: Float32Array): Float32Array {
+  /** Flag every slot whose image is on screen, so the map shows as-is. */
+  private applyTextured(): void {
     const textures = this.textures;
-    if (!textures) return source;
-    return maskReadyTextures(
-      source,
-      this.arrays.textureGroups,
-      (textureIndex) => textures.get(textureIndex)?.status === "ready",
-    );
+    this.style.setTextured((index) => textures?.isReady(index) ?? false);
   }
 
   /** Test seam: apply any coalesced texture changes now. */
@@ -394,49 +400,34 @@ export class CityModelMesh {
     this.flushTextureChanges();
   }
 
-  /** Recompute style colors, then repaint the live color attribute. */
+  /** Every layer of the style texture: colours, the image mask, the
+   *  highlight. */
   private repaint(): void {
     this.restyle();
+    this.applyTextured();
     this.paint();
   }
 
-  /** Re-run the style evaluator over every surface. Not for highlight changes. */
+  /** Re-run the style evaluator over every slot and write the colours. Not
+   *  for highlight changes. */
   private restyle(): void {
-    const previousStyle = this.styleColors;
     this.styleColors = this.evaluator
       ? computeStyleColors(
           this.evaluator,
-          this.arrays.objectIndices,
-          this.arrays.surfaceIndices,
+          this.arrays.slotObjects,
+          this.arrays.slotSurfaces,
           this.arrays.objectKeys,
           (objectId) => this.model.objects[objectId],
-          this.baseColors,
+          this.arrays.slotColors,
         )
       : null;
-    // `computeStyleColors` allocates fresh on every call, so the identity
-    // check only holds for the null case; a live evaluator always refreshes.
-    if (this.styleColors !== previousStyle) this.maskedSource = null;
+    this.style.setColors(this.styleColors ?? this.arrays.slotColors);
+    this.requestRender();
   }
 
-  /** Repaint the live color attribute from the cached style and the highlight. */
+  /** Write the highlight flags: four bytes per surface, no colour touched. */
   private paint(): void {
-    const attr = this.geometry.getAttribute("color");
-    // Mask BEFORE the highlight pass: a selected textured face still tints.
-    // Cached: hover repaints must not copy the whole colour array each time.
-    this.maskedSource ??= this.maskTextured(
-      this.styleColors ?? this.baseColors,
-    );
-    paintLayers(
-      attr.array as Float32Array,
-      this.maskedSource,
-      this.arrays.objectIndices,
-      this.arrays.surfaceIndices,
-      this.arrays.objectKeys,
-      this.selections,
-      this.hovered,
-      this.colors,
-    );
-    attr.needsUpdate = true;
+    this.style.setHighlight(this.selections, this.hovered);
     this.requestRender();
   }
 
@@ -556,11 +547,10 @@ export class CityModelMesh {
   private rebuildGeometry(): void {
     const old = this.geometry;
     this.arrays = this.buildArrays();
-    this.baseColors = Float32Array.from(this.arrays.colors);
+    this.style.replace(this.arrays);
     this.object3d.geometry = geometryFromMeshArrays(this.arrays);
     old.dispose();
     this.applyMaterials();
-    this.maskedSource = null;
     this.repaint();
     // The theme's edge lines were extracted from the geometry just disposed —
     // an outline of surfaces this LoD (or hidden-type list, or placement) no
@@ -632,7 +622,7 @@ export class CityModelMesh {
   /**
    * Highlight this layer's selections.
    *
-   * Vertices carry no layer id, so `paintLayers` cannot tell one layer's
+   * Slots carry no layer id, so `paintSlotFlags` cannot tell one layer's
    * selection from another's (Task B5 carry-forward) — the filtering is done
    * here, exactly as the pre-Navara `reapplyHighlight` did. Without it, two
    * layers holding the same object id would cross-highlight.
@@ -649,14 +639,21 @@ export class CityModelMesh {
   }
 
   resolveVertex(vertexIndex: number): SurfaceSelection | null {
-    const objIdxAttr = this.geometry.getAttribute("objectIndex");
-    const surfIdxAttr = this.geometry.getAttribute("surfaceIndex");
-    if (!objIdxAttr || !surfIdxAttr) return null;
-    if (vertexIndex < 0 || vertexIndex >= objIdxAttr.count) return null;
-    return this.resolveVertexIndices(
-      objIdxAttr.getX(vertexIndex),
-      surfIdxAttr.getX(vertexIndex),
-    );
+    const ref = this.surfaceAt(vertexIndex);
+    return ref
+      ? this.resolveVertexIndices(ref.objectIndex, ref.surfaceIndex)
+      : null;
+  }
+
+  /** The surface a vertex belongs to, through its slot. */
+  private surfaceAt(vertexIndex: number): SurfaceRef | null {
+    const { slots, slotObjects, slotSurfaces } = this.arrays;
+    if (vertexIndex < 0 || vertexIndex >= slots.length) return null;
+    const slot = slots[vertexIndex]!;
+    return {
+      objectIndex: slotObjects[slot]!,
+      surfaceIndex: slotSurfaces[slot]!,
+    };
   }
 
   /**
@@ -680,14 +677,8 @@ export class CityModelMesh {
     // helper object answer for it.
     const hit = raycaster.intersectObject(this.object3d, false)[0];
     if (!hit?.face) return null;
-    const objIdxAttr = this.geometry.getAttribute("objectIndex");
-    const surfIdxAttr = this.geometry.getAttribute("surfaceIndex");
-    if (!objIdxAttr || !surfIdxAttr) return null;
-    return {
-      objectIndex: objIdxAttr.getX(hit.face.a),
-      surfaceIndex: surfIdxAttr.getX(hit.face.a),
-      distance: hit.distance,
-    };
+    const ref = this.surfaceAt(hit.face.a);
+    return ref ? { ...ref, distance: hit.distance } : null;
   }
 
   /**
@@ -723,13 +714,15 @@ export class CityModelMesh {
     if (this.pickStrategy !== "pickable-wrapper") return [];
     const map: SurfaceRef[] = [];
     for (let t = 0; t < this.arrays.triangleCount; t++) {
-      const v = t * 3;
-      map.push({
-        objectIndex: this.arrays.objectIndices[v]!,
-        surfaceIndex: this.arrays.surfaceIndices[v]!,
-      });
+      map.push(this.surfaceAt(t * 3)!);
     }
     return map;
+  }
+
+  /** The colour the shader draws vertex `vertexIndex` in, linear rgb
+   *  (`SlotStyle.drawnColor`). A test and readback seam. */
+  drawnColorAt(vertexIndex: number): [number, number, number] {
+    return this.style.drawnColor(this.arrays.slots[vertexIndex]!);
   }
 
   getBoundsGeodetic(): GeodeticBounds {
@@ -756,5 +749,7 @@ export class CityModelMesh {
     this.textures?.dispose();
     this.textures = null;
     this.releaseMaterials(this.object3d.material);
+    this.depthMaterial.dispose();
+    this.style.dispose();
   }
 }

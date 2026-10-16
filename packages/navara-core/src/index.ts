@@ -188,9 +188,9 @@ export type {
   SurfaceInfo,
   SurfaceStyleEvaluator,
 } from "./styling/buildStyleColors";
-export { buildStyleColorsFromArrays } from "./styling/buildStyleColors";
+export { buildSlotStyleColors } from "./styling/buildStyleColors";
 export {
-  buildRuleColorsFromArrays,
+  buildSlotRuleColors,
   compileRuleEvaluator,
 } from "./styling/ruleColors";
 

@@ -11,7 +11,6 @@ import {
   Matrix4,
   MeshLambertMaterial,
   Vector3,
-  type BufferAttribute,
   type BufferGeometry,
   type MeshBasicMaterial,
 } from "three";
@@ -24,17 +23,24 @@ import {
 import { DEFAULT_THEME_STYLE } from "../src/themeStyle";
 import { CITY_MESH_ARRAYS_KEY } from "../src/cityModelRegistry";
 import { FakeThreeView } from "./fakeView";
+import { SLOT_HOVERED, SLOT_SELECTED } from "../src/slotFlags";
+import {
+  CityStyleDepthMaterial,
+  type CityStyleMaterial,
+} from "../src/cityStyle";
 
 /** One triangle in ENU metres, flat, facing +Z (up). */
 function arrays(): CityMeshArrays {
   return {
     positions: Float32Array.from([0, 0, 0, 10, 0, 0, 10, 10, 0]),
     normals: Float32Array.from([0, 0, 1, 0, 0, 1, 0, 0, 1]),
-    colors: new Float32Array(9).fill(0.25),
-    objectIndices: Uint32Array.from([0, 0, 0]),
-    surfaceIndices: Uint32Array.from([2, 2, 2]),
     objectKeys: ["B1"],
     triangleCount: 1,
+    slots: Uint32Array.from([0, 0, 0]),
+    slotObjects: Uint32Array.from([0]),
+    slotSurfaces: Uint32Array.from([2]),
+    slotTextures: Int32Array.from([-1]),
+    slotColors: new Float32Array(3).fill(0.25),
   };
 }
 
@@ -96,7 +102,7 @@ describe("CityMeshArraysMesh", () => {
     const requestRender = vi.fn();
     const mesh = new CityMeshArraysMesh(opts({ requestRender }));
     requestRender.mockClear();
-    mesh.setColors(new Float32Array(9).fill(0.5));
+    mesh.setColors(new Float32Array(3).fill(0.5));
     expect(requestRender).toHaveBeenCalledTimes(1);
     mesh.setVisible(false);
     expect(requestRender).toHaveBeenCalledTimes(2);
@@ -104,21 +110,35 @@ describe("CityMeshArraysMesh", () => {
     expect(requestRender).toHaveBeenCalledTimes(2);
     mesh.setThemeStyle({ fill: "tint", tintRGB: [0.5, 0.5, 0.5], edges: null });
     expect(requestRender).toHaveBeenCalledTimes(3);
+    mesh.setHighlight([], null);
+    expect(requestRender).toHaveBeenCalledTimes(4);
     mesh.dispose();
   });
 
-  it("setColors writes through to the live color attribute", () => {
+  it("starts from the base colours and setColors rewrites the texel, sRGB-encoded", () => {
     const mesh = new CityMeshArraysMesh(opts());
-    const attr = mesh.object3d.geometry.getAttribute(
-      "color",
-    ) as BufferAttribute;
-    expect(attr.getX(0)).toBe(0.25);
-    const version = attr.version;
-    mesh.setColors(new Float32Array(9).fill(0.5));
-    expect(attr.getX(0)).toBe(0.5);
-    // `needsUpdate` is write-only on BufferAttribute; the version bump it
-    // performs is what the renderer actually reads.
-    expect(attr.version).toBe(version + 1);
+    // Linear 0.25 is sRGB 137.
+    expect(mesh.styleTexel(0).slice(0, 3)).toEqual([137, 137, 137]);
+    mesh.setColors(Float32Array.from([1, 0, 0.5]));
+    expect(mesh.styleTexel(0).slice(0, 3)).toEqual([255, 0, 188]);
+    mesh.dispose();
+  });
+
+  it("setHighlight flags the selected surface and leaves its colour alone", () => {
+    const mesh = new CityMeshArraysMesh(opts());
+    const surface = {
+      kind: "surface" as const,
+      layerId: "L",
+      objectId: "B1",
+      surfaceIndex: 2,
+    };
+    mesh.setHighlight([surface], null);
+    expect(mesh.styleTexel(0)).toEqual([137, 137, 137, SLOT_SELECTED]);
+    mesh.setHighlight([], surface);
+    expect(mesh.styleTexel(0)[3]).toBe(SLOT_HOVERED);
+    // A recolor keeps the hover.
+    mesh.setColors(new Float32Array(3).fill(0.5));
+    expect(mesh.styleTexel(0)[3]).toBe(SLOT_HOVERED);
     mesh.dispose();
   });
 
@@ -168,7 +188,7 @@ describe("addCityMeshArrays", () => {
 
     expect(handle.ref).toBe(view.handles[0]!.ref);
     expect(handle.triangleCount()).toBe(1);
-    handle.setColors(new Float32Array(9).fill(0.5));
+    handle.setColors(new Float32Array(3).fill(0.5));
     handle.setVisible(false);
     expect(view.handles[0]!.visible).toBe(false);
     expect(handle.resolveRaycast(ecefRayOntoCell())).toBeNull(); // hidden
@@ -339,5 +359,19 @@ describe("CityMeshArraysMesh lighting", () => {
     m.dispose();
     expect(hooks.unregister).toHaveBeenCalledTimes(1);
     expect(hooks.unregister).toHaveBeenCalledWith(material);
+  });
+
+  it("casts its shadow through a depth material reading its own style texture", () => {
+    const m = new CityMeshArraysMesh(opts());
+    const depth = m.object3d.customDepthMaterial as CityStyleDepthMaterial;
+    // A plain depth material: the lit one samples the shadow maps it would be
+    // drawing into, which WebGL refuses as a feedback loop.
+    expect(depth).toBeInstanceOf(CityStyleDepthMaterial);
+    expect(depth.styleUniforms).toBe(
+      (m.object3d.material as CityStyleMaterial).styleUniforms,
+    );
+    const dispose = vi.spyOn(depth, "dispose");
+    m.dispose();
+    expect(dispose).toHaveBeenCalled();
   });
 });

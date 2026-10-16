@@ -1,36 +1,34 @@
 /**
- * Vertex-color layer stack: base -> style (rules) -> highlight, ported from
- * the pre-Navara `src/scene/highlightMesh.ts` and `src/scene/applyRuleColors.ts`.
+ * The two layers a city mesh's surfaces are coloured by: the STYLE (rules) as
+ * per-slot colours, and the HIGHLIGHT (hover, selection) as per-slot flags.
  *
- * The two layers stay separate arrays on purpose, exactly as the R3F renderer
- * kept them:
- *
- * - `computeStyleColors` produces a *new* array (or null) from the immutable
- *   base colors. It is recomputed only when the layer's rules change.
- * - `paintLayers` writes into the geometry's live `color` attribute array,
- *   restoring the style layer first, so hover/selection changes cost one pass
- *   over the vertices and never accumulate.
+ * - `computeStyleColors` produces a *new* per-slot array (or null) from the
+ *   immutable base colours. It is recomputed only when the layer's rules
+ *   change, and becomes the style texture's RGB.
+ * - `paintSlotFlags` sets the selected and hovered bits in the style
+ *   texture's alpha, so a hover costs one pass over the slots and an upload
+ *   of four bytes per surface, and never touches a colour.
  *
  * `computeStyleColors` is the evaluator-driven analogue of core's
- * `buildStyleColorsFromArrays` (which stays as-is for the worker/streaming
- * path): identical caching by `"objIdx:surfIdx"`, identical "return null when
- * nothing matched" contract. It differs only in resolving objects through a
- * caller-supplied `lookup` instead of a whole `CityModel`, because a streaming
- * cell holds a slice of objects rather than a model.
+ * `buildSlotStyleColors` (which the worker uses): one evaluation per slot,
+ * the same "return null when nothing matched" contract. It differs only in
+ * resolving objects through a caller-supplied `lookup` instead of a whole
+ * `CityModel`, because a streaming cell holds a slice of objects rather than
+ * a model.
  *
- * Engine-free: no `@navaramap/*` imports, no Three.js types — plain typed
- * arrays in, plain typed arrays out.
+ * Engine-free: no `@navaramap/*` imports; the flags go through the
+ * `SlotFlagWriter` seam that `CityStyleTexture` satisfies.
  */
 
 import {
   inheritedAttributes,
   srgbHexToLinear,
   type CityObject,
-  type RGB,
   type SurfaceStyleEvaluator,
 } from "@cityjson/navara-core";
 import type { Selection } from "./selection";
 import { DEFAULT_CITY_COLORS, type HighlightRGB } from "./cityColors";
+import { SLOT_HOVERED, SLOT_SELECTED } from "./slotFlags";
 
 /** The historical defaults, kept as named exports for hosts and tests that
  *  read them; a host that wants its own passes `CityColors` instead. */
@@ -38,70 +36,63 @@ export const HIGHLIGHT_COLOR_HEX = DEFAULT_CITY_COLORS.highlightColor;
 export const HOVER_COLOR_HEX = DEFAULT_CITY_COLORS.hoverColor;
 
 /** Linear-sRGB, matching `new Color(hex)` under three's ColorManagement. */
-const DEFAULT_HIGHLIGHT_RGB: HighlightRGB = {
+export const DEFAULT_HIGHLIGHT_RGB: HighlightRGB = {
   highlight: srgbHexToLinear(HIGHLIGHT_COLOR_HEX),
   hover: srgbHexToLinear(HOVER_COLOR_HEX),
 };
 
 /**
- * Apply `evaluator` to every unique (object, surface) pair referenced by the
- * per-vertex index arrays and write the resulting Linear-sRGB triples over a
- * copy of `baseColors`.
+ * Apply `evaluator` to every slot (one drawn surface each) and write the
+ * resulting Linear-sRGB triples over a copy of `slotColors`.
  *
  * Returns null when the evaluator matched nothing, so the caller can keep
- * rendering `baseColors` without holding a second identical array.
+ * the base colours without holding a second identical array.
  */
 export function computeStyleColors(
   evaluator: SurfaceStyleEvaluator,
-  objectIndices: Uint32Array,
-  surfaceIndices: Uint32Array,
+  slotObjects: Uint32Array,
+  slotSurfaces: Uint32Array,
   objectKeys: readonly string[],
   lookup: (objectId: string) => CityObject | undefined,
-  baseColors: Float32Array,
+  slotColors: Float32Array,
 ): Float32Array | null {
-  const result = Float32Array.from(baseColors);
-  // "objIdx:surfIdx" -> resolved color, or null (no style). `undefined` means
-  // "not evaluated yet", which is why the map value type includes null.
-  const cache = new Map<string, RGB | null>();
+  const result = Float32Array.from(slotColors);
   const attributeCache = new Map<number, Readonly<Record<string, unknown>>>();
   let anyChange = false;
 
-  for (let v = 0; v < objectIndices.length; v++) {
-    const objIdx = objectIndices[v]!;
-    const surfIdx = surfaceIndices[v]!;
-    const key = `${objIdx}:${surfIdx}`;
-
-    let rgb = cache.get(key);
-    if (rgb === undefined) {
-      rgb = null;
-      const objectId = objectKeys[objIdx];
-      const object = objectId === undefined ? undefined : lookup(objectId);
-      const surface = object?.surfaces[surfIdx];
-      if (object && objectId !== undefined && surface) {
-        let attributes = attributeCache.get(objIdx);
-        if (!attributes) {
-          attributes = inheritedAttributes(object, lookup);
-          attributeCache.set(objIdx, attributes);
-        }
-        // The evaluator already returns Linear-sRGB; no conversion needed.
-        rgb = evaluator(
-          { surfaceIndex: surfIdx, surface },
-          { objectId, object, attributes },
-        );
-      }
-      cache.set(key, rgb);
+  for (let slot = 0; slot < slotObjects.length; slot++) {
+    const objIdx = slotObjects[slot]!;
+    const surfIdx = slotSurfaces[slot]!;
+    const objectId = objectKeys[objIdx];
+    const object = objectId === undefined ? undefined : lookup(objectId);
+    const surface = object?.surfaces[surfIdx];
+    if (!object || objectId === undefined || !surface) continue;
+    let attributes = attributeCache.get(objIdx);
+    if (!attributes) {
+      attributes = inheritedAttributes(object, lookup);
+      attributeCache.set(objIdx, attributes);
     }
-
-    if (rgb) {
-      const base = v * 3;
-      result[base] = rgb[0];
-      result[base + 1] = rgb[1];
-      result[base + 2] = rgb[2];
-      anyChange = true;
-    }
+    // The evaluator already returns Linear-sRGB; no conversion needed.
+    const rgb = evaluator(
+      { surfaceIndex: surfIdx, surface },
+      { objectId, object, attributes },
+    );
+    if (!rgb) continue;
+    const base = slot * 3;
+    result[base] = rgb[0];
+    result[base + 1] = rgb[1];
+    result[base + 2] = rgb[2];
+    anyChange = true;
   }
 
   return anyChange ? result : null;
+}
+
+/** Where `paintSlotFlags` writes: `CityStyleTexture` in a mesh, a recorder
+ *  in a test. */
+export interface SlotFlagWriter {
+  flags(slot: number): number;
+  setFlags(slot: number, flags: number): void;
 }
 
 /** An object-level selection covers every surface; a surface-level one, exactly one. */
@@ -115,35 +106,23 @@ function matchesSurface(
 }
 
 /**
- * Restore `source` (the style layer, or the base colors when no style is
- * active) into `target`, then paint hover and selection over it. Selection
- * wins over hover on a vertex both cover.
+ * Set `SLOT_SELECTED` on every slot a selection covers and `SLOT_HOVERED` on
+ * every slot the hover covers, and clear both everywhere else. The shader
+ * draws selection over hover where both apply.
  *
- * `target` is the geometry's live color array; the caller flips
- * `needsUpdate` afterwards.
- *
- * `Selection.layerId` is NOT checked here — vertices carry no layer id, so
- * the caller must pass only the selections belonging to this mesh's layer
- * (as the pre-Navara `reapplyHighlight` did). Passing an empty selection list
- * and a null hover is the supported "clear" call: it restores `source` and
- * returns without walking the vertices, subsuming the old `clearHighlight`.
+ * `Selection.layerId` is NOT checked here — slots carry no layer id, so the
+ * caller must pass only the selections belonging to this mesh's layer.
+ * Passing an empty selection list and a null hover is the "clear" call.
  */
-export function paintLayers(
-  target: Float32Array,
-  source: Float32Array,
-  objectIndices: Uint32Array,
-  surfaceIndices: Uint32Array,
+export function paintSlotFlags(
+  target: SlotFlagWriter,
+  slotObjects: Uint32Array,
+  slotSurfaces: Uint32Array,
   objectKeys: readonly string[],
   selections: readonly Selection[],
   hovered: Selection | null,
-  /** The two paint colours; a resolved `CityColors` satisfies it. Defaults
-   *  to the historical amber pair. */
-  colors: HighlightRGB = DEFAULT_HIGHLIGHT_RGB,
 ): void {
-  target.set(source);
-  const { highlight: HIGHLIGHT_RGB, hover: HOVER_RGB } = colors;
-
-  // Resolve selections to object indices once, rather than per vertex.
+  // Resolve selections to object indices once, rather than per slot.
   // Surface selections are keyed by (object, surface), NOT by object alone:
   // the store can and does hold two surfaces of one building (shift-click a
   // roof then a wall), and an object-keyed map made the second evict the
@@ -162,31 +141,18 @@ export function paintLayers(
     else selectedSurfaces.set(idx, new Set([sel.surfaceIndex]));
   }
   const hoveredIdx = hovered ? objectKeys.indexOf(hovered.objectId) : -1;
+  const both = SLOT_SELECTED | SLOT_HOVERED;
 
-  // Nothing to paint: the restore above is the whole job.
-  if (wholeObjects.size === 0 && selectedSurfaces.size === 0 && hoveredIdx < 0)
-    return;
-
-  for (let v = 0; v < objectIndices.length; v++) {
-    const oIdx = objectIndices[v]!;
-    const sIdx = surfaceIndices[v]!;
-    const base = v * 3;
-
-    // Hover first (lower priority), then selection overrides it.
-    if (
-      hoveredIdx >= 0 &&
-      oIdx === hoveredIdx &&
-      matchesSurface(hovered, sIdx)
-    ) {
-      target[base] = HOVER_RGB[0];
-      target[base + 1] = HOVER_RGB[1];
-      target[base + 2] = HOVER_RGB[2];
+  for (let slot = 0; slot < slotObjects.length; slot++) {
+    const oIdx = slotObjects[slot]!;
+    const sIdx = slotSurfaces[slot]!;
+    let flags = target.flags(slot) & ~both;
+    if (oIdx === hoveredIdx && matchesSurface(hovered, sIdx)) {
+      flags |= SLOT_HOVERED;
     }
-
     if (wholeObjects.has(oIdx) || selectedSurfaces.get(oIdx)?.has(sIdx)) {
-      target[base] = HIGHLIGHT_RGB[0];
-      target[base + 1] = HIGHLIGHT_RGB[1];
-      target[base + 2] = HIGHLIGHT_RGB[2];
+      flags |= SLOT_SELECTED;
     }
+    target.setFlags(slot, flags);
   }
 }

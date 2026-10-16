@@ -107,10 +107,14 @@ export function cellStatsFromGeometry(
       retainedBytes +
       g.positions.byteLength +
       g.normals.byteLength +
+      g.slots.byteLength +
+      g.slotObjects.byteLength +
+      g.slotSurfaces.byteLength +
+      g.slotTextures.byteLength +
       g.baseColors.byteLength +
       (g.ruleColors?.byteLength ?? 0) +
-      g.objectIndices.byteLength +
-      g.surfaceIndices.byteLength +
+      // The style texture the mesh builds: one RGBA8 texel per slot.
+      g.slotObjects.length * 4 +
       (g.uvs?.byteLength ?? 0),
   };
 }

@@ -21,18 +21,19 @@ import type { CellEntry } from "../src/streamLayer";
 
 const FRAME = makeEnuFrame(4.3571, 52.0116, 0);
 
-/** One triangle, with distinct base and rule colours so the copy-vs-alias
- *  invariant is observable. */
+/** One triangle, one slot, with distinct base and rule colours. */
 function entry(withRuleColors: boolean): CellEntry {
   const v = 3;
   return {
     geometry: {
       positions: Float32Array.from([0, 0, 0, 10, 0, 0, 10, 10, 0]),
       normals: new Float32Array(v * 3).fill(0),
-      baseColors: new Float32Array(v * 3).fill(0.25),
-      ruleColors: withRuleColors ? new Float32Array(v * 3).fill(0.5) : null,
-      objectIndices: new Uint32Array(v).fill(0),
-      surfaceIndices: new Uint32Array(v).fill(2),
+      slots: new Uint32Array(v).fill(0),
+      slotObjects: new Uint32Array([0]),
+      slotSurfaces: new Uint32Array([2]),
+      slotTextures: new Int32Array([-1]),
+      baseColors: new Float32Array(3).fill(0.25),
+      ruleColors: withRuleColors ? new Float32Array(3).fill(0.5) : null,
       objectKeys: ["B1"],
       triangleCount: 1,
     },
@@ -95,30 +96,19 @@ describe("createCellMeshFactory", () => {
     expect(configs[0]![CITY_MESH_ARRAYS_KEY]!.frame).toBe(cellFrame);
   });
 
-  it("hands the engine a COPY of the colours, on both branches", () => {
+  it("hands the engine the cell's base colours and the layer's highlight pair", () => {
     const { view, configs } = fakeView();
+    const colors = { highlight: [0, 1, 0], hover: [0, 0, 1] } as const;
     const factory = createCellMeshFactory({
       layerId: "L1",
       getView: () => view,
+      colors,
     });
-
-    const base = entry(false);
+    const base = entry(true);
     factory.create("a", base, FRAME);
-    const baseColors = configs[0]![CITY_MESH_ARRAYS_KEY]!.arrays.colors;
-    expect(baseColors).not.toBe(base.geometry.baseColors);
-    expect([...baseColors]).toEqual([...base.geometry.baseColors]);
-
-    const ruled = entry(true);
-    factory.create("b", ruled, FRAME);
-    const ruleColors = configs[1]![CITY_MESH_ARRAYS_KEY]!.arrays.colors;
-    expect(ruleColors).not.toBe(ruled.geometry.ruleColors);
-    expect([...ruleColors]).toEqual([...ruled.geometry.ruleColors!]);
-    // The whole point of the copy: the engine wraps this buffer, so writing
-    // through the handle must not reach the cache entry's restore baseline.
-    ruleColors.fill(1);
-    expect([...ruled.geometry.ruleColors!]).toEqual([
-      ...new Float32Array(9).fill(0.5),
-    ]);
+    const config = configs[0]![CITY_MESH_ARRAYS_KEY]!;
+    expect(config.arrays.slotColors).toBe(base.geometry.baseColors);
+    expect(config.colors).toBe(colors);
   });
 
   it("reads the view per cell, and refuses before there is one", () => {

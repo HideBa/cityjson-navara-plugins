@@ -12,7 +12,7 @@
 import proj4 from "proj4";
 import {
   buildCityMeshArrays,
-  buildRuleColorsFromArrays,
+  buildSlotRuleColors,
   ensureProjDef,
   geodeticRingsToEnu,
   localMetricFrameFromDescriptor,
@@ -59,17 +59,17 @@ import type {
  * specific typed arrays. `recolor` and `surfaces` need to keep working on
  * that cell afterwards (without re-running select()+decode), so the worker
  * keeps its own copies: the full parsed `CityModel` (never transferred — it
- * holds no ArrayBuffers of its own) plus copies of the per-vertex index
- * arrays and base colors that were about to be transferred away.
+ * holds no ArrayBuffers of its own) plus copies of the slot tables and base
+ * colours that were about to be transferred away.
  */
 interface CachedCell {
   readonly model: CityModel;
-  readonly objectIndices: Uint32Array;
-  readonly surfaceIndices: Uint32Array;
+  readonly slotObjects: Uint32Array;
+  readonly slotSurfaces: Uint32Array;
   readonly objectKeys: string[];
-  /** Copy of the cell's base (non-rule) vertex colors, so `recolor` can fall
-   *  back to them when `buildRuleColorsFromArrays` returns null (no rule
-   *  matched) without needing to re-triangulate the cell to get them. */
+  /** Copy of the cell's base (non-rule) slot colours, so `recolor` can fall
+   *  back to them when `buildSlotRuleColors` returns null (no rule matched)
+   *  without needing to re-triangulate the cell to get them. */
   readonly colors: Float32Array;
   /** What this entry costs the worker, by {@link estimateRetainedBytes}. */
   readonly retainedBytes: number;
@@ -106,8 +106,8 @@ const BYTES_PER_VERTEX = 88;
  */
 function estimateRetainedBytes(
   model: CityModel,
-  objectIndices: Uint32Array,
-  surfaceIndices: Uint32Array,
+  slotObjects: Uint32Array,
+  slotSurfaces: Uint32Array,
   colors: Float32Array,
   objectKeys: ReadonlyArray<string>,
 ): number {
@@ -129,8 +129,8 @@ function estimateRetainedBytes(
   let keyBytes = 0;
   for (const key of objectKeys) keyBytes += key.length * 2 + 24;
   return (
-    objectIndices.byteLength +
-    surfaceIndices.byteLength +
+    slotObjects.byteLength +
+    slotSurfaces.byteLength +
     colors.byteLength +
     keyBytes +
     objects * BYTES_PER_OBJECT +
@@ -388,13 +388,7 @@ function sameSource(a: StreamSource, b: StreamSource): boolean {
   if ("blob" in a) return "blob" in b && a.blob === b.blob;
   const listA: ReadonlyArray<unknown> = "urls" in a ? a.urls : a.blobs;
   const listB: ReadonlyArray<unknown> | null =
-    "urls" in a
-      ? "urls" in b
-        ? b.urls
-        : null
-      : "blobs" in b
-        ? b.blobs
-        : null;
+    "urls" in a ? ("urls" in b ? b.urls : null) : "blobs" in b ? b.blobs : null;
   return (
     listB !== null &&
     listA.length === listB.length &&
@@ -804,25 +798,27 @@ export function installStreamWorker(
               });
             }
             const ruleColors = msg.rulesEnabled
-              ? buildRuleColorsFromArrays(
+              ? buildSlotRuleColors(
                   cellModel,
-                  a.objectIndices,
-                  a.surfaceIndices,
+                  a.slotObjects,
+                  a.slotSurfaces,
                   a.objectKeys,
                   msg.rules,
-                  a.colors,
+                  a.slotColors,
                 )
               : null;
             // Build the payload explicitly. Do NOT spread `a`: CityMeshArrays
-            // has `colors`, CellGeometry has `baseColors`, and a spread would
-            // emit both.
+            // has `slotColors`, CellGeometry has `baseColors`, and a spread
+            // would emit both.
             const geometry: CellGeometry = {
               positions: a.positions,
               normals: a.normals,
-              baseColors: a.colors,
+              slots: a.slots,
+              slotObjects: a.slotObjects,
+              slotSurfaces: a.slotSurfaces,
+              slotTextures: a.slotTextures,
+              baseColors: a.slotColors,
               ruleColors,
-              objectIndices: a.objectIndices,
-              surfaceIndices: a.surfaceIndices,
               objectKeys: a.objectKeys,
               triangleCount: a.triangleCount,
               uvs: a.uvs ?? null,
@@ -843,20 +839,20 @@ export function installStreamWorker(
             // refetch of an already-resident cell must roll back to THIS, not
             // to nothing, if the call fails later.
             const previous = cells.get(key);
-            const objectIndices = a.objectIndices.slice();
-            const surfaceIndices = a.surfaceIndices.slice();
-            const colors = a.colors.slice();
+            const slotObjects = a.slotObjects.slice();
+            const slotSurfaces = a.slotSurfaces.slice();
+            const colors = a.slotColors.slice();
             const retained = estimateRetainedBytes(
               cellModel,
-              objectIndices,
-              surfaceIndices,
+              slotObjects,
+              slotSurfaces,
               colors,
               a.objectKeys,
             );
             cacheSet(key, {
               model: cellModel,
-              objectIndices,
-              surfaceIndices,
+              slotObjects,
+              slotSurfaces,
               objectKeys: a.objectKeys,
               colors,
               retainedBytes: retained,
@@ -897,9 +893,12 @@ export function installStreamWorker(
               [
                 a.positions.buffer,
                 a.normals.buffer,
-                a.colors.buffer,
-                a.objectIndices.buffer,
-                a.surfaceIndices.buffer,
+                a.slots.buffer,
+                a.slotObjects.buffer,
+                a.slotSurfaces.buffer,
+                a.slotTextures.buffer,
+                a.slotColors.buffer,
+                ...(ruleColors ? [ruleColors.buffer] : []),
                 ...(a.uvs ? [a.uvs.buffer] : []),
               ],
             );
@@ -920,7 +919,7 @@ export function installStreamWorker(
           // this worker no longer holds. Skip rather than error.
           if (!cached) continue;
           cacheTouch(key);
-          // buildRuleColorsFromArrays returns null when no rule matched
+          // buildSlotRuleColors returns null when no rule matched
           // anything (or rulesEnabled is false); ruleColors on the wire is
           // non-nullable, so fall back to a fresh copy of the cached base
           // colors — same "ruleColors ?? baseColors" convention the
@@ -928,10 +927,10 @@ export function installStreamWorker(
           // transferring the cache's own buffer would detach it out from
           // under this cache entry.
           const ruleColors = msg.rulesEnabled
-            ? (buildRuleColorsFromArrays(
+            ? (buildSlotRuleColors(
                 cached.model,
-                cached.objectIndices,
-                cached.surfaceIndices,
+                cached.slotObjects,
+                cached.slotSurfaces,
                 cached.objectKeys,
                 msg.rules,
                 cached.colors,

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { vertexObjectIndices, vertexSurfaceIndices } from "./vertexView";
 import { buildCityMeshArrays } from "../../src/geometry/buildCityMeshArrays";
 import {
   sameLodGeometry,
@@ -34,7 +35,9 @@ function object(id: string, lods: ReadonlyArray<string | null>): CityObject {
   };
 }
 
-function model(objects: Record<string, ReadonlyArray<string | null>>): CityModel {
+function model(
+  objects: Record<string, ReadonlyArray<string | null>>,
+): CityModel {
   return {
     sourceEncoding: "cityjson",
     metadata: {},
@@ -141,8 +144,8 @@ describe("sameLodGeometry", () => {
     const signature = (lod: LodSelection) => {
       const arrays = buildCityMeshArrays(mixed, "t", [0, 0, 0], lod);
       return JSON.stringify([
-        [...arrays.objectIndices],
-        [...arrays.surfaceIndices],
+        [...vertexObjectIndices(arrays)],
+        [...vertexSurfaceIndices(arrays)],
       ]);
     };
     for (const a of selections) {

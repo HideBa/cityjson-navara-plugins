@@ -1,4 +1,9 @@
 import { describe, it, expect } from "vitest";
+import {
+  vertexColors,
+  vertexObjectIndices,
+  vertexSurfaceIndices,
+} from "./vertexView";
 import { BufferAttribute, BufferGeometry } from "three";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -283,7 +288,7 @@ describe("buildCityMeshArrays surface palette", () => {
     const a = buildCityMeshArrays(model, "L", [0, 0, 0], null, null);
     const c = SURFACE_COLORS_LINEAR.RoofSurface;
     // Float32 vertex data against double-precision palette values.
-    expect(Array.from(a.colors.slice(0, 3))).toEqual(
+    expect(Array.from(vertexColors(a).slice(0, 3))).toEqual(
       Array.from(Float32Array.from([c.r, c.g, c.b])),
     );
   });
@@ -299,7 +304,7 @@ describe("buildCityMeshArrays surface palette", () => {
       null,
       palette,
     );
-    expect(Array.from(a.colors.slice(0, 3))).toEqual([1, 0, 0]);
+    expect(Array.from(vertexColors(a).slice(0, 3))).toEqual([1, 0, 0]);
     expect(palette.WallSurface).toEqual(SURFACE_COLORS_LINEAR.WallSurface);
   });
 });
@@ -352,9 +357,9 @@ describe("buildCityMeshArrays hidden-type filtering", () => {
     // resolves to the same id.
     expect(filtered.objectKeys).toEqual(unfiltered.objectKeys);
     expect(filtered.objectKeys).toEqual(["b1", "b1p", "tree"]);
-    const treeIdx = unfiltered.objectIndices[3]!; // vertex 3 = the tree's first
+    const treeIdx = vertexObjectIndices(unfiltered)[3]!; // vertex 3 = the tree's first
     expect(unfiltered.objectKeys[treeIdx]).toBe("tree");
-    for (const idx of filtered.objectIndices) expect(idx).toBe(treeIdx);
+    for (const idx of vertexObjectIndices(filtered)) expect(idx).toBe(treeIdx);
   });
 
   it("emits an identical build for a null and for an empty hidden set", () => {
@@ -363,9 +368,11 @@ describe("buildCityMeshArrays hidden-type filtering", () => {
       expect(arrays.triangleCount).toBe(unfiltered.triangleCount);
       expect(arrays.objectKeys).toEqual(unfiltered.objectKeys);
       expect([...arrays.positions]).toEqual([...unfiltered.positions]);
-      expect([...arrays.objectIndices]).toEqual([...unfiltered.objectIndices]);
-      expect([...arrays.surfaceIndices]).toEqual([
-        ...unfiltered.surfaceIndices,
+      expect([...vertexObjectIndices(arrays)]).toEqual([
+        ...vertexObjectIndices(unfiltered),
+      ]);
+      expect([...vertexSurfaceIndices(arrays)]).toEqual([
+        ...vertexSurfaceIndices(unfiltered),
       ]);
     }
   });
@@ -488,7 +495,7 @@ describe("buildCityMeshArrays visible-id filtering", () => {
     );
     expect(arrays.objectKeys).toEqual(unfiltered.objectKeys);
     const treeIdx = unfiltered.objectKeys.indexOf("tree");
-    for (const idx of arrays.objectIndices) expect(idx).toBe(treeIdx);
+    for (const idx of vertexObjectIndices(arrays)) expect(idx).toBe(treeIdx);
   });
 
   it("ANDs with hiddenTypes — a visible id that is a hidden type stays hidden", () => {
@@ -522,26 +529,41 @@ describe("buildCityMeshArrays visible-id filtering", () => {
 });
 
 describe("multiple selected LoDs", () => {
-  const ring: Vec3[] = [[0, 0, 0], [10, 0, 0], [0, 10, 0]];
+  const ring: Vec3[] = [
+    [0, 0, 0],
+    [10, 0, 0],
+    [0, 10, 0],
+  ];
   const mixed = makeModel({
-    detailed: makeObject("detailed", [makeSurface("RoofSurface", ring, "1"), makeSurface("RoofSurface", ring, "2.2")]),
+    detailed: makeObject("detailed", [
+      makeSurface("RoofSurface", ring, "1"),
+      makeSurface("RoofSurface", ring, "2.2"),
+    ]),
     basic: makeObject("basic", [makeSurface("RoofSurface", ring, "1")]),
     excluded: makeObject("excluded", [makeSurface("RoofSurface", ring, "0")]),
   });
   it("draws only each object's highest selected LoD, retaining lower-detail objects", () => {
     const mesh = buildCityMeshArrays(mixed, "test", [0, 0, 0], ["1", "2.2"]);
     expect(mesh.triangleCount).toBe(2);
-    expect([...mesh.objectIndices]).toEqual([0, 0, 0, 1, 1, 1]);
-    expect([...mesh.surfaceIndices]).toEqual([1, 1, 1, 0, 0, 0]);
+    expect([...vertexObjectIndices(mesh)]).toEqual([0, 0, 0, 1, 1, 1]);
+    expect([...vertexSurfaceIndices(mesh)]).toEqual([1, 1, 1, 0, 0, 0]);
     expect(mesh.objectKeys).toEqual(["detailed", "basic", "excluded"]);
   });
   it("draws nothing with an empty selection and never falls back to unchecked LoDs", () => {
-    expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], []).triangleCount).toBe(0);
-    expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], ["2.2"]).triangleCount).toBe(1);
+    expect(
+      buildCityMeshArrays(mixed, "test", [0, 0, 0], []).triangleCount,
+    ).toBe(0);
+    expect(
+      buildCityMeshArrays(mixed, "test", [0, 0, 0], ["2.2"]).triangleCount,
+    ).toBe(1);
   });
   it("keeps legacy single-LoD and unfiltered callers unchanged", () => {
-    expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], "1").triangleCount).toBe(2);
-    expect(buildCityMeshArrays(mixed, "test", [0, 0, 0], null).triangleCount).toBe(4);
+    expect(
+      buildCityMeshArrays(mixed, "test", [0, 0, 0], "1").triangleCount,
+    ).toBe(2);
+    expect(
+      buildCityMeshArrays(mixed, "test", [0, 0, 0], null).triangleCount,
+    ).toBe(4);
   });
 
   // Codex milestone review (Important): a CityParquet table whose geometry
@@ -559,15 +581,15 @@ describe("multiple selected LoDs", () => {
   it("draws unlabelled surfaces when the selection includes null", () => {
     const mesh = buildCityMeshArrays(legacy, "test", [0, 0, 0], [null]);
     expect(mesh.triangleCount).toBe(2);
-    expect([...mesh.objectIndices]).toEqual([0, 0, 0, 1, 1, 1]);
-    expect([...mesh.surfaceIndices]).toEqual([0, 0, 0, 0, 0, 0]);
+    expect([...vertexObjectIndices(mesh)]).toEqual([0, 0, 0, 1, 1, 1]);
+    expect([...vertexSurfaceIndices(mesh)]).toEqual([0, 0, 0, 0, 0, 0]);
   });
   it("prefers a selected label over the unlabelled rung, per object", () => {
     const mesh = buildCityMeshArrays(legacy, "test", [0, 0, 0], ["1", null]);
     expect(mesh.triangleCount).toBe(2);
     // `bare` falls back to its unlabelled surface 0; `both` draws its LoD 1.
-    expect([...mesh.objectIndices]).toEqual([0, 0, 0, 1, 1, 1]);
-    expect([...mesh.surfaceIndices]).toEqual([0, 0, 0, 1, 1, 1]);
+    expect([...vertexObjectIndices(mesh)]).toEqual([0, 0, 0, 1, 1, 1]);
+    expect([...vertexSurfaceIndices(mesh)]).toEqual([0, 0, 0, 1, 1, 1]);
   });
   it("still draws nothing of an unlabelled object when null is not selected", () => {
     expect(
@@ -633,5 +655,57 @@ describe("buildCityMeshArrays exterior orientation", () => {
       [0, 0, 0],
     );
     expect(arrays.normals[2]).toBeLessThan(-0.99);
+  });
+});
+
+describe("slots", () => {
+  const ring: Vec3[] = [
+    [0, 0, 0],
+    [10, 0, 0],
+    [10, 10, 0],
+    [0, 10, 0],
+  ];
+  const model = makeModel({
+    a: makeObject("a", [
+      makeSurface("RoofSurface", ring, "2"),
+      makeSurface("WallSurface", ring, "2"),
+    ]),
+    b: makeObject("b", [makeSurface("GroundSurface", ring, "2")]),
+  });
+
+  it("gives every drawn surface one slot, its vertices contiguous", () => {
+    const mesh = buildCityMeshArrays(model, "test");
+    // Two triangles per square: six vertices per slot, in write order.
+    expect([...mesh.slots]).toEqual([
+      0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2,
+    ]);
+    expect([...mesh.slotObjects]).toEqual([0, 0, 1]);
+    expect([...mesh.slotSurfaces]).toEqual([0, 1, 0]);
+    expect([...mesh.slotTextures]).toEqual([-1, -1, -1]);
+  });
+
+  it("carries each slot's base colour once", () => {
+    const mesh = buildCityMeshArrays(model, "test");
+    const roof = SURFACE_COLORS_LINEAR.RoofSurface;
+    const ground = SURFACE_COLORS_LINEAR.GroundSurface;
+    expect(mesh.slotColors.length).toBe(9);
+    expect(mesh.slotColors[0]).toBeCloseTo(roof.r, 6);
+    expect(mesh.slotColors[2]).toBeCloseTo(roof.b, 6);
+    expect(mesh.slotColors[6]).toBeCloseTo(ground.r, 6);
+  });
+
+  it("keeps a hidden object's index but gives it no slot", () => {
+    const mesh = buildCityMeshArrays(
+      model,
+      "test",
+      [0, 0, 0],
+      null,
+      null,
+      null,
+      SURFACE_COLORS_LINEAR,
+      new Set(["b"]),
+    );
+    expect([...mesh.slotObjects]).toEqual([1]);
+    expect(mesh.slots.length).toBe(6);
   });
 });

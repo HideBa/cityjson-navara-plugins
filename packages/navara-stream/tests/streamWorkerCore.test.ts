@@ -331,7 +331,7 @@ describe("streamWorkerCore", () => {
     const recolored = posted.filter(ofType("recolored"));
     expect(recolored.map((r) => r.key)).toEqual(["2/0/0"]);
     expect(recolored[0]!.ruleColors.length).toBe(
-      cell.geometry.triangleCount * 3 * 3,
+      cell.geometry.slotObjects.length * 3,
     );
     expect(posted.at(-1)).toEqual({ type: "done", id: 2 });
   });
@@ -522,8 +522,9 @@ describe("streamWorkerCore — reopening", () => {
     await unshifted.send({ type: "open", id: 0, source: { url: "fake://x" } });
     await unshifted.send(fetchMsg(2, ["2/0/0"]));
 
-    const positions = (h: { posted: WorkerResponse[] }) =>
-      [...h.posted.find(ofType("cell"))!.geometry.positions];
+    const positions = (h: { posted: WorkerResponse[] }) => [
+      ...h.posted.find(ofType("cell"))!.geometry.positions,
+    ];
     expect(positions(reopened)).toEqual(positions(direct));
     expect(positions(reopened)).not.toEqual(positions(unshifted));
   });
@@ -684,7 +685,6 @@ describe("streamWorkerCore — adapter conformance", () => {
       ["a", "b", "c"],
     );
   });
-
 });
 
 /**
@@ -701,7 +701,9 @@ describe("streamWorkerCore — retained memory", () => {
       fakeAdapter([feature("a", 100, 100), feature("b", 500, 100)]),
     );
     await send({ type: "open", id: 0, source: { url: "fake://x" } });
-    await send(fetchMsg(1, ["2/0/0", "2/1/0"], [0, 0, 1000, 1000], ["Building"]));
+    await send(
+      fetchMsg(1, ["2/0/0", "2/1/0"], [0, 0, 1000, 1000], ["Building"]),
+    );
 
     const cells = posted.filter(ofType("cell"));
     expect(cells).toHaveLength(2);

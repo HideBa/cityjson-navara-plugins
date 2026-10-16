@@ -9,6 +9,11 @@ import {
 } from "three";
 import type { CityModel } from "@cityjson/navara-core";
 import { CityModelMesh } from "../src/cityModelMesh";
+import {
+  CityStyleDepthMaterial,
+  type CityStyleMaterial,
+} from "../src/cityStyle";
+import { drawnColors } from "./drawnColors";
 import { resolveCityColors } from "../src/cityColors";
 import type { ThemeStyle } from "../src/themeStyle";
 import { DEFAULT_PICK_STRATEGY } from "../src/pickStrategy";
@@ -92,13 +97,7 @@ describe("CityModelMesh appearance", () => {
       surfaceColors: red,
     });
     const m = new CityModelMesh({ ...opts, lod: "2", colors: cityColors });
-    const colors = () =>
-      Array.from(
-        (m.object3d.geometry.getAttribute("color").array as Float32Array).slice(
-          0,
-          3,
-        ),
-      );
+    const colors = () => m.drawnColorAt(0);
     expect(colors()).toEqual([1, 0, 0]);
     m.setHighlight([{ kind: "object", layerId: "L1", objectId: "B1" }]);
     expect(colors()).toEqual([0, 1, 0]);
@@ -147,7 +146,7 @@ describe("CityModelMesh", () => {
 
   it("setStyle recolors matching surfaces and setStyle(null) restores base", () => {
     const m = new CityModelMesh({ ...opts, lod: "2" });
-    const colors = m.object3d.geometry.getAttribute("color");
+    const colors = drawnColors(m);
     const before = colors.getX(0);
     m.setStyle(() => [0, 1, 0]);
     expect(colors.getX(0)).not.toBe(before);
@@ -159,7 +158,7 @@ describe("CityModelMesh", () => {
 
   it("setHighlight layers over the style colors, not the base colors", () => {
     const m = new CityModelMesh({ ...opts, lod: "2" });
-    const colors = m.object3d.geometry.getAttribute("color");
+    const colors = drawnColors(m);
     m.setStyle(() => [0, 1, 0]);
     m.setHighlight([{ kind: "object", layerId: "L1", objectId: "B1" }], null);
     expect(colors.getX(0)).toBeGreaterThan(0.5); // highlight orange has red
@@ -178,7 +177,7 @@ describe("CityModelMesh", () => {
     m.setHighlight([], { kind: "object", layerId: "L1", objectId: "B1" });
     m.setHighlight([], null);
     expect(evaluator.mock.calls.length).toBe(evaluations);
-    expect(m.object3d.geometry.getAttribute("color").getY(0)).toBeGreaterThan(0.9);
+    expect(drawnColors(m).getY(0)).toBeGreaterThan(0.9);
     m.dispose();
   });
 
@@ -211,17 +210,18 @@ describe("CityModelMesh", () => {
     m.dispose();
   });
 
-  // Task B5 carry-forward: `paintLayers` cannot check `Selection.layerId`
-  // (vertices carry no layer id), so filtering to this mesh's own layer is the
+  // Task B5 carry-forward: `paintSlotFlags` cannot check `Selection.layerId`
+  // (slots carry no layer id), so filtering to this mesh's own layer is the
   // caller's job — and CityModelMesh IS that caller.
   it("ignores selections and hovers belonging to another layer", () => {
     const m = new CityModelMesh({ ...opts, lod: "2" });
-    const colors = m.object3d.geometry.getAttribute("color");
+    const colors = drawnColors(m);
     const base = colors.getX(0);
-    m.setHighlight(
-      [{ kind: "object", layerId: "OTHER", objectId: "B1" }],
-      { kind: "object", layerId: "OTHER", objectId: "B1" },
-    );
+    m.setHighlight([{ kind: "object", layerId: "OTHER", objectId: "B1" }], {
+      kind: "object",
+      layerId: "OTHER",
+      objectId: "B1",
+    });
     expect(colors.getX(0)).toBe(base);
 
     // The same object id under THIS layer does paint, proving the filter is
@@ -238,11 +238,9 @@ describe("CityModelMesh", () => {
       { kind: "surface", layerId: "L1", objectId: "B1", surfaceIndex: 1 },
     ]);
     // Surface 1 is the LoD-1 quad: invisible at LoD 2, highlighted at LoD 1.
-    expect(m.object3d.geometry.getAttribute("color").getY(0)).toBeGreaterThan(
-      0.9,
-    );
+    expect(drawnColors(m).getY(0)).toBeGreaterThan(0.9);
     m.setLod("1");
-    const after = m.object3d.geometry.getAttribute("color");
+    const after = drawnColors(m);
     expect(after.getX(0)).toBeGreaterThan(0.5); // highlight orange survived
     m.setHighlight([]);
     expect(after.getY(0)).toBeGreaterThan(0.9); // ...over the surviving style
@@ -395,7 +393,7 @@ describe("CityModelMesh hidden types", () => {
     );
     m.setHiddenTypes(["Building"]);
     // Only the tree survives, so vertex 0 is its — and it is still styled.
-    const colors = m.object3d.geometry.getAttribute("color");
+    const colors = drawnColors(m);
     expect(colors.getY(0)).toBeGreaterThan(0.9);
     expect(m.resolveVertex(0)?.objectId).toBe("T1");
     m.dispose();
@@ -462,7 +460,7 @@ describe("CityModelMesh hidden types", () => {
     m.setHighlight([{ kind: "object", layerId: "L1", objectId: "T1" }], null);
     m.setVisibleObjectIds(new Set(["T1"]));
     // Only the tree survives, so vertex 0 is its.
-    const colors = m.object3d.geometry.getAttribute("color");
+    const colors = drawnColors(m);
     expect(colors.getX(0)).toBeGreaterThan(0.5); // highlight orange survived
     m.setHighlight([], null);
     expect(colors.getY(0)).toBeGreaterThan(0.9); // ...over the surviving style
@@ -762,6 +760,18 @@ describe("CityModelMesh lighting", () => {
     expect(hooks.unregister).toHaveBeenCalledTimes(1);
     expect(hooks.unregister).toHaveBeenCalledWith(material);
   });
+
+  it("casts its shadow through a depth material reading its own style texture", () => {
+    const m = new CityModelMesh({ ...opts, lod: "2" });
+    const depth = m.object3d.customDepthMaterial as CityStyleDepthMaterial;
+    expect(depth).toBeInstanceOf(CityStyleDepthMaterial);
+    expect(depth.styleUniforms).toBe(
+      (m.object3d.material as CityStyleMaterial).styleUniforms,
+    );
+    const dispose = vi.spyOn(depth, "dispose");
+    m.dispose();
+    expect(dispose).toHaveBeenCalled();
+  });
 });
 
 it("renders highest selected LoD and updates geometry and picking when it changes", () => {
@@ -836,7 +846,7 @@ describe("CityModelMesh setLod skips no-op rebuilds", () => {
     m.setLod(["2", "1"]);
     expect([0, 3, 6, 9].map((v) => m.resolveVertex(v))).toEqual(before);
     m.setStyle(() => [0, 1, 0]);
-    const colors = m.object3d.geometry.getAttribute("color");
+    const colors = drawnColors(m);
     expect(colors.getY(0)).toBeGreaterThan(colors.getX(0));
     m.dispose();
   });
@@ -955,9 +965,9 @@ describe("CityModelMesh setHeightOffset re-places without rebuilding", () => {
       heightOffset: 43,
     });
     const want = fresh.object3d.geometry.boundingSphere!;
-    expect(geometry.boundingSphere!.center.distanceTo(want.center)).toBeLessThan(
-      2e-3,
-    );
+    expect(
+      geometry.boundingSphere!.center.distanceTo(want.center),
+    ).toBeLessThan(2e-3);
     expect(geometry.boundingSphere!.radius).toBeCloseTo(want.radius, 2);
     m.dispose();
     fresh.dispose();

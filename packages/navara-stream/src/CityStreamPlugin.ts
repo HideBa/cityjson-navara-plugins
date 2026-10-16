@@ -86,12 +86,13 @@ export class CityStreamPlugin extends Plugin<ThreeView, ViewContext> {
       },
       // The stamping (layerId / cellKey / pickStrategy) lives in an
       // engine-free module so it is provable in Node — see `cellMeshFactory`.
-      createMeshFactory: (layerId, textures) =>
+      createMeshFactory: (layerId, textures, colors) =>
         createCellMeshFactory({
           layerId,
           getView: () => this.view,
           pickStrategy: this.options.pickStrategy,
           textures,
+          colors,
         }),
       getPickRays: () => this.raySource,
       sampleGeoidHeight: this.options.sampleGeoidHeight,

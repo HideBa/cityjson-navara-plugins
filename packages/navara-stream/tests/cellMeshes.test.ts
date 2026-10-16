@@ -33,10 +33,12 @@ function entry(tag: string, rules: ReadonlyArray<Rule> = []): CellEntry {
     geometry: {
       positions: new Float32Array(9),
       normals: new Float32Array(9),
-      baseColors: new Float32Array(9).fill(0.5),
+      slots: new Uint32Array(3),
+      slotObjects: new Uint32Array(1),
+      slotSurfaces: new Uint32Array(1),
+      slotTextures: new Int32Array([-1]),
+      baseColors: new Float32Array(3).fill(0.5),
       ruleColors: null,
-      objectIndices: new Uint32Array(3),
-      surfaceIndices: new Uint32Array(3),
       objectKeys: [tag],
       triangleCount: 1,
     },
@@ -72,7 +74,7 @@ function factory() {
         setColors: vi.fn(),
         setVisible: vi.fn(),
         setThemeStyle: vi.fn(),
-        maskTextured: (c: Float32Array) => c,
+        setHighlight: vi.fn(),
         textureChanged: () => {},
         triangleCount: () => 1,
         batchIdMap: () => [{ objectIndex: 0, surfaceIndex: 0 }],
@@ -279,7 +281,7 @@ describe("syncCellMeshes", () => {
       maxBytes: 1e9,
     });
     const withColors = entry("a");
-    const ruleColors = new Float32Array(9).fill(0.25);
+    const ruleColors = new Float32Array(3).fill(0.25);
     const colored: CellEntry = {
       ...withColors,
       geometry: { ...withColors.geometry, ruleColors },
@@ -301,10 +303,9 @@ describe("syncCellMeshes", () => {
     expect(f.created[0]!.handle.setColors).toHaveBeenCalledWith(ruleColors);
     const cell = cells.get("1/0/0")!;
     expect(cell.ruleColors).toBe(ruleColors);
-    // baseColors is a COPY: highlighting mutates the live buffer in place and
-    // needs an untouched restore baseline (same contract as a static layer).
-    expect(cell.baseColors).not.toBe(colored.geometry.baseColors);
-    expect(cell.baseColors).toEqual(colored.geometry.baseColors);
+    // Nothing writes into a cell's colours (the mesh copies them into its
+    // style texture), so the entry's own base buffer is held as is.
+    expect(cell.baseColors).toBe(colored.geometry.baseColors);
   });
 
   it("deletes the mesh of an evicted cell", () => {

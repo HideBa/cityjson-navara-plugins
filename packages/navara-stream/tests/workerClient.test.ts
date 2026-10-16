@@ -8,33 +8,27 @@ import {
 import { WorkerClient } from "../src/workerClient";
 
 /**
- * Fixture note: every array below is given a distinct fill value and a
- * distinct length-driving expression rather than being zero-filled from a
- * single `v` — a prior version of this fixture used identical zero-filled
- * arrays for positions/normals/baseColors (all length v*3) and for
- * objectIndices/surfaceIndices (both length v). That is harmless for the
- * "accepts" case, but it does NOT, by itself, make an argument-swap bug in
- * assertCellGeometry (e.g. reading g.positions.length under the "normals"
- * label) detectable — assertCellGeometry only ever inspects `.length`, never
- * content, so distinct *values* cannot expose a swapped `.length` read.
- * What actually closes that gap is a dedicated "rejects a short X array"
- * test for every one of the 5 checked arrays (below), so that corrupting
- * any single array is guaranteed to desync it from whichever other array a
- * copy-paste bug might have substituted. See the mutation evidence in the
- * task report for the empirical proof.
+ * Fixture: two triangles, three slots (the third unused by any vertex is
+ * allowed; a slot no vertex names is just never drawn). Every array has its
+ * own length-driving expression, and each has a dedicated "rejects a short X"
+ * test below, so a copy-paste bug reading one array's length under another's
+ * label desyncs at least one of them.
  */
 function geom(
   triangleCount: number,
   bad?: Partial<CellGeometry>,
 ): CellGeometry {
   const v = triangleCount * 3;
+  const slots = 3;
   return {
     positions: new Float32Array(v * 3).fill(1),
     normals: new Float32Array(v * 3).fill(2),
-    baseColors: new Float32Array(v * 3).fill(3),
+    slots: new Uint32Array(v).map((_, i) => (i < 3 ? 0 : 1)),
+    slotObjects: new Uint32Array(slots).fill(1),
+    slotSurfaces: new Uint32Array(slots).fill(20),
+    slotTextures: new Int32Array(slots).fill(-1),
+    baseColors: new Float32Array(slots * 3).fill(3),
     ruleColors: null,
-    objectIndices: new Uint32Array(v).fill(10),
-    surfaceIndices: new Uint32Array(v).fill(20),
     objectKeys: ["obj-a", "obj-b"],
     triangleCount,
     ...bad,
@@ -47,11 +41,8 @@ describe("assertCellGeometry", () => {
   });
 
   it("accepts a consistent payload with correctly-sized rule colors", () => {
-    const v = 2 * 3;
     expect(() =>
-      assertCellGeometry(
-        geom(2, { ruleColors: new Float32Array(v * 3).fill(9) }),
-      ),
+      assertCellGeometry(geom(2, { ruleColors: new Float32Array(9).fill(9) })),
     ).not.toThrow();
   });
 
@@ -61,10 +52,22 @@ describe("assertCellGeometry", () => {
     ).toThrow(/positions/);
   });
 
-  it("rejects a short normals array — the picking failure mode", () => {
+  it("rejects a short normals array", () => {
     expect(() =>
       assertCellGeometry(geom(2, { normals: new Float32Array(3).fill(2) })),
     ).toThrow(/normals/);
+  });
+
+  it("rejects a short slots array — the picking failure mode", () => {
+    expect(() =>
+      assertCellGeometry(geom(2, { slots: new Uint32Array(1) })),
+    ).toThrow(/slots/);
+  });
+
+  it("rejects a vertex naming a slot that does not exist", () => {
+    expect(() =>
+      assertCellGeometry(geom(2, { slots: new Uint32Array(6).fill(3) })),
+    ).toThrow(/names slot 3/);
   });
 
   it("rejects a short baseColors array", () => {
@@ -73,20 +76,16 @@ describe("assertCellGeometry", () => {
     ).toThrow(/baseColors/);
   });
 
-  it("rejects a short objectIndices array", () => {
+  it("rejects a short slotSurfaces array", () => {
     expect(() =>
-      assertCellGeometry(
-        geom(2, { objectIndices: new Uint32Array(1).fill(10) }),
-      ),
-    ).toThrow(/objectIndices/);
+      assertCellGeometry(geom(2, { slotSurfaces: new Uint32Array(1) })),
+    ).toThrow(/slotSurfaces/);
   });
 
-  it("rejects a short surfaceIndices array — the picking failure mode", () => {
+  it("rejects a short slotTextures array", () => {
     expect(() =>
-      assertCellGeometry(
-        geom(2, { surfaceIndices: new Uint32Array(1).fill(20) }),
-      ),
-    ).toThrow(/surfaceIndices/);
+      assertCellGeometry(geom(2, { slotTextures: new Int32Array(1) })),
+    ).toThrow(/slotTextures/);
   });
 
   it("rejects short rule colors when present", () => {

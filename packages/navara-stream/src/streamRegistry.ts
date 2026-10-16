@@ -57,7 +57,11 @@ import {
 } from "./settleController";
 import { StreamLayerHandle, type CellEntry } from "./streamLayer";
 import { createLayerTextures } from "./layerTextures";
-import type { TextureCache, TextureSource } from "@cityjson/navara-cityjson";
+import type {
+  HighlightRGB,
+  TextureCache,
+  TextureSource,
+} from "@cityjson/navara-cityjson";
 import { resolveCityColors, type CityColors } from "@cityjson/navara-cityjson";
 import { makeGrid } from "./tileGrid";
 import type { Ray } from "./viewportFootprint";
@@ -95,12 +99,13 @@ export interface StreamLayerRegistryDeps {
    *  WorkerClient()` reaches the DOM `Worker` constructor, which Node does
    *  not have. */
   readonly createClient: (format: WorkerFormat) => WorkerClient;
-  /** Engine seam: builds one mesh per resident cell of the named layer. */
-  /** `textures` is the layer's shared image cache, for cells built under a
-   *  texture theme. */
+  /** Engine seam: builds one mesh per resident cell of the named layer.
+   *  `textures` is the layer's shared image cache, for cells built under a
+   *  texture theme; `colors` are its selection and hover colours. */
   readonly createMeshFactory: (
     layerId: string,
     textures: TextureCache,
+    colors: HighlightRGB,
   ) => CellMeshFactory;
   /** Image-loading seam for texture themes; defaults to three's loader. */
   readonly createTextureSource?: () => TextureSource;
@@ -462,7 +467,7 @@ export class StreamLayerRegistry {
     }
     const client = this.deps.createClient(opts.format);
     // Once per stream, before the worker opens: the worker needs the palette
-    // in its `open`, the handle needs the highlight pair.
+    // in its `open`, each cell's material the highlight pair.
     const colors = resolveCityColors(this.deps.colors, opts.colors);
     try {
       const header = await this.openWorker(
@@ -530,8 +535,11 @@ export class StreamLayerRegistry {
         toSourceXY,
         toLngLat,
         heightOffsetM,
-        colors,
-        meshFactory: this.deps.createMeshFactory(opts.id, textures.cache),
+        meshFactory: this.deps.createMeshFactory(
+          opts.id,
+          textures.cache,
+          colors,
+        ),
         // Delegating rather than captured: `getPickRays()` is null until the
         // plugin has a view, and a layer opened in between must still pick.
         pickRays: this.pickRays,

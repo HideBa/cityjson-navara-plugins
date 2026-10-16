@@ -2,8 +2,8 @@
  * The rule engine's `SurfaceStyleEvaluator`, and the array-in/array-out
  * recoloring entry point built on it.
  *
- * `buildStyleColorsFromArrays` is deliberately rule-agnostic — it walks
- * vertices and calls a hook. This module is the one place that hook is
+ * `buildSlotStyleColors` is deliberately rule-agnostic — it walks
+ * slots and calls a hook. This module is the one place that hook is
  * compiled from a layer's colorization rules (roof metrics + `matchRule` +
  * RoofSurface gating), so the static main-thread path and the FlatCityBuf
  * worker colorize identically instead of maintaining two rule walkers.
@@ -21,7 +21,7 @@ import { computeRoofMetrics } from "../roofMetrics/metrics";
 import { matchRule } from "../rules/evaluate";
 import type { Rule } from "../rules/types";
 import {
-  buildStyleColorsFromArrays,
+  buildSlotStyleColors,
   type SurfaceStyleEvaluator,
 } from "./buildStyleColors";
 import { srgbHexToLinear, type RGB } from "./srgb";
@@ -42,12 +42,12 @@ function cachedLinear(hex: string): RGB {
  * edge.
  *
  * Returns null when the layer's rules are switched off (`rulesEnabled`) or
- * when no rule is enabled, so callers can fall back to baseColors without
- * walking any vertices. Only RoofSurfaces are rule-colored — every other
+ * when no rule is enabled, so callers can fall back to the base colours without
+ * walking any slots. Only RoofSurfaces are rule-colored — every other
  * semantic type keeps its base color.
  *
  * `rulesEnabled` defaults to true so the callers that already applied the
- * layer gate themselves (the FCB worker, via `buildRuleColorsFromArrays`)
+ * layer gate themselves (the FCB worker, via `buildSlotRuleColors`)
  * keep their one-argument call.
  */
 export function compileRuleEvaluator(
@@ -75,28 +75,29 @@ export function compileRuleEvaluator(
 }
 
 /**
- * Build a ruleColors array from the current rules and model.
+ * Per slot, the colour of the first matching rule over a copy of
+ * `slotColors` (see `buildSlotStyleColors`).
  *
- * Returns null if no rules produced any color changes (all non-roof
- * or no matches), allowing the caller to fall back to baseColors.
+ * Returns null if no rule matched anything (all non-roof, or no matches),
+ * allowing the caller to fall back to the base colours.
  */
-export function buildRuleColorsFromArrays(
+export function buildSlotRuleColors(
   model: CityModel,
-  objectIndices: Uint32Array,
-  surfaceIndices: Uint32Array,
+  slotObjects: Uint32Array,
+  slotSurfaces: Uint32Array,
   objectKeys: ReadonlyArray<string>,
   rules: ReadonlyArray<Rule>,
-  baseColors: Float32Array,
+  slotColors: Float32Array,
 ): Float32Array | null {
   const evaluate = compileRuleEvaluator(rules);
   if (!evaluate) return null;
 
-  return buildStyleColorsFromArrays(
+  return buildSlotStyleColors(
     model,
-    objectIndices,
-    surfaceIndices,
+    slotObjects,
+    slotSurfaces,
     objectKeys,
     evaluate,
-    baseColors,
+    slotColors,
   );
 }

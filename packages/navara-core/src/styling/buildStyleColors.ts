@@ -1,12 +1,11 @@
 /**
- * Per-surface vertex recoloring driven by a host-supplied styling hook.
+ * Per-surface recoloring driven by a host-supplied styling hook.
  *
  * The host (an app's rule engine, a thematic map, a legend) supplies a
- * `SurfaceStyleEvaluator`; this module walks the per-vertex object/surface
- * index arrays emitted by `buildCityMeshArrays`, resolves each vertex to its
- * `CityObject` + `Surface`, and writes the evaluator's Linear-sRGB color over
- * a copy of the base colors. The evaluator is called once per unique
- * (object, surface) pair, not once per vertex.
+ * `SurfaceStyleEvaluator`; this module walks the slot tables emitted by
+ * `buildCityMeshArrays`, resolves each slot to its `CityObject` + `Surface`,
+ * and writes the evaluator's Linear-sRGB color over a copy of the slots' base
+ * colors. The evaluator is called once per slot, that is once per surface.
  *
  * Worker-safe: consumes plain typed arrays, no GPU/DOM types.
  *
@@ -53,41 +52,38 @@ export type SurfaceStyleEvaluator = (
   object: CityObjectInfo,
 ) => RGB | null;
 
-export function buildStyleColorsFromArrays(
+/**
+ * Per SLOT (`CityMeshArrays.slotObjects` / `slotSurfaces`), the evaluator's
+ * colour over a copy of `slotColors`, 3 floats per slot. A slot is one drawn
+ * surface, so the evaluator runs once per surface and the result is what a
+ * style texture holds, never a per-vertex buffer.
+ *
+ * Returns null when the evaluator matched nothing, so the caller keeps the
+ * base colours without holding a second identical array.
+ */
+export function buildSlotStyleColors(
   model: CityModel,
-  objectIndices: Uint32Array,
-  surfaceIndices: Uint32Array,
+  slotObjects: Uint32Array,
+  slotSurfaces: Uint32Array,
   objectKeys: ReadonlyArray<string>,
   evaluate: SurfaceStyleEvaluator,
-  baseColors: Float32Array,
+  slotColors: Float32Array,
 ): Float32Array | null {
-  const result = Float32Array.from(baseColors);
+  const result = Float32Array.from(slotColors);
   let anyChange = false;
-
-  // Cache: "objIdx:surfIdx" → resolved color, or null (no style)
-  const colorCache = new Map<string, RGB | null>();
   const attributeCache = new Map<number, Readonly<Record<string, unknown>>>();
 
-  for (let v = 0; v < objectIndices.length; v++) {
-    const objIdx = objectIndices[v]!;
-    const surfIdx = surfaceIndices[v]!;
-    const cacheKey = `${objIdx}:${surfIdx}`;
-
-    let styleColor = colorCache.get(cacheKey);
-    if (styleColor === undefined) {
-      styleColor = resolveStyleColor(
-        objIdx,
-        surfIdx,
-        model,
-        objectKeys,
-        evaluate,
-        attributeCache,
-      );
-      colorCache.set(cacheKey, styleColor);
-    }
-
+  for (let slot = 0; slot < slotObjects.length; slot++) {
+    const styleColor = resolveStyleColor(
+      slotObjects[slot]!,
+      slotSurfaces[slot]!,
+      model,
+      objectKeys,
+      evaluate,
+      attributeCache,
+    );
     if (styleColor) {
-      const base = v * 3;
+      const base = slot * 3;
       result[base] = styleColor[0];
       result[base + 1] = styleColor[1];
       result[base + 2] = styleColor[2];

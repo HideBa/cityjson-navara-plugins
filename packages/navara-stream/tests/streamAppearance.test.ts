@@ -1,16 +1,20 @@
 /**
  * Appearance on the streaming path: the planner swaps on a theme change, the
  * handle carries the theme on every fetch, learns the themes cells report,
- * feeds the layer-wide image cache, and repaints a cell when its image lands
- * — with the white mask under the highlight.
+ * feeds the layer-wide image cache, and flags a cell's surfaces when their
+ * image lands — with the highlight drawn over it.
  */
 import { describe, it, expect, vi } from "vitest";
 import { makeEnuFrame, type CityTexture } from "@cityjson/navara-core";
 import {
+  CityMeshArraysMesh,
+  SLOT_SELECTED,
+  SLOT_TEXTURED,
   TextureCache,
   type CityMeshHandle,
   type TextureSource,
 } from "@cityjson/navara-cityjson";
+import { entryToArrays } from "../src/entryToArrays";
 import { Texture } from "three";
 import { StreamLayerHandle, type CellEntry } from "../src/streamLayer";
 import { CellCache } from "../src/cellCache";
@@ -29,7 +33,12 @@ import {
 } from "../src/constants";
 
 const FRAME = makeEnuFrame(4.3571, 52.0116, 0);
-const GRID: Grid = { originX: -5000, originY: -5000, rootCell: 10000, maxLevel: 8 };
+const GRID: Grid = {
+  originX: -5000,
+  originY: -5000,
+  rootCell: 10000,
+  maxLevel: 8,
+};
 const HEADER: StreamHeader = {
   version: "1.0",
   featuresCount: 100,
@@ -51,7 +60,12 @@ function rays(): readonly [Ray, Ray, Ray, Ray] {
     const len = Math.hypot(d[0], d[1], d[2]);
     return { origin: o, direction: [d[0] / len, d[1] / len, d[2] / len] };
   };
-  return [corner(-400, -400), corner(400, -400), corner(400, 400), corner(-400, 400)];
+  return [
+    corner(-400, -400),
+    corner(400, -400),
+    corner(400, 400),
+    corner(-400, 400),
+  ];
 }
 
 const TEX: CityTexture = { image: "appearances/a.jpg", type: "JPG" };
@@ -61,10 +75,12 @@ function texturedGeometry(): CellGeometry {
   return {
     positions: new Float32Array(9).fill(1),
     normals: new Float32Array(9).fill(2),
-    baseColors: new Float32Array(9).fill(0.25),
+    slots: new Uint32Array(3),
+    slotObjects: new Uint32Array(1),
+    slotSurfaces: new Uint32Array(1),
+    slotTextures: new Int32Array([7]),
+    baseColors: new Float32Array(3).fill(0.25),
     ruleColors: null,
-    objectIndices: new Uint32Array(3).fill(0),
-    surfaceIndices: new Uint32Array(3).fill(0),
     objectKeys: ["B1"],
     triangleCount: 1,
     uvs: new Float32Array(6),
@@ -87,14 +103,17 @@ function fakeClient() {
         : ({ type: "done", id: 0 } satisfies WorkerResponse),
     ),
     sendStreaming: vi.fn(
-      (msg: Record<string, unknown>, onMessage: (r: WorkerResponse) => void) => {
+      (
+        msg: Record<string, unknown>,
+        onMessage: (r: WorkerResponse) => void,
+      ) => {
         if (msg.type === "recolor") {
           for (const key of msg.cells as string[]) {
             onMessage({
               type: "recolored",
               id: 0,
               key,
-              ruleColors: new Float32Array(9).fill(0.5),
+              ruleColors: new Float32Array(3).fill(0.5),
             });
           }
           onMessage({ type: "done", id: 0 });
@@ -122,39 +141,38 @@ function fakeClient() {
   return { client: client as unknown as WorkerClient, fetches };
 }
 
-/** A factory whose handles record colours and texture notifications. */
+/** A factory over the REAL cell mesh, recording texture notifications. */
 function recordingFactory(cache: TextureCache) {
   const handles: Array<{
     key: string;
-    colors: Float32Array | null;
+    mesh: CityMeshArraysMesh;
     textureChanges: number[];
     entry: CellEntry;
   }> = [];
   const factory: CellMeshFactory = {
-    create(key, entry) {
-      const rec = { key, colors: null as Float32Array | null, textureChanges: [] as number[], entry };
+    create(key, entry, frame) {
+      const mesh = new CityMeshArraysMesh({
+        id: key,
+        arrays: entryToArrays(entry),
+        frame,
+        textures: cache,
+      });
+      const rec = { key, mesh, textureChanges: [] as number[], entry };
       handles.push(rec);
-      // What the real `CityMeshArraysMesh` does through `buildGroupMaterials`.
-      for (const g of entry.geometry.textureGroups ?? []) {
-        if (g.textureIndex >= 0) cache.request(g.textureIndex);
-      }
       const handle: CityMeshHandle = {
-        ref: null,
-        setColors: (c) => {
-          rec.colors = Float32Array.from(c);
+        ref: mesh,
+        setColors: (c) => mesh.setColors(c),
+        setHighlight: (sel, hovered) => mesh.setHighlight(sel, hovered),
+        textureChanged: (i) => {
+          rec.textureChanges.push(i);
+          mesh.textureChanged(i);
         },
-        maskTextured: (c) => {
-          const groups = entry.geometry.textureGroups ?? [];
-          if (!groups.some((g) => cache.isReady(g.textureIndex))) return c;
-          return new Float32Array(c.length).fill(1);
-        },
-        textureChanged: (i) => rec.textureChanges.push(i),
-        setVisible: () => {},
-        setThemeStyle: () => {},
-        triangleCount: () => entry.geometry.triangleCount,
-        batchIdMap: () => [],
-        resolveRaycast: () => null,
-        delete: () => {},
+        setVisible: (v) => mesh.setVisible(v),
+        setThemeStyle: (t) => mesh.setThemeStyle(t),
+        triangleCount: () => mesh.triangleCount(),
+        batchIdMap: () => mesh.batchIdMap(),
+        resolveRaycast: (ray) => mesh.resolveRaycast(ray),
+        delete: () => mesh.dispose(),
       };
       return handle;
     },
@@ -223,7 +241,10 @@ describe("planCommit appearance", () => {
   };
 
   it("swaps when the theme changes, and not before the first commit", () => {
-    const first = planCommit({ ...base, appearance: { kind: "texture", name: "rgb" } });
+    const first = planCommit({
+      ...base,
+      appearance: { kind: "texture", name: "rgb" },
+    });
     expect(first.kind).toBe("commit");
     // No previous appearance: nothing to swap from (level change aside).
     const plan = planCommit({
@@ -271,7 +292,7 @@ describe("StreamLayerHandle appearance", () => {
     handle.delete();
   });
 
-  it("repaints the cells drawing an image when it lands, masked under the highlight", async () => {
+  it("flags the surfaces drawing an image when it lands, under the highlight", async () => {
     const { handle, pending, meshes } = makeHandle();
     handle.setAppearance({ kind: "texture", name: "rgb" });
     await handle.commit(rays());
@@ -280,12 +301,10 @@ describe("StreamLayerHandle appearance", () => {
     expect(cell.textureChanges).toEqual([]);
     pending[0]!.onLoad(new Texture());
     expect(cell.textureChanges).toEqual([7]);
-    expect(cell.colors![0]).toBe(1); // white mask
-    // A highlight still paints over the mask.
-    handle.setHighlight([
-      { kind: "object", layerId: "l1", objectId: "B1" },
-    ]);
-    expect(cell.colors![0]).not.toBe(1);
+    expect(cell.mesh.styleTexel(0)[3]).toBe(SLOT_TEXTURED);
+    // A highlight is a second flag; the shader draws it over the image.
+    handle.setHighlight([{ kind: "object", layerId: "l1", objectId: "B1" }]);
+    expect(cell.mesh.styleTexel(0)[3]).toBe(SLOT_TEXTURED | SLOT_SELECTED);
     handle.delete();
   });
 

@@ -11,11 +11,12 @@ import type { CityTexture, TextureGroup } from "@cityjson/navara-core";
 import {
   applyTextureSettings,
   buildGroupMaterials,
-  maskReadyTextures,
   resolveTextureUrl,
   TextureCache,
   type TextureSource,
 } from "../src/texturedMaterials";
+import { CityStyleTexture, createStyleUniforms } from "../src/cityStyle";
+import { DEFAULT_HIGHLIGHT_RGB } from "../src/surfaceColorLayers";
 
 /** A source that hands the callbacks back so a test decides the outcome. */
 function fakeSource() {
@@ -103,7 +104,10 @@ describe("TextureCache", () => {
     expect(cache.request(1).status).toBe("loading");
     pending[0]!.onError(new Error("404"));
     expect(cache.get(1)).toEqual({ status: "failed", texture: null });
-    expect(onChange).toHaveBeenCalledWith(1, { status: "failed", texture: null });
+    expect(onChange).toHaveBeenCalledWith(1, {
+      status: "failed",
+      texture: null,
+    });
     expect(cache.request(99).status).toBe("failed");
     expect(warn).toHaveBeenCalledTimes(1);
   });
@@ -160,7 +164,7 @@ describe("applyTextureSettings", () => {
 });
 
 describe("buildGroupMaterials", () => {
-  it("makes one vertex-coloured double-sided material per group and requests images", () => {
+  it("makes one styled double-sided material per group and requests images", () => {
     const { source, pending } = fakeSource();
     const cache = new TextureCache({
       textures,
@@ -172,39 +176,23 @@ describe("buildGroupMaterials", () => {
       { start: 0, count: 6, textureIndex: -1 },
       { start: 6, count: 3, textureIndex: 1 },
     ];
-    const materials = buildGroupMaterials(groups, cache);
+    const uniforms = createStyleUniforms(
+      new CityStyleTexture(2),
+      DEFAULT_HIGHLIGHT_RGB,
+    );
+    const materials = buildGroupMaterials(groups, cache, uniforms);
     expect(materials).toHaveLength(2);
     // Lit, like the untextured material: the sun and its shadows shade it.
     expect(materials[0]).toBeInstanceOf(MeshLambertMaterial);
     expect(materials[0]!.vertexColors).toBe(true);
+    // Every group reads the same style texture.
+    expect(materials[1]!.styleUniforms).toBe(uniforms);
     expect(materials[0]!.map).toBeNull();
     expect(materials[1]!.map).toBeNull(); // not ready yet
     expect(pending.map((p) => p.url)).toEqual(["https://img.example/b.png"]);
     const texture = new Texture();
     pending[0]!.onLoad(texture);
     // A rebuild after readiness attaches the map immediately.
-    expect(buildGroupMaterials(groups, cache)[1]!.map).toBe(texture);
-  });
-});
-
-describe("maskReadyTextures", () => {
-  const groups: TextureGroup[] = [
-    { start: 0, count: 3, textureIndex: -1 },
-    { start: 3, count: 3, textureIndex: 0 },
-    { start: 6, count: 3, textureIndex: 1 },
-  ];
-  const source = new Float32Array(27).fill(0.25);
-
-  it("returns the source itself when no image is ready", () => {
-    expect(maskReadyTextures(source, groups, () => false)).toBe(source);
-    expect(maskReadyTextures(source, null, () => true)).toBe(source);
-  });
-
-  it("whites out exactly the vertices of ready groups", () => {
-    const out = maskReadyTextures(source, groups, (i) => i === 1);
-    expect(out).not.toBe(source);
-    expect(Array.from(out.slice(0, 18))).toEqual(new Array(18).fill(0.25));
-    expect(Array.from(out.slice(18))).toEqual(new Array(9).fill(1));
-    expect(source[20]).toBe(0.25); // untouched
+    expect(buildGroupMaterials(groups, cache, uniforms)[1]!.map).toBe(texture);
   });
 });

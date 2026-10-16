@@ -39,23 +39,6 @@ import type { CellEntry } from "./streamLayer";
  * tests pass a recording fake. `frame` is the cell's own ENU->ECEF frame —
  * the mesh's `matrixWorld` — and `entry.geometry.positions` are already
  * metres in it.
- *
- * One constraint on the implementation: `CityMeshArraysMesh` *wraps* the color
- * array it is given rather than copying it, and {@link syncCellMeshes} calls
- * `setColors(entry.geometry.ruleColors)` right after `create`. So the arrays
- * handed to the engine must not wrap EITHER of the entry's color buffers —
- * pass `Float32Array.from(ruleColors ?? baseColors)`, which is exactly what
- * `entryToArrays` does. Both branches copy:
- *
- * - wrapping `baseColors` would land the `setColors(ruleColors)` write in the
- *   cache entry's own base buffer, destroying the restore baseline
- *   {@link CellMesh.baseColors} is copied from one line later;
- * - wrapping `ruleColors` is the same hazard one layer on — {@link CellMesh}
- *   holds that buffer by reference and it is the *source* the highlight
- *   restores from, while `paintLayers` writes the highlight into the live
- *   *target* array in place. Alias the two and `source === target`: the
- *   restore becomes a self-copy no-op and a highlight can never be cleared
- *   (proved by Task C10a; `entryToArrays.ts` carries the full reasoning).
  */
 export interface CellMeshFactory {
   create(key: CellKey, entry: CellEntry, frame: EnuFrame): CityMeshHandle;
@@ -64,10 +47,10 @@ export interface CellMeshFactory {
 export interface CellMesh {
   readonly handle: CityMeshHandle;
   readonly pickingIndex: PickingIndex;
-  /** A COPY of the entry's base colors, never the live GPU buffer: highlight
-   *  paints into the live buffer in place and needs an untouched restore
-   *  baseline (same contract as the static layer path). */
+  /** The cell's base colours, per slot. The mesh copies colours into its
+   *  style texture, so nothing writes into this. */
   readonly baseColors: Float32Array;
+  /** The rule colours per slot the mesh last drew, or null for the base. */
   ruleColors: Float32Array | null;
   /** Reference identity of the CellEntry this mesh was built from: how a
    *  same-key content change (level/LoD swap, or a settle refetching an
@@ -183,17 +166,14 @@ export function syncCellMeshes(ctx: SyncCtx): CellKey[] {
     );
     handle.setVisible(ctx.visible);
     if (ctx.themeStyle) handle.setThemeStyle(ctx.themeStyle);
-    // Masked: where an image is already ready, the map shows instead.
-    if (entry.geometry.ruleColors) {
-      handle.setColors(handle.maskTextured(entry.geometry.ruleColors));
-    }
+    if (entry.geometry.ruleColors) handle.setColors(entry.geometry.ruleColors);
     ctx.cells.set(key, {
       handle,
       pickingIndex: {
         layerId: ctx.layerId ?? "",
         objectKeys: entry.geometry.objectKeys,
       },
-      baseColors: Float32Array.from(entry.geometry.baseColors),
+      baseColors: entry.geometry.baseColors,
       ruleColors: entry.geometry.ruleColors,
       sourceEntry: entry,
     });

@@ -7,7 +7,8 @@
  *
  * Engine-free: `three` only, so the Node suites cover it.
  */
-import { DoubleSide, MeshLambertMaterial, type Material } from "three";
+import type { Material } from "three";
+import { CityStyleMaterial, type CityStyleUniforms } from "./cityStyle";
 
 /**
  * Where a mesh hands the materials it draws with, and takes them back.
@@ -39,7 +40,8 @@ export const NO_SHADOW_MATERIALS: ShadowMaterialHooks = Object.freeze({
 });
 
 /**
- * A LIT, double-sided, vertex-coloured material.
+ * A LIT, double-sided material coloured per surface from the mesh's style
+ * texture (`CityStyleMaterial`, see `cityStyle.ts`).
  *
  * LIT — `MeshLambertMaterial`, not `MeshBasicMaterial` — because the scene
  * is forward-lit: the engine's `SunLightDesc` (direction and colour from
@@ -52,8 +54,9 @@ export const NO_SHADOW_MATERIALS: ShadowMaterialHooks = Object.freeze({
  * roughness to speak of, and Lambert is the material the engine's own mesh
  * descriptors draw with.
  *
- * `vertexColors`: the semantic base colours, the rule colours and the
- * highlight are all baked per vertex; `material.color` stays a raw
+ * Per-surface colour: the semantic base colours, the rule colours and the
+ * highlight are texels and flags in the style texture, which every material
+ * of one mesh shares through `uniforms`; `material.color` stays a raw
  * multiplier the scene theme writes (see `ThemeStyleController`).
  *
  * DOUBLE-SIDED, and not as a convenience: front-face culling removes real
@@ -78,9 +81,8 @@ export const NO_SHADOW_MATERIALS: ShadowMaterialHooks = Object.freeze({
  * guess — worth doing, but it would still not make a viewer of third-party
  * data safe to cull.
  */
-export function createCityMaterial(): MeshLambertMaterial {
-  return new MeshLambertMaterial({
-    vertexColors: true,
-    side: DoubleSide,
-  });
+export function createCityMaterial(
+  uniforms: CityStyleUniforms,
+): CityStyleMaterial {
+  return new CityStyleMaterial(uniforms);
 }

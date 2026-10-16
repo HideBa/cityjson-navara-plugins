@@ -21,17 +21,10 @@ import {
   type Rule,
   type Surface,
 } from "@cityjson/navara-core";
-// `paintLayers` is a VALUE import, deliberately: the highlight layering a
-// streaming cell gets must be byte-for-byte the one a static layer gets, and a
-// second copy here would drift. `@cityjson/navara-cityjson`'s barrel is
-// engine-free and Node-importable (its own doc comment; the `@navaramap/*`
-// modules live behind the separate `/plugin` entry point), so this does not
-// break the engine-binding rule.
-import {
-  DEFAULT_THEME_STYLE,
-  paintLayers,
-  type ResolvedCityColors,
-} from "@cityjson/navara-cityjson";
+// `@cityjson/navara-cityjson`'s barrel is engine-free and Node-importable (its
+// own doc comment; the `@navaramap/*` modules live behind the separate
+// `/plugin` entry point), so this does not break the engine-binding rule.
+import { DEFAULT_THEME_STYLE } from "@cityjson/navara-cityjson";
 import type {
   EcefRay,
   GeodeticBounds,
@@ -127,7 +120,11 @@ export function emptyCellEntry(
 // ---------------------------------------------------------------------
 
 export type StreamStatus =
-  "idle" | "probing" | "fetching" | "too-far" | "error";
+  | "idle"
+  | "probing"
+  | "fetching"
+  | "too-far"
+  | "error";
 
 /**
  * One object's rings, and the space they are measured in — the result of
@@ -204,12 +201,6 @@ export interface StreamLayerHandleOptions {
    *  Each cell's ENU frame must be rebuilt with the same value or every cell
    *  floats/sinks by it. */
   readonly heightOffsetM: number;
-  /** Highlight and hover colours, resolved by the registry (plugin default
-   *  laid under the layer's override). The surface PALETTE half of the same
-   *  object never reaches this handle: the worker bakes it into every cell's
-   *  base colours from the `open` message. Omitted keeps the historical
-   *  amber pair, so a host that builds handles itself changes nothing. */
-  readonly colors?: ResolvedCityColors;
   /** Injected: builds one mesh per resident cell. Keeps this module free of
    *  @navaramap/* — Task C11's plugin supplies the real implementation. */
   readonly meshFactory: CellMeshFactory;
@@ -382,8 +373,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
   }
 
   /** An image landed (or failed): every resident cell drawing it swaps its
-   *  map and is repainted, so the white mask covers exactly the faces that
-   *  now show an image. */
+   *  map and flags exactly the faces that now show an image. */
   private textureChanged(textureIndex: number): void {
     if (this._deleted) return;
     for (const cell of this.cells.values()) {
@@ -392,7 +382,6 @@ export class StreamLayerHandle implements StreamLayerEvents {
       );
       if (!uses) continue;
       cell.handle.textureChanged(textureIndex);
-      this.paintCell(cell);
     }
   }
 
@@ -962,10 +951,9 @@ export class StreamLayerHandle implements StreamLayerEvents {
           // way this response is for geometry that no longer exists.
           if (!target || current !== target) return;
           current.ruleColors = msg.ruleColors;
-          // Not a bare `setColors(msg.ruleColors)`: an active highlight has to
-          // survive a recolor, and `paintCell` layers it back over the new
-          // rule colours in the same pass.
-          this.paintCell(current);
+          // The highlight and the image mask are flags beside the colour,
+          // so they survive this write untouched.
+          current.handle.setColors(msg.ruleColors);
         },
       );
     } catch {
@@ -1464,7 +1452,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
     const hover = hovered?.layerId === this.id ? hovered : null;
     // Only the cells holding an object that gains or loses a highlight are
     // repainted: hover arrives at pointer rate, and each paint uploads the
-    // cell's whole colour buffer.
+    // cell's style texture.
     const touched = new Set<string>();
     const before = highlightKeys(this._selections, this._hovered);
     const after = highlightKeys(selections, hover);
@@ -1486,16 +1474,6 @@ export class StreamLayerHandle implements StreamLayerEvents {
     for (const cell of this.cells.values()) this.paintCell(cell);
   }
 
-  /**
-   * One cell's full colour stack: rule colours (or base colours) restored,
-   * then hover and selection painted over them.
-   *
-   * `paintLayers` is Task B5's function, shared with the static layer path, so
-   * the two cannot drift. It writes into `target` in place, which is why
-   * `target` is a fresh buffer and never `cell.ruleColors`/`cell.baseColors`:
-   * those two ARE the restore baseline (`entryToArrays` copies both branches
-   * for the same reason).
-   */
   /** Definitions and the learned theme list, from one cell message. Kept
    *  even for a stale (superseded) fetch: the tables are layer-wide facts. */
   private learnAppearance(
@@ -1517,23 +1495,11 @@ export class StreamLayerHandle implements StreamLayerEvents {
     }
   }
 
+  /** One cell's highlight flags: selection and hover, this layer's only.
+   *  The colours they draw in are the cell material's uniforms, set from the
+   *  layer's `colors` when the mesh factory builds it. */
   private paintCell(cell: CellMesh): void {
-    // Masked BEFORE the highlight pass: a selected textured face still tints.
-    const source = cell.handle.maskTextured(
-      cell.ruleColors ?? cell.baseColors,
-    );
-    const painted = new Float32Array(source.length);
-    paintLayers(
-      painted,
-      source,
-      cell.sourceEntry.geometry.objectIndices,
-      cell.sourceEntry.geometry.surfaceIndices,
-      cell.pickingIndex.objectKeys,
-      this._selections,
-      this._hovered,
-      this.options.colors,
-    );
-    cell.handle.setColors(painted);
+    cell.handle.setHighlight(this._selections, this._hovered);
   }
 
   private emitStatus(status: StreamStatus, message: string | null): void {

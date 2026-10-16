@@ -17,13 +17,21 @@ export interface CellTexture {
   readonly texture: CityTexture;
 }
 
+/**
+ * A baked cell. Every drawn surface is a SLOT (`buildCityMeshArrays`): each
+ * vertex names its slot, and colour, identity and image are per slot, so a
+ * recolor ships four floats' worth per surface, never per vertex.
+ */
 export interface CellGeometry {
   readonly positions: Float32Array; // 3 per vertex
   readonly normals: Float32Array; // 3 per vertex
-  readonly baseColors: Float32Array; // 3 per vertex
+  readonly slots: Uint32Array; // 1 per vertex
+  readonly slotObjects: Uint32Array; // 1 per slot
+  readonly slotSurfaces: Uint32Array; // 1 per slot
+  readonly slotTextures: Int32Array; // 1 per slot, -1 = no image
+  readonly baseColors: Float32Array; // 3 per slot, linear
+  /** 3 per slot, linear; `null` when no rule matched (or rules are off). */
   readonly ruleColors: Float32Array | null;
-  readonly objectIndices: Uint32Array; // 1 per vertex
-  readonly surfaceIndices: Uint32Array; // 1 per vertex
   readonly objectKeys: string[];
   readonly triangleCount: number;
   /** Under a texture theme only: 2 per vertex, and one vertex range per
@@ -222,7 +230,14 @@ export type WorkerResponse =
        *  really held on both sides (Codex milestone review, Critical). */
       retainedBytes: number;
     }
-  | { type: "recolored"; id: number; key: CellKey; ruleColors: Float32Array }
+  | {
+      type: "recolored";
+      id: number;
+      key: CellKey;
+      /** 3 per slot, linear: the rules' colours, or the base ones when
+       *  nothing matched. */
+      ruleColors: Float32Array;
+    }
   | {
       type: "surfaceData";
       id: number;
@@ -250,16 +265,18 @@ export type WorkerResponse =
  * response stream is otherwise indistinguishable from "not yet fetched,"
  * which is exactly what let a sparse viewport bypass hysteresis forever
  * (B5 in the 2026-07-28 final review). Trivially satisfies
- * `assertCellGeometry`'s invariants (every length is `0 === triangleCount*3*n`).
+ * `assertCellGeometry`'s invariants (every length is 0).
  */
 export function emptyCellGeometry(): CellGeometry {
   return {
     positions: new Float32Array(0),
     normals: new Float32Array(0),
+    slots: new Uint32Array(0),
+    slotObjects: new Uint32Array(0),
+    slotSurfaces: new Uint32Array(0),
+    slotTextures: new Int32Array(0),
     baseColors: new Float32Array(0),
     ruleColors: null,
-    objectIndices: new Uint32Array(0),
-    surfaceIndices: new Uint32Array(0),
     objectKeys: [],
     triangleCount: 0,
     uvs: null,
@@ -278,10 +295,21 @@ export function assertCellGeometry(g: CellGeometry): void {
   };
   check("positions", g.positions.length, v * 3);
   check("normals", g.normals.length, v * 3);
-  check("baseColors", g.baseColors.length, v * 3);
-  check("objectIndices", g.objectIndices.length, v);
-  check("surfaceIndices", g.surfaceIndices.length, v);
-  if (g.ruleColors !== null) check("ruleColors", g.ruleColors.length, v * 3);
+  check("slots", g.slots.length, v);
+  const slotCount = g.slotObjects.length;
+  check("slotSurfaces", g.slotSurfaces.length, slotCount);
+  check("slotTextures", g.slotTextures.length, slotCount);
+  check("baseColors", g.baseColors.length, slotCount * 3);
+  if (g.ruleColors !== null) {
+    check("ruleColors", g.ruleColors.length, slotCount * 3);
+  }
+  for (let i = 0; i < v; i++) {
+    if (g.slots[i]! >= slotCount) {
+      throw new Error(
+        `cell geometry slots: vertex ${i} names slot ${g.slots[i]}, but there are ${slotCount}`,
+      );
+    }
+  }
   if (g.uvs) check("uvs", g.uvs.length, v * 2);
   if (g.textureGroups) {
     let covered = 0;

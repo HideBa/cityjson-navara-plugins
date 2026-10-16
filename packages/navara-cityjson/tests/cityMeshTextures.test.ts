@@ -1,7 +1,7 @@
 /**
  * `CityMeshArraysMesh` under a texture theme: one material per group through
- * the shared layer cache, the raw/masked colour split the streaming layer
- * relies on, and map swaps on `textureChanged`.
+ * the shared layer cache, the textured flag on exactly the surfaces whose
+ * image is ready, and map swaps on `textureChanged`.
  */
 import { describe, it, expect, vi } from "vitest";
 import {
@@ -12,17 +12,20 @@ import {
 import { makeEnuFrame, type CityMeshArrays } from "@cityjson/navara-core";
 import { CityMeshArraysMesh } from "../src/cityMesh";
 import { TextureCache, type TextureSource } from "../src/texturedMaterials";
+import { SLOT_TEXTURED } from "../src/slotFlags";
 
 function arrays(): CityMeshArrays {
   const v = 6; // two triangles: one untextured, one textured
   return {
     positions: new Float32Array(v * 3).fill(1),
     normals: new Float32Array(v * 3).fill(0),
-    colors: new Float32Array(v * 3).fill(0.25),
-    objectIndices: new Uint32Array(v).fill(0),
-    surfaceIndices: new Uint32Array(v).fill(0),
     objectKeys: ["B1"],
     triangleCount: 2,
+    slots: Uint32Array.from([0, 0, 0, 1, 1, 1]),
+    slotObjects: Uint32Array.from([0, 0]),
+    slotSurfaces: Uint32Array.from([0, 1]),
+    slotTextures: Int32Array.from([-1, 4]),
+    slotColors: new Float32Array(6).fill(0.25),
     uvs: new Float32Array(v * 2),
     textureGroups: [
       { start: 0, count: 3, textureIndex: -1 },
@@ -42,7 +45,7 @@ function cacheWith(source: TextureSource): TextureCache {
 const FRAME = makeEnuFrame(4.3, 52.0, 0);
 
 describe("CityMeshArraysMesh with textures", () => {
-  it("builds one material per group and writes raw colours as asked", () => {
+  it("builds one material per group and flags a surface once its image is ready", () => {
     const pending: Array<(t: Texture) => void> = [];
     const cache = cacheWith({ load: (_u, onLoad) => pending.push(onLoad) });
     const mesh = new CityMeshArraysMesh({
@@ -56,22 +59,18 @@ describe("CityMeshArraysMesh with textures", () => {
     expect(materials).toHaveLength(2);
     expect(mesh.object3d.geometry.groups).toHaveLength(2);
     expect(mesh.object3d.geometry.getAttribute("uv")).toBeDefined();
-    // Not ready: the mask is a pass-through and colours stay as given.
-    const c = new Float32Array(18).fill(0.5);
-    expect(mesh.maskTextured(c)).toBe(c);
-    mesh.setColors(c);
-    const attr = mesh.object3d.geometry.getAttribute("color");
-    expect(attr.getX(3)).toBe(0.5);
+    // Not ready: no surface is flagged, and colours are as given.
+    expect(mesh.styleTexel(1)[3]).toBe(0);
 
-    // Ready: the mask whites out the textured group only; setColors stays raw.
+    // Ready: the textured surface alone is flagged; its colour is kept, so a
+    // recolor still lands under the image.
     pending[0]!(new Texture());
     mesh.textureChanged(4);
     expect(materials[1]!.map).not.toBeNull();
-    const masked = mesh.maskTextured(c);
-    expect(masked[0]).toBe(0.5);
-    expect(masked[9]).toBe(1);
-    mesh.setColors(c);
-    expect(attr.getX(3)).toBe(0.5);
+    expect(mesh.styleTexel(0)[3]).toBe(0);
+    expect(mesh.styleTexel(1)[3]).toBe(SLOT_TEXTURED);
+    mesh.setColors(new Float32Array(6).fill(1));
+    expect(mesh.styleTexel(1)).toEqual([255, 255, 255, SLOT_TEXTURED]);
     mesh.dispose();
   });
 
@@ -83,8 +82,7 @@ describe("CityMeshArraysMesh with textures", () => {
       textures: cacheWith({ load: () => {} }),
     });
     expect(Array.isArray(plain.object3d.material)).toBe(false);
-    const c = new Float32Array(18);
-    expect(plain.maskTextured(c)).toBe(c);
+    expect(plain.styleTexel(1)[3]).toBe(0);
     plain.dispose();
   });
 });
@@ -104,12 +102,18 @@ describe("CityMeshArraysMesh with textures: shadow hooks", () => {
     expect(materials).toHaveLength(2);
     // The plain material built first, then one per group.
     expect(hooks.register).toHaveBeenCalledTimes(3);
-    expect(hooks.register.mock.calls.slice(1).map((c) => c[0])).toEqual(materials);
+    expect(hooks.register.mock.calls.slice(1).map((c) => c[0])).toEqual(
+      materials,
+    );
     // The plain one was released when the groups replaced it.
     expect(hooks.unregister).toHaveBeenCalledTimes(1);
-    expect(hooks.unregister.mock.calls[0]![0]).toBe(hooks.register.mock.calls[0]![0]);
+    expect(hooks.unregister.mock.calls[0]![0]).toBe(
+      hooks.register.mock.calls[0]![0],
+    );
     mesh.dispose();
     expect(hooks.unregister).toHaveBeenCalledTimes(3);
-    expect(hooks.unregister.mock.calls.slice(1).map((c) => c[0])).toEqual(materials);
+    expect(hooks.unregister.mock.calls.slice(1).map((c) => c[0])).toEqual(
+      materials,
+    );
   });
 });

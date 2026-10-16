@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildStyleColorsFromArrays,
+  buildSlotStyleColors,
   type SurfaceStyleEvaluator,
 } from "../../src/styling/buildStyleColors";
 import type { CityModel, CityObject, Surface } from "../../src/citymodel/types";
@@ -40,13 +40,13 @@ function makeModel(surfaces: Surface[]): CityModel {
   };
 }
 
-// Three vertices belonging to surface 0, three to surface 1, all of object 0.
-const objectIndices = new Uint32Array([0, 0, 0, 0, 0, 0]);
-const surfaceIndices = new Uint32Array([0, 0, 0, 1, 1, 1]);
-const baseColors = new Float32Array(18).fill(0.5);
+// Two slots: surfaces 0 and 1 of object 0.
+const slotObjects = new Uint32Array([0, 0]);
+const slotSurfaces = new Uint32Array([0, 1]);
+const baseColors = new Float32Array(6).fill(0.5);
 
-describe("buildStyleColorsFromArrays", () => {
-  it("writes the evaluator's color on matching vertices and keeps base elsewhere", () => {
+describe("buildSlotStyleColors", () => {
+  it("writes the evaluator's color on matching slots and keeps base elsewhere", () => {
     const model = makeModel([
       makeSurface("RoofSurface"),
       makeSurface("WallSurface"),
@@ -54,10 +54,10 @@ describe("buildStyleColorsFromArrays", () => {
     const evaluate: SurfaceStyleEvaluator = (surface) =>
       surface.surface.type === "RoofSurface" ? [0.25, 0.5, 0.75] : null;
 
-    const result = buildStyleColorsFromArrays(
+    const result = buildSlotStyleColors(
       model,
-      objectIndices,
-      surfaceIndices,
+      slotObjects,
+      slotSurfaces,
       ["b1"],
       evaluate,
       baseColors,
@@ -66,12 +66,7 @@ describe("buildStyleColorsFromArrays", () => {
     expect(result).not.toBeNull();
     // 0.25/0.5/0.75 are exactly representable in Float32Array, so toEqual is
     // safe here — do not substitute values like 0.1 that round on storage.
-    expect([...result!.slice(0, 9)]).toEqual([
-      0.25, 0.5, 0.75, 0.25, 0.5, 0.75, 0.25, 0.5, 0.75,
-    ]);
-    expect([...result!.slice(9)]).toEqual([
-      0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
-    ]);
+    expect([...result!]).toEqual([0.25, 0.5, 0.75, 0.5, 0.5, 0.5]);
   });
 
   it("returns null when the evaluator never matches", () => {
@@ -79,10 +74,10 @@ describe("buildStyleColorsFromArrays", () => {
       makeSurface("RoofSurface"),
       makeSurface("WallSurface"),
     ]);
-    const result = buildStyleColorsFromArrays(
+    const result = buildSlotStyleColors(
       model,
-      objectIndices,
-      surfaceIndices,
+      slotObjects,
+      slotSurfaces,
       ["b1"],
       () => null,
       baseColors,
@@ -95,27 +90,27 @@ describe("buildStyleColorsFromArrays", () => {
       makeSurface("RoofSurface"),
       makeSurface("WallSurface"),
     ]);
-    buildStyleColorsFromArrays(
+    buildSlotStyleColors(
       model,
-      objectIndices,
-      surfaceIndices,
+      slotObjects,
+      slotSurfaces,
       ["b1"],
       () => [1, 1, 1],
       baseColors,
     );
-    expect([...baseColors]).toEqual(new Array(18).fill(0.5));
+    expect([...baseColors]).toEqual(new Array(6).fill(0.5));
   });
 
-  it("calls the evaluator once per (object, surface) pair, not per vertex", () => {
+  it("calls the evaluator once per slot", () => {
     const model = makeModel([
       makeSurface("RoofSurface"),
       makeSurface("RoofSurface"),
     ]);
     let calls = 0;
-    buildStyleColorsFromArrays(
+    buildSlotStyleColors(
       model,
-      objectIndices,
-      surfaceIndices,
+      slotObjects,
+      slotSurfaces,
       ["b1"],
       () => {
         calls++;
@@ -129,10 +124,10 @@ describe("buildStyleColorsFromArrays", () => {
   it("passes the resolved object id and surface index to the evaluator", () => {
     const model = makeModel([makeSurface("RoofSurface")]);
     const seen: Array<{ objectId: string; surfaceIndex: number }> = [];
-    buildStyleColorsFromArrays(
+    buildSlotStyleColors(
       model,
-      new Uint32Array([0, 0, 0]),
-      new Uint32Array([0, 0, 0]),
+      new Uint32Array([0]),
+      new Uint32Array([0]),
       ["b1"],
       (surface, object) => {
         seen.push({
@@ -141,20 +136,20 @@ describe("buildStyleColorsFromArrays", () => {
         });
         return null;
       },
-      new Float32Array(9),
+      new Float32Array(3),
     );
     expect(seen).toEqual([{ objectId: "b1", surfaceIndex: 0 }]);
   });
 
-  it("skips vertices whose object key or surface index is unknown", () => {
+  it("skips slots whose object key or surface index is unknown", () => {
     const model = makeModel([makeSurface("RoofSurface")]);
-    const result = buildStyleColorsFromArrays(
+    const result = buildSlotStyleColors(
       model,
-      new Uint32Array([7, 7, 7]),
-      new Uint32Array([0, 0, 0]),
+      new Uint32Array([7]),
+      new Uint32Array([0]),
       ["b1"],
       () => [1, 1, 1],
-      new Float32Array(9),
+      new Float32Array(3),
     );
     expect(result).toBeNull();
   });
@@ -189,16 +184,16 @@ describe("buildStyleColorsFromArrays", () => {
       vertexCount: 0,
     };
     const seen: unknown[] = [];
-    buildStyleColorsFromArrays(
+    buildSlotStyleColors(
       model,
-      new Uint32Array([0, 0, 0]),
-      new Uint32Array([0, 0, 0]),
+      new Uint32Array([0]),
+      new Uint32Array([0]),
       ["b-0"],
       (_surface, object) => {
         seen.push(object.attributes);
         return null;
       },
-      new Float32Array(9),
+      new Float32Array(3),
     );
     expect(seen).toEqual([{ b3_dak_type: "slanted", shared: "part" }]);
   });

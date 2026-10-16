@@ -242,7 +242,9 @@ const MATCH_ALL_RULE: Rule = {
 describe("fcb.worker cache — fetch populates records", () => {
   it("fills 'cell'.objects/surfaceAttrKeys from toObjectRecords instead of the [] placeholder", async () => {
     const { handler, posted } = await setupWorker([roofFeature("a", 100, 100)]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -277,7 +279,9 @@ describe("fcb.worker cache — lodsSeen (B1, 2026-07-28 final review)", () => {
     const { handler, posted } = await setupWorker([
       roofFeatureWithLod("a", 100, 100, "2"),
     ]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -307,7 +311,9 @@ describe("fcb.worker cache — lodsSeen (B1, 2026-07-28 final review)", () => {
       roofFeatureWithLod("b", 150, 150, "2.2"), // -> same cell 2/0/0 as 'a'
       roofFeatureWithLod("c", 120, 120, "1.3"), // duplicate label, same cell
     ]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -336,7 +342,9 @@ describe("fcb.worker cache — lodsSeen (B1, 2026-07-28 final review)", () => {
       roofFeatureWithLod("a", 100, 100, "1.3"),
       roofFeatureWithLod("b", 150, 150, "2.2"),
     ]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -369,7 +377,9 @@ describe("fcb.worker cache — recolor", () => {
       roofFeature("a", 100, 100), // -> cell 2/0/0
     ]);
 
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -388,7 +398,7 @@ describe("fcb.worker cache — recolor", () => {
       (m): m is Extract<WorkerResponse, { type: "cell" }> => m.type === "cell",
     );
     if (!cellMsg) throw new Error("no cell message posted");
-    const expectedLength = cellMsg.geometry.triangleCount * 3 * 3;
+    const expectedLength = cellMsg.geometry.slotObjects.length * 3;
 
     await handler({
       data: {
@@ -406,19 +416,19 @@ describe("fcb.worker cache — recolor", () => {
     );
     if (!recolored) throw new Error("no recolored message posted");
 
-    // If the worker had cached a REFERENCE to `a.objectIndices` (etc.)
+    // If the worker had cached a REFERENCE to `a.slotObjects` (etc.)
     // instead of a `.slice()` copy taken before the 'cell' message's
     // buffers were transferred, those cached arrays would have been
     // detached down to length 0 by the transfer above — collapsing this to
-    // a 0-length array instead of the real per-vertex color output.
+    // a 0-length array instead of the real per-slot color output.
     expect(recolored.ruleColors.length).toBe(expectedLength);
     expect(recolored.ruleColors.length).toBeGreaterThan(0);
 
     const [er, eg, eb] = srgbHexToLinear("#ff0000");
-    for (let v = 0; v < recolored.ruleColors.length / 3; v++) {
-      expect(recolored.ruleColors[v * 3]).toBeCloseTo(er, 6);
-      expect(recolored.ruleColors[v * 3 + 1]).toBeCloseTo(eg, 6);
-      expect(recolored.ruleColors[v * 3 + 2]).toBeCloseTo(eb, 6);
+    for (let slot = 0; slot < recolored.ruleColors.length / 3; slot++) {
+      expect(recolored.ruleColors[slot * 3]).toBeCloseTo(er, 6);
+      expect(recolored.ruleColors[slot * 3 + 1]).toBeCloseTo(eg, 6);
+      expect(recolored.ruleColors[slot * 3 + 2]).toBeCloseTo(eb, 6);
     }
 
     teardown();
@@ -426,7 +436,9 @@ describe("fcb.worker cache — recolor", () => {
 
   it("falls back to a fresh copy of the cached base colors when no rule matches, without exhausting the cache on repeat calls", async () => {
     const { handler, posted } = await setupWorker([roofFeature("a", 100, 100)]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -444,7 +456,7 @@ describe("fcb.worker cache — recolor", () => {
       (m): m is Extract<WorkerResponse, { type: "cell" }> => m.type === "cell",
     );
     if (!cellMsg) throw new Error("no cell message posted");
-    const expectedLength = cellMsg.geometry.triangleCount * 3 * 3;
+    const expectedLength = cellMsg.geometry.slotObjects.length * 3;
 
     // Two recolor round-trips in a row, both with rulesEnabled: false, so
     // buildRuleColorsFromArrays returns null both times and the handler
@@ -477,7 +489,9 @@ describe("fcb.worker cache — recolor", () => {
 
   it("skips a key that was never fetched — no crash, no recolored message, just done", async () => {
     const { handler, posted } = await setupWorker([]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "recolor",
@@ -499,7 +513,9 @@ describe("fcb.worker cache — on-demand surfaces", () => {
       roofFeature("a", 100, 100), // -> cell 2/0/0
       roofFeature("b", 500, 100), // -> cell 2/1/0
     ]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -535,7 +551,9 @@ describe("fcb.worker cache — on-demand surfaces", () => {
 
   it("reports a not-found error for an object id that was never fetched", async () => {
     const { handler, posted } = await setupWorker([roofFeature("a", 100, 100)]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -570,7 +588,9 @@ describe("fcb.worker cache — evict / close genuinely release memory", () => {
       roofFeature("a", 100, 100), // -> cell 2/0/0
       roofFeature("b", 500, 100), // -> cell 2/1/0
     ]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -620,7 +640,9 @@ describe("fcb.worker cache — evict / close genuinely release memory", () => {
 
   it("close clears the ENTIRE cache, not just the current fetch's cells", async () => {
     const { handler, posted } = await setupWorker([roofFeature("a", 100, 100)]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -639,7 +661,9 @@ describe("fcb.worker cache — evict / close genuinely release memory", () => {
 
     // Re-open (close tore down the reader too) and ask for the
     // now-supposedly-resident object — it must be gone.
-    await handler({ data: { type: "open", id: 3, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 3, source: { url: "fake://irrelevant" } },
+    });
     await handler({ data: { type: "surfaces", id: 4, objectId: "a" } });
     const errMsg = posted.find(
       (m): m is Extract<WorkerResponse, { type: "error" }> =>
@@ -662,9 +686,9 @@ describe("fcb.worker cache — partial fetch failure discards its own cells (B3,
     // returns without calling commitNormal/commitSwap), so its own `evict`
     // can never reach a cell it never knew about.
     let callCount = 0;
-    const real = await vi.importActual<
-      typeof import("@cityjson/navara-core")
-    >("@cityjson/navara-core");
+    const real = await vi.importActual<typeof import("@cityjson/navara-core")>(
+      "@cityjson/navara-core",
+    );
     vi.doMock("@cityjson/navara-core", () => ({
       ...real,
       buildCityMeshArrays: (
@@ -680,7 +704,9 @@ describe("fcb.worker cache — partial fetch failure discards its own cells (B3,
       roofFeature("a", 100, 100), // -> cell 2/0/0, processed FIRST (succeeds)
       roofFeature("b", 500, 100), // -> cell 2/1/0, processed SECOND (throws)
     ]);
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -743,9 +769,9 @@ describe("fcb.worker cache — partial fetch failure discards its own cells (B3,
     // by anything the main thread knows about. The fix must restore call
     // 1's value, not erase it.
     let callCount = 0;
-    const real = await vi.importActual<
-      typeof import("@cityjson/navara-core")
-    >("@cityjson/navara-core");
+    const real = await vi.importActual<typeof import("@cityjson/navara-core")>(
+      "@cityjson/navara-core",
+    );
     vi.doMock("@cityjson/navara-core", () => ({
       ...real,
       buildCityMeshArrays: (
@@ -769,7 +795,9 @@ describe("fcb.worker cache — partial fetch failure discards its own cells (B3,
         ],
       ],
     });
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
 
     const fetchMsg = {
       type: "fetch" as const,
@@ -942,13 +970,11 @@ describe("fcb.worker — cells are baked into exact local ENU metres (Task C5 St
     // metre horizontally (scale factor + convergence) and by `heightOffset`
     // vertically, so this is the assertion that actually fails if the
     // transform is dropped.
-    const shortcut = corners.map(
-      (c): [number, number, number] => [
-        c[0] - centre[0],
-        c[1] - centre[1],
-        c[2] - centre[2],
-      ],
-    );
+    const shortcut = corners.map((c): [number, number, number] => [
+      c[0] - centre[0],
+      c[1] - centre[1],
+      c[2] - centre[2],
+    ]);
     for (let i = 0; i < corners.length; i++) {
       const d = Math.hypot(
         expected[i]![0] - shortcut[i]![0],
@@ -985,7 +1011,12 @@ describe("fcb.worker — cells are baked into exact local ENU metres (Task C5 St
       extent,
     });
     await handler({
-      data: { type: "open", id: 0, source: { url: "fake://irrelevant" }, heightOffset },
+      data: {
+        type: "open",
+        id: 0,
+        source: { url: "fake://irrelevant" },
+        heightOffset,
+      },
     });
     await handler({
       data: {
@@ -1129,7 +1160,10 @@ describe("fcb.worker — hiddenTypes", () => {
     expect(cell.geometry.objectKeys).toEqual(["part", "tree"]);
     expect(cell.objects.map((o) => o.id)).toEqual(["part", "tree"]);
     // The surviving vertices all belong to the tree, which is object index 1.
-    expect([...cell.geometry.objectIndices]).toEqual(new Array(6).fill(1));
+    const g = cell.geometry;
+    expect([...g.slots].map((slot) => g.slotObjects[slot])).toEqual(
+      new Array(6).fill(1),
+    );
     teardown();
   });
 });

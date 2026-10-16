@@ -1,21 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { srgbHexToLinear, type CityObject } from "@cityjson/navara-core";
+import type { CityObject } from "@cityjson/navara-core";
 import {
   computeStyleColors,
-  HIGHLIGHT_COLOR_HEX,
-  HOVER_COLOR_HEX,
-  paintLayers,
+  paintSlotFlags,
+  type SlotFlagWriter,
 } from "../src/surfaceColorLayers";
+import { SLOT_HOVERED, SLOT_SELECTED, SLOT_TEXTURED } from "../src/slotFlags";
 
-/** 4 vertices: v0,v1 -> object 0 surface 0; v2,v3 -> object 1 surface 1. */
-const objectIndices = new Uint32Array([0, 0, 1, 1]);
-const surfaceIndices = new Uint32Array([0, 0, 1, 1]);
+/** Two slots: object 0 surface 0, object 1 surface 1. */
+const slotObjects = new Uint32Array([0, 1]);
+const slotSurfaces = new Uint32Array([0, 1]);
 const objectKeys = ["B1", "B2"];
 // 0.25 / 0.5 are exactly representable in a Float32Array, so the toEqual
 // assertions below are safe (0.1 and 0.2 are not — they round on storage).
-const base = new Float32Array([
-  0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
-]);
+const base = new Float32Array([0.25, 0.25, 0.25, 0.5, 0.5, 0.5]);
 
 function obj(id: string, type: "RoofSurface" | "WallSurface"): CityObject {
   return {
@@ -43,22 +41,21 @@ describe("computeStyleColors", () => {
       // Contract) — the buffer takes it verbatim, with no hex round trip.
       (surface) =>
         surface.surface.type === "RoofSurface" ? [1, 0, 0.5] : null,
-      objectIndices,
-      surfaceIndices,
+      slotObjects,
+      slotSurfaces,
       objectKeys,
       lookup,
       base,
     );
     expect(out).not.toBeNull();
-    expect(Array.from(out!.slice(0, 3))).toEqual([1, 0, 0.5]);
-    expect(Array.from(out!.slice(6, 9))).toEqual([0.5, 0.5, 0.5]);
+    expect(Array.from(out!)).toEqual([1, 0, 0.5, 0.5, 0.5, 0.5]);
   });
 
   it("returns null when the evaluator never matches", () => {
     const out = computeStyleColors(
       () => null,
-      objectIndices,
-      surfaceIndices,
+      slotObjects,
+      slotSurfaces,
       objectKeys,
       lookup,
       base,
@@ -66,20 +63,19 @@ describe("computeStyleColors", () => {
     expect(out).toBeNull();
   });
 
-  it("calls the evaluator once per unique (object, surface) pair", () => {
+  it("calls the evaluator once per slot", () => {
     const seen: string[] = [];
     computeStyleColors(
       (surface, object) => {
         seen.push(`${object.objectId}:${surface.surfaceIndex}`);
         return [1, 1, 1];
       },
-      objectIndices,
-      surfaceIndices,
+      slotObjects,
+      slotSurfaces,
       objectKeys,
       lookup,
       base,
     );
-    // 4 vertices, but only 2 distinct (object, surface) pairs.
     expect(seen).toEqual(["B1:0", "B2:1"]);
   });
 
@@ -105,77 +101,77 @@ describe("computeStyleColors", () => {
   });
 });
 
-describe("paintLayers", () => {
-  it("paints a caller-supplied highlight and hover pair instead of the defaults", () => {
-    const target = new Float32Array(base.length);
-    const colors = {
-      highlight: srgbHexToLinear("#a7e32b"),
-      hover: srgbHexToLinear("#edfbc8"),
-    };
-    paintLayers(
-      target,
-      base,
-      objectIndices,
-      surfaceIndices,
+/** A flag store over `n` slots, starting from `initial`. */
+function flags(n: number, initial = 0): SlotFlagWriter & { all: number[] } {
+  const all = new Array<number>(n).fill(initial);
+  return {
+    all,
+    flags: (slot) => all[slot]!,
+    setFlags: (slot, f) => {
+      all[slot] = f;
+    },
+  };
+}
+
+describe("paintSlotFlags", () => {
+  it("flags the selected object and the hovered one", () => {
+    const t = flags(2);
+    paintSlotFlags(
+      t,
+      slotObjects,
+      slotSurfaces,
       objectKeys,
       [{ kind: "object", layerId: "L", objectId: "B1" }],
       { kind: "object", layerId: "L", objectId: "B2" },
-      colors,
     );
-    expect(target[0]).toBeCloseTo(colors.highlight[0]!, 6);
-    expect(target[1]).toBeCloseTo(colors.highlight[1]!, 6);
-    expect(target[2]).toBeCloseTo(colors.highlight[2]!, 6);
-    // B2 is hovered, not selected: the hover colour, and not the default one.
-    expect(target[6]).toBeCloseTo(colors.hover[0]!, 6);
-    expect(target[7]).toBeCloseTo(colors.hover[1]!, 6);
-    expect(target[8]).toBeCloseTo(colors.hover[2]!, 6);
+    expect(t.all).toEqual([SLOT_SELECTED, SLOT_HOVERED]);
   });
 
-  it("restores the source layer then paints selection over hover", () => {
-    const target = new Float32Array(base.length);
-    paintLayers(
-      target,
-      base,
-      objectIndices,
-      surfaceIndices,
+  it("sets both bits where selection and hover meet; the shader draws selection", () => {
+    const t = flags(2);
+    paintSlotFlags(
+      t,
+      slotObjects,
+      slotSurfaces,
       objectKeys,
       [{ kind: "object", layerId: "L", objectId: "B1" }],
       { kind: "object", layerId: "L", objectId: "B1" },
     );
-    const [hr, hg, hb] = srgbHexToLinear(HIGHLIGHT_COLOR_HEX);
-    expect(target[0]).toBeCloseTo(hr, 6);
-    expect(target[1]).toBeCloseTo(hg, 6);
-    expect(target[2]).toBeCloseTo(hb, 6);
-    expect(Array.from(target.slice(6, 9))).toEqual([0.5, 0.5, 0.5]);
+    expect(t.all).toEqual([SLOT_SELECTED | SLOT_HOVERED, 0]);
+  });
+
+  it("clears the previous highlight and keeps every other flag", () => {
+    const t = flags(2, SLOT_TEXTURED | SLOT_SELECTED | SLOT_HOVERED);
+    paintSlotFlags(t, slotObjects, slotSurfaces, objectKeys, [], null);
+    expect(t.all).toEqual([SLOT_TEXTURED, SLOT_TEXTURED]);
   });
 
   it("honours surface-level selection granularity", () => {
-    const target = new Float32Array(base.length);
-    paintLayers(
-      target,
-      base,
-      objectIndices,
-      surfaceIndices,
+    const t = flags(2);
+    paintSlotFlags(
+      t,
+      slotObjects,
+      slotSurfaces,
       objectKeys,
       [{ kind: "surface", layerId: "L", objectId: "B2", surfaceIndex: 9 }],
       null,
     );
-    expect(Array.from(target.slice(6, 9))).toEqual([0.5, 0.5, 0.5]);
+    expect(t.all).toEqual([0, 0]);
   });
 
-  it("paints every selected surface of the SAME object, not just the last", () => {
-    // 4 vertices, one object ("B1"), two surfaces: v0,v1 -> surface 0;
-    // v2,v3 -> surface 1. Regression for the B16 smoke finding: keying the
-    // resolved selections by object index alone made the second surface
-    // selection evict the first, so only the last-painted face highlighted.
-    const oneObjectIndices = new Uint32Array([0, 0, 0, 0]);
-    const twoSurfaceIndices = new Uint32Array([0, 0, 1, 1]);
-    const target = new Float32Array(base.length);
-    paintLayers(
-      target,
-      base,
-      oneObjectIndices,
-      twoSurfaceIndices,
+  // One object ("B1"), two surfaces, one slot each.
+  const oneObject = new Uint32Array([0, 0]);
+  const twoSurfaces = new Uint32Array([0, 1]);
+
+  it("flags every selected surface of the SAME object, not just the last", () => {
+    // Regression for the B16 smoke finding: keying the resolved selections
+    // by object index alone made the second surface selection evict the
+    // first, so only the last-painted face highlighted.
+    const t = flags(2);
+    paintSlotFlags(
+      t,
+      oneObject,
+      twoSurfaces,
       ["B1"],
       [
         { kind: "surface", layerId: "L", objectId: "B1", surfaceIndex: 0 },
@@ -183,67 +179,43 @@ describe("paintLayers", () => {
       ],
       null,
     );
-    const [hr, hg, hb] = srgbHexToLinear(HIGHLIGHT_COLOR_HEX);
-    for (const v of [0, 1, 2, 3]) {
-      expect(target[v * 3]).toBeCloseTo(hr, 6);
-      expect(target[v * 3 + 1]).toBeCloseTo(hg, 6);
-      expect(target[v * 3 + 2]).toBeCloseTo(hb, 6);
-    }
+    expect(t.all).toEqual([SLOT_SELECTED, SLOT_SELECTED]);
   });
 
-  it("keeps an object-kind selection painting all surfaces of the object", () => {
-    const oneObjectIndices = new Uint32Array([0, 0, 0, 0]);
-    const twoSurfaceIndices = new Uint32Array([0, 0, 1, 1]);
-    const target = new Float32Array(base.length);
-    paintLayers(
-      target,
-      base,
-      oneObjectIndices,
-      twoSurfaceIndices,
+  it("keeps an object-kind selection covering all surfaces of the object", () => {
+    const t = flags(2);
+    paintSlotFlags(
+      t,
+      oneObject,
+      twoSurfaces,
       ["B1"],
       [{ kind: "object", layerId: "L", objectId: "B1" }],
       null,
     );
-    const [hr, hg, hb] = srgbHexToLinear(HIGHLIGHT_COLOR_HEX);
-    for (const v of [0, 1, 2, 3]) {
-      expect(target[v * 3]).toBeCloseTo(hr, 6);
-      expect(target[v * 3 + 1]).toBeCloseTo(hg, 6);
-      expect(target[v * 3 + 2]).toBeCloseTo(hb, 6);
-    }
+    expect(t.all).toEqual([SLOT_SELECTED, SLOT_SELECTED]);
   });
 
-  it("leaves an unselected surface of a partially selected object unpainted", () => {
-    const oneObjectIndices = new Uint32Array([0, 0, 0, 0]);
-    const twoSurfaceIndices = new Uint32Array([0, 0, 1, 1]);
-    const target = new Float32Array(base.length);
-    paintLayers(
-      target,
-      base,
-      oneObjectIndices,
-      twoSurfaceIndices,
+  it("leaves an unselected surface of a partially selected object unflagged", () => {
+    const t = flags(2);
+    paintSlotFlags(
+      t,
+      oneObject,
+      twoSurfaces,
       ["B1"],
       [{ kind: "surface", layerId: "L", objectId: "B1", surfaceIndex: 1 }],
       null,
     );
-    expect(Array.from(target.slice(0, 6))).toEqual([
-      0.25, 0.25, 0.25, 0.25, 0.25, 0.25,
-    ]);
-    const [hr] = srgbHexToLinear(HIGHLIGHT_COLOR_HEX);
-    expect(target[6]).toBeCloseTo(hr, 6);
+    expect(t.all).toEqual([0, SLOT_SELECTED]);
   });
 
-  it("paints hover when nothing is selected", () => {
-    const target = new Float32Array(base.length);
-    paintLayers(target, base, objectIndices, surfaceIndices, objectKeys, [], {
+  it("flags a hovered surface when nothing is selected", () => {
+    const t = flags(2);
+    paintSlotFlags(t, slotObjects, slotSurfaces, objectKeys, [], {
       kind: "surface",
       layerId: "L",
       objectId: "B2",
       surfaceIndex: 1,
     });
-    const [r, g, b] = srgbHexToLinear(HOVER_COLOR_HEX);
-    expect(target[6]).toBeCloseTo(r, 6);
-    expect(target[7]).toBeCloseTo(g, 6);
-    expect(target[8]).toBeCloseTo(b, 6);
-    expect(Array.from(target.slice(0, 3))).toEqual([0.25, 0.25, 0.25]);
+    expect(t.all).toEqual([0, SLOT_HOVERED]);
   });
 });

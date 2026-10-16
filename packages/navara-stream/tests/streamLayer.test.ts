@@ -28,9 +28,11 @@ import {
 import {
   CityMeshArraysMesh,
   DEFAULT_THEME_STYLE,
+  DEFAULT_HIGHLIGHT_RGB,
   HIGHLIGHT_COLOR_HEX,
-  resolveCityColors,
-  type ResolvedCityColors,
+  paintSlotFlags,
+  SLOT_HOVERED,
+  SLOT_SELECTED,
   type CityMeshHandle,
   type Selection,
   type ThemeStyle,
@@ -128,24 +130,29 @@ function coverFor(rays: readonly [Ray, Ray, Ray, Ray]): CellKey[] {
   return keysCovering(GRID, footprint.bbox, level);
 }
 
-/** One triangle, with `objectKey` as its only object — distinct per cell, so
- *  a pick assertion can tell which cell answered. */
+/** `triangleCount` triangles of ONE surface (one slot) of `objectKey`, the
+ *  cell's only object — distinct per cell, so a pick assertion can tell which
+ *  cell answered. */
 function geom(triangleCount: number, objectKey = "B1") {
   const v = triangleCount * 3;
+  // An empty cell draws no surface, so it has no slot either.
+  const n = triangleCount > 0 ? 1 : 0;
   return {
     positions: new Float32Array(v * 3).fill(1),
     normals: new Float32Array(v * 3).fill(2),
-    baseColors: new Float32Array(v * 3).fill(0.25),
+    slots: new Uint32Array(v).fill(0),
+    slotObjects: new Uint32Array(n),
+    slotSurfaces: new Uint32Array(n),
+    slotTextures: new Int32Array(n).fill(-1),
+    baseColors: new Float32Array(n * 3).fill(0.25),
     ruleColors: null,
-    objectIndices: new Uint32Array(v).fill(0),
-    surfaceIndices: new Uint32Array(v).fill(0),
     objectKeys: [objectKey],
     triangleCount,
   };
 }
-/** Vertex count of the fixture cell above — the length every colour buffer
- *  the fake worker returns must match. */
-const CELL_COLOR_LEN = 1 * 3 * 3;
+/** Slot count of the fixture cell above, times 3 — the length every colour
+ *  buffer the fake worker returns must match. */
+const CELL_COLOR_LEN = 1 * 3;
 
 /** The minimum `ResidentObjectRecord` the handle's own folds read: an id and
  *  an object type. */
@@ -386,7 +393,7 @@ function recordingFactory() {
       const handle: CityMeshHandle = {
         ref: null,
         setColors: vi.fn(),
-        maskTextured: (c: Float32Array) => c,
+        setHighlight: vi.fn(),
         textureChanged: () => {},
         setVisible: vi.fn(),
         setThemeStyle: (style: ThemeStyle) => {
@@ -426,9 +433,9 @@ function realMeshFactory() {
       const handle: CityMeshHandle = {
         ref: mesh,
         setColors: (c) => mesh.setColors(c),
+        setHighlight: (s, h) => mesh.setHighlight(s, h),
         setVisible: (v) => mesh.setVisible(v),
         setThemeStyle: (s) => mesh.setThemeStyle(s),
-        maskTextured: (c: Float32Array) => c,
         textureChanged: () => {},
         triangleCount: () => mesh.triangleCount(),
         batchIdMap: () => mesh.batchIdMap(),
@@ -457,8 +464,11 @@ function realMeshFactory() {
 function pickingFactory(hitDistances: Readonly<Record<string, number>> = {}) {
   interface Rec {
     readonly key: string;
-    colors: Float32Array | null;
-    /** setColors calls: each one is a full colour-buffer upload. */
+    /** The last `setColors` (rule colours, per slot), or null if never. */
+    colors: ArrayLike<number> | null;
+    /** The slots' highlight flags, as the mesh's style texture holds them. */
+    readonly flags: number[];
+    /** setHighlight calls: each one is a style-texture upload. */
     paints: number;
     visible: boolean;
     deleted: boolean;
@@ -468,9 +478,11 @@ function pickingFactory(hitDistances: Readonly<Record<string, number>> = {}) {
   const all: Rec[] = [];
   const factory: CellMeshFactory = {
     create(key, entry) {
+      const g = entry.geometry;
       const rec: Rec = {
         key,
         colors: null,
+        flags: new Array<number>(g.slotObjects.length).fill(0),
         paints: 0,
         visible: true,
         deleted: false,
@@ -480,15 +492,31 @@ function pickingFactory(hitDistances: Readonly<Record<string, number>> = {}) {
       all.push(rec);
       const handle: CityMeshHandle = {
         ref: null,
-        setColors: (c: Float32Array) => {
+        setColors: (c) => {
           rec.colors = c;
+        },
+        setHighlight: (selections, hovered) => {
+          // The real flag writer, over the real slot tables, so what
+          // `rendered` reads is what the style texture would hold.
+          paintSlotFlags(
+            {
+              flags: (slot) => rec.flags[slot]!,
+              setFlags: (slot, f) => {
+                rec.flags[slot] = f;
+              },
+            },
+            g.slotObjects,
+            g.slotSurfaces,
+            g.objectKeys,
+            selections,
+            hovered,
+          );
           rec.paints++;
         },
         setVisible: (v: boolean) => {
           rec.visible = v;
         },
         setThemeStyle: vi.fn(),
-        maskTextured: (c: Float32Array) => c,
         textureChanged: () => {},
         triangleCount: () => 7,
         batchIdMap: () => [{ objectIndex: 0, surfaceIndex: 4 }],
@@ -535,8 +563,6 @@ function makeHandle(
     maxTriangles?: number;
     /** Resident byte budget. The real one is 512 MiB. */
     maxBytes?: number;
-    /** A host's highlight/hover pair; omitted keeps the historical amber. */
-    colors?: ResolvedCityColors;
   },
 ) {
   const fake = makeFakeClient(opts);
@@ -554,7 +580,6 @@ function makeHandle(
     toSourceXY: TO_SOURCE_XY,
     toLngLat: TO_LNG_LAT,
     heightOffsetM: opts.heightOffsetM ?? 0,
-    colors: opts.colors,
     // Injected, so streamLayer.ts never imports addCityMeshArrays and
     // therefore never reaches @navaramap/*. Task C11 supplies the real one.
     meshFactory: opts.meshFactory ?? meshes.factory,
@@ -611,56 +636,52 @@ describe("StreamLayerHandle.commit", () => {
     expect(handle.ladder).toEqual(["2.2"]);
   });
 
-  it(
-    "a swap fetch slower than the retired 1500 ms deadline still commits, so the layer cannot livelock (2026-08-05)",
-    async () => {
-      // THE REGRESSION. Reported as "FlatCityBuf doesn't load when I move the
-      // camera; only when I switch LoD it loads once".
-      //
-      // A layer's SECOND commit is always a swap: commit 1 runs with an empty
-      // ladder, so the auto LoD resolves to `{kind:"all"}` and that is what is
-      // recorded as the previous selection; the ladder is only LEARNED from
-      // the cells commit 1 returns, after which the same camera resolves to an
-      // exact label. `planCommit` calls that a swap.
-      //
-      // A swap used to be raced against LEVEL_SWAP_TIMEOUT_MS (1500 ms), and
-      // the timeout path returned BEFORE recording the level/LoD/view it had
-      // planned — so the next settle recomputed the identical doomed swap and
-      // the layer never loaded anything again. This pins the fix: a slow swap
-      // is WAITED OUT, adopted, and recorded.
-      const opts = { lodsSeen: ["1.2", "2.2"], fetchDelayMs: 0 };
-      const { handle, client } = makeHandle(opts);
-      await handle.commit(topDownRays());
-      const firstCover = handle.cacheKeysForTest();
-      expect(firstCover.length).toBeGreaterThan(0);
-      expect(handle.ladder).toEqual(["1.2", "2.2"]);
-      // Commit 1 asked for everything: the ladder was empty, so there was no
-      // label to filter on.
-      expect(client.sendStreamingCalls[0]!.lod).toBeNull();
+  it("a swap fetch slower than the retired 1500 ms deadline still commits, so the layer cannot livelock (2026-08-05)", async () => {
+    // THE REGRESSION. Reported as "FlatCityBuf doesn't load when I move the
+    // camera; only when I switch LoD it loads once".
+    //
+    // A layer's SECOND commit is always a swap: commit 1 runs with an empty
+    // ladder, so the auto LoD resolves to `{kind:"all"}` and that is what is
+    // recorded as the previous selection; the ladder is only LEARNED from
+    // the cells commit 1 returns, after which the same camera resolves to an
+    // exact label. `planCommit` calls that a swap.
+    //
+    // A swap used to be raced against LEVEL_SWAP_TIMEOUT_MS (1500 ms), and
+    // the timeout path returned BEFORE recording the level/LoD/view it had
+    // planned — so the next settle recomputed the identical doomed swap and
+    // the layer never loaded anything again. This pins the fix: a slow swap
+    // is WAITED OUT, adopted, and recorded.
+    const opts = { lodsSeen: ["1.2", "2.2"], fetchDelayMs: 0 };
+    const { handle, client } = makeHandle(opts);
+    await handle.commit(topDownRays());
+    const firstCover = handle.cacheKeysForTest();
+    expect(firstCover.length).toBeGreaterThan(0);
+    expect(handle.ladder).toEqual(["1.2", "2.2"]);
+    // Commit 1 asked for everything: the ladder was empty, so there was no
+    // label to filter on.
+    expect(client.sendStreamingCalls[0]!.lod).toBeNull();
 
-      // Well past the old deadline, from the same camera.
-      opts.fetchDelayMs = 1500 + 400;
-      await handle.commit(topDownRays());
+    // Well past the old deadline, from the same camera.
+    opts.fetchDelayMs = 1500 + 400;
+    await handle.commit(topDownRays());
 
-      // The swap happened: a second fetch went out, under the LEARNED label,
-      // and it was adopted rather than cancelled and rolled back.
-      expect(client.sendStreamingCalls).toHaveLength(2);
-      expect(client.sendStreamingCalls[1]!.lod).toBe("1.2");
-      expect(client.notifyCalls).not.toContainEqual(
-        expect.objectContaining({ type: "cancel" }),
-      );
-      expect(handle.status).toBe("idle");
-      expect(handle.cacheKeysForTest().sort()).toEqual([...firstCover].sort());
+    // The swap happened: a second fetch went out, under the LEARNED label,
+    // and it was adopted rather than cancelled and rolled back.
+    expect(client.sendStreamingCalls).toHaveLength(2);
+    expect(client.sendStreamingCalls[1]!.lod).toBe("1.2");
+    expect(client.notifyCalls).not.toContainEqual(
+      expect.objectContaining({ type: "cancel" }),
+    );
+    expect(handle.status).toBe("idle");
+    expect(handle.cacheKeysForTest().sort()).toEqual([...firstCover].sort());
 
-      // And it CONVERGED — the whole point. The LoD decision is now recorded,
-      // so a third commit from the same camera is an ordinary hysteresis skip,
-      // not a third doomed swap.
-      await handle.commit(topDownRays());
-      expect(client.sendStreamingCalls).toHaveLength(2);
-      expect(handle.status).toBe("idle");
-    },
-    10_000,
-  );
+    // And it CONVERGED — the whole point. The LoD decision is now recorded,
+    // so a third commit from the same camera is an ordinary hysteresis skip,
+    // not a third doomed swap.
+    await handle.commit(topDownRays());
+    expect(client.sendStreamingCalls).toHaveLength(2);
+    expect(handle.status).toBe("idle");
+  }, 10_000);
 
   it("a slow FIRST fetch still commits (the M7.5 auto-fit case)", async () => {
     // `planCommit` calls every initial load a swap (`prevLevel` is null, so
@@ -1019,13 +1040,29 @@ const RULE_G: Rule = {
 
 /** The base colour every fixture cell is baked with (`geom`). */
 const BASE = 0.25;
-/** What a cell would render right now: whatever it was last told, or — if it
- *  was never told anything — the colours it was built with. Keeps the
+/** What a cell would render right now, per slot, with the shader's
+ *  precedence: selection over hover over the last colours it was told — or,
+ *  if it was never told any, the colours it was built with. Keeps the
  *  assertions independent of WHETHER an unaffected cell got a redundant
- *  `setColors`, and dependent only on what it would show. */
-const rendered = (rec: { colors: Float32Array | null }): number[] => [
-  ...(rec.colors ?? new Float32Array(CELL_COLOR_LEN).fill(BASE)),
-];
+ *  call, and dependent only on what it would show. */
+const rendered = (rec: {
+  colors: ArrayLike<number> | null;
+  flags: readonly number[];
+}): number[] => {
+  const out = Array.from(
+    rec.colors ?? new Float32Array(CELL_COLOR_LEN).fill(BASE),
+  );
+  rec.flags.forEach((f, slot) => {
+    const over =
+      f & SLOT_SELECTED
+        ? DEFAULT_HIGHLIGHT_RGB.highlight
+        : f & SLOT_HOVERED
+          ? DEFAULT_HIGHLIGHT_RGB.hover
+          : null;
+    if (over) out.splice(slot * 3, 3, ...over);
+  });
+  return out;
+};
 
 /** A pan far enough east to expose new cells while keeping the old ones
  *  resident (`commitNormal` never evicts outside the cover). */
@@ -1130,27 +1167,6 @@ describe("StreamLayerHandle rules and LoD", () => {
     // painted from it.
     for (const rec of factory.all) expect(rec.colors).toBeNull();
     for (const rec of superseded) expect(rec.deleted).toBe(true);
-  });
-
-  it("paints a host-supplied highlight colour, not the default amber", async () => {
-    const colors = resolveCityColors({ highlightColor: "#a7e32b" });
-    const factory = pickingFactory();
-    const { handle } = makeHandle({ meshFactory: factory.factory, colors });
-    await handle.commit(topDownRays());
-
-    const [ownerKey] = [...factory.created.keys()] as [string];
-    const objectId = factory.created.get(ownerKey)!.objectKeys[0]!;
-    handle.setHighlight([{ kind: "object", layerId: "l1", objectId }]);
-
-    const painted = rendered(factory.created.get(ownerKey)!);
-    expect(painted[0]!).toBeCloseTo(colors.highlight[0]!, 6);
-    expect(painted[1]!).toBeCloseTo(colors.highlight[1]!, 6);
-    expect(painted[2]!).toBeCloseTo(colors.highlight[2]!, 6);
-    // And it is NOT the default: the two differ in the red channel.
-    expect(painted[0]!).not.toBeCloseTo(
-      srgbHexToLinear(HIGHLIGHT_COLOR_HEX)[0]!,
-      3,
-    );
   });
 
   it("a recolor does not wipe an active highlight", async () => {
@@ -1860,7 +1876,8 @@ describe("StreamLayerHandle.setThemeStyle", () => {
     const { handle, meshes } = makeHandle({});
     await handle.commit(topDownRays());
     expect(meshes.created.length).toBeGreaterThan(0);
-    for (const rec of meshes.created) expect(rec.style).toBe(DEFAULT_THEME_STYLE);
+    for (const rec of meshes.created)
+      expect(rec.style).toBe(DEFAULT_THEME_STYLE);
 
     handle.setThemeStyle(CYBER);
     for (const rec of meshes.created) expect(rec.style).toBe(CYBER);

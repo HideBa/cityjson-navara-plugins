@@ -51,7 +51,6 @@ export {
   applyTextureSettings,
   buildGroupMaterials,
   defaultTextureSource,
-  maskReadyTextures,
   resolveTextureUrl,
   TextureCache,
 } from "./texturedMaterials";
@@ -77,15 +76,30 @@ export type {
 
 export {
   computeStyleColors,
+  DEFAULT_HIGHLIGHT_RGB,
   HIGHLIGHT_COLOR_HEX,
   HOVER_COLOR_HEX,
-  paintLayers,
+  paintSlotFlags,
 } from "./surfaceColorLayers";
+export type { SlotFlagWriter } from "./surfaceColorLayers";
 
 export {
-  DEFAULT_CITY_COLORS,
-  resolveCityColors,
-} from "./cityColors";
+  CityStyleDepthMaterial,
+  CityStyleMaterial,
+  CityStyleTexture,
+  createStyleUniforms,
+  SlotStyle,
+  STYLE_TEXTURE_WIDTH,
+} from "./cityStyle";
+export type { CityStyleUniforms, SlotTables } from "./cityStyle";
+export {
+  SLOT_HIDDEN,
+  SLOT_HOVERED,
+  SLOT_SELECTED,
+  SLOT_TEXTURED,
+} from "./slotFlags";
+
+export { DEFAULT_CITY_COLORS, resolveCityColors } from "./cityColors";
 export type {
   CityColors,
   HighlightRGB,
