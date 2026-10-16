@@ -20,6 +20,7 @@ export function entryToArrays(entry: CellEntry): CityMeshArrays {
     positions: g.positions,
     normals: g.normals,
     objectKeys: g.objectKeys,
+    objectTypes: g.objectTypes,
     triangleCount: g.triangleCount,
     // Texture theme only.
     uvs: g.uvs,

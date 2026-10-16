@@ -321,10 +321,12 @@ describe("CityModelMesh", () => {
 });
 
 /**
- * Hiding is a GEOMETRY rebuild, not a style: a style evaluator paints RGB into
- * an opaque material, so a "hidden" object would still occlude and still pick.
- * Grouping is by first-level type, so the BuildingPart below disappears with
- * its parent even though nothing is typed "Building".
+ * Hiding is a FLAG in the style texture, not a rebuild: the shader drops a
+ * hidden slot from every pass, the raycast skips it and the edges leave it
+ * out. Grouping is by first-level type, so the BuildingPart below disappears
+ * with its parent even though nothing is typed "Building". The three quads are
+ * stacked at z = 6 (B1), 5 (B1P) and 4 (T1), so a ray straight down meets B1
+ * first.
  */
 describe("CityModelMesh hidden types", () => {
   const partModel: CityModel = {
@@ -354,59 +356,106 @@ describe("CityModelMesh hidden types", () => {
     },
   };
   const partOpts = { ...opts, model: partModel, lod: "2" };
+  const down = {
+    origin: { x: 1, y: 2, z: 1000 },
+    direction: { x: 0, y: 0, z: -1 },
+  };
+  const styleVersion = (m: CityModelMesh) =>
+    (m.object3d.material as CityStyleMaterial).styleUniforms.cityStyleTex.value
+      .version;
+  const vertexCount = (m: CityModelMesh) =>
+    m.object3d.geometry.getAttribute("position").count;
 
-  it("setHiddenTypes rebuilds without the hidden group's triangles", () => {
+  it("setHiddenTypes hides the group by flag, keeping the geometry", () => {
     const m = new CityModelMesh(partOpts);
     expect(m.triangleCount()).toBe(6); // three quads at LoD 2
     const before = m.object3d.geometry;
 
     m.setHiddenTypes(["Building"]);
-    expect(m.object3d.geometry).not.toBe(before);
+    expect(m.object3d.geometry).toBe(before);
     // Both the Building and its BuildingPart are gone; the tree remains.
     expect(m.triangleCount()).toBe(2);
+    expect(vertexCount(m)).toBe(18);
 
     m.setHiddenTypes([]);
     expect(m.triangleCount()).toBe(6);
     m.dispose();
   });
 
-  it("builds filtered from the constructor option", () => {
+  it("starts hidden from the constructor option, with every object built", () => {
     const m = new CityModelMesh({ ...partOpts, hiddenTypes: ["Building"] });
     expect(m.triangleCount()).toBe(2);
+    expect(vertexCount(m)).toBe(18);
     m.dispose();
   });
 
-  it("drops a no-op setHiddenTypes instead of rebuilding the geometry", () => {
+  it("drops a no-op setHiddenTypes without writing the style texture", () => {
     const m = new CityModelMesh({ ...partOpts, hiddenTypes: ["Building"] });
-    const geometry = m.object3d.geometry;
+    const version = styleVersion(m);
     m.setHiddenTypes(["Building"]);
-    expect(m.object3d.geometry).toBe(geometry);
+    expect(styleVersion(m)).toBe(version);
     m.setHiddenTypes([]);
-    expect(m.object3d.geometry).not.toBe(geometry);
+    expect(styleVersion(m)).toBeGreaterThan(version);
     m.dispose();
   });
 
-  it("keeps style and highlight across the rebuild", () => {
+  it("does not pick a hidden surface: the ray reaches the one behind it", () => {
+    const m = new CityModelMesh(partOpts);
+    expect(m.resolveRaycastSelection(down)?.objectId).toBe("B1");
+    m.setHiddenTypes(["Building"]);
+    expect(m.resolveRaycastSelection(down)?.objectId).toBe("T1");
+    m.setHiddenTypes(["Building", "SolitaryVegetationObject"]);
+    expect(m.raycast(down)).toBeNull();
+    m.dispose();
+  });
+
+  it("keeps style and highlight across a hide", () => {
     const m = new CityModelMesh(partOpts);
     m.setStyle((_surface, object) =>
       object.objectId === "T1" ? [0, 1, 0] : null,
     );
-    m.setHiddenTypes(["Building"]);
-    // Only the tree survives, so vertex 0 is its — and it is still styled.
+    m.setHighlight([{ kind: "object", layerId: "L1", objectId: "B1" }], null);
+    m.setHiddenTypes(["SolitaryVegetationObject"]);
+    m.setHiddenTypes([]);
     const colors = drawnColors(m);
-    expect(colors.getY(0)).toBeGreaterThan(0.9);
-    expect(m.resolveVertex(0)?.objectId).toBe("T1");
+    // Vertices 0-5 are B1's, 12-17 the tree's.
+    expect(colors.getX(0)).toBeGreaterThan(0.5); // highlight orange survived
+    expect(colors.getY(12)).toBeGreaterThan(0.9); // ...and the tree's style
+    expect(m.resolveVertex(12)?.objectId).toBe("T1");
     m.dispose();
   });
 
-  it("setVisibleObjectIds rebuilds with only the named objects", () => {
+  it("keeps the hide across a rebuild", () => {
     const m = new CityModelMesh(partOpts);
-    expect(m.triangleCount()).toBe(6);
+    m.setHiddenTypes(["Building"]);
+    m.setLod("1"); // only B1 has LoD 1, and it is hidden
+    expect(m.triangleCount()).toBe(0);
+    m.setLod("2");
+    expect(m.triangleCount()).toBe(2);
+    m.dispose();
+  });
+
+  it("outlines only what is drawn", () => {
+    const m = new CityModelMesh(partOpts);
+    m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
+    const edgeVertices = () =>
+      (m.object3d.children[0] as LineSegments).geometry.getAttribute("position")
+        .count;
+    // Three stacked quads, 4 boundary edges each, 2 endpoints per edge.
+    expect(edgeVertices()).toBe(24);
+    m.setHiddenTypes(["Building"]);
+    expect(edgeVertices()).toBe(8);
+    m.dispose();
+  });
+
+  it("setVisibleObjectIds shows only the named objects, by flag", () => {
+    const m = new CityModelMesh(partOpts);
     const before = m.object3d.geometry;
 
     m.setVisibleObjectIds(new Set(["T1"]));
-    expect(m.object3d.geometry).not.toBe(before);
+    expect(m.object3d.geometry).toBe(before);
     expect(m.triangleCount()).toBe(2);
+    expect(m.resolveRaycastSelection(down)?.objectId).toBe("T1");
 
     m.setVisibleObjectIds(null);
     expect(m.triangleCount()).toBe(6);
@@ -422,7 +471,7 @@ describe("CityModelMesh hidden types", () => {
     m.dispose();
   });
 
-  it("builds filtered from the visibleObjectIds constructor option", () => {
+  it("starts filtered from the visibleObjectIds constructor option", () => {
     const m = new CityModelMesh({
       ...partOpts,
       visibleObjectIds: new Set(["T1"]),
@@ -431,16 +480,16 @@ describe("CityModelMesh hidden types", () => {
     m.dispose();
   });
 
-  it("drops a no-op setVisibleObjectIds instead of rebuilding the geometry", () => {
+  it("drops a no-op setVisibleObjectIds without writing the style texture", () => {
     const m = new CityModelMesh({
       ...partOpts,
       visibleObjectIds: new Set(["T1"]),
     });
-    const geometry = m.object3d.geometry;
+    const version = styleVersion(m);
     m.setVisibleObjectIds(new Set(["T1"]));
-    expect(m.object3d.geometry).toBe(geometry);
+    expect(styleVersion(m)).toBe(version);
     m.setVisibleObjectIds(null);
-    expect(m.object3d.geometry).not.toBe(geometry);
+    expect(styleVersion(m)).toBeGreaterThan(version);
     m.dispose();
   });
 
@@ -449,22 +498,6 @@ describe("CityModelMesh hidden types", () => {
     m.setHiddenTypes(["Building"]);
     m.setVisibleObjectIds(new Set(["B1", "T1"]));
     expect(m.triangleCount()).toBe(2); // only the tree
-    m.dispose();
-  });
-
-  it("keeps style and highlight across a visible-id rebuild", () => {
-    const m = new CityModelMesh(partOpts);
-    m.setStyle((_surface, object) =>
-      object.objectId === "T1" ? [0, 1, 0] : null,
-    );
-    m.setHighlight([{ kind: "object", layerId: "L1", objectId: "T1" }], null);
-    m.setVisibleObjectIds(new Set(["T1"]));
-    // Only the tree survives, so vertex 0 is its.
-    const colors = drawnColors(m);
-    expect(colors.getX(0)).toBeGreaterThan(0.5); // highlight orange survived
-    m.setHighlight([], null);
-    expect(colors.getY(0)).toBeGreaterThan(0.9); // ...over the surviving style
-    expect(m.resolveVertex(0)?.objectId).toBe("T1");
     m.dispose();
   });
 });

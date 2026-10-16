@@ -55,7 +55,10 @@ import type {
   StreamSourceAdapter,
 } from "@cityjson/navara-stream/worker";
 import { keysCovering, makeGrid, type Grid } from "@cityjson/navara-stream";
-import type { WorkerRequest, WorkerResponse } from "@cityjson/navara-stream/worker";
+import type {
+  WorkerRequest,
+  WorkerResponse,
+} from "@cityjson/navara-stream/worker";
 
 /** Calls of the proj4 FACTORY: no converter, no per-vertex `forward`. */
 const proj4Calls = vi.hoisted(() => ({ count: 0 }));
@@ -112,7 +115,6 @@ function fetchMsg(
     level: 2,
     cells,
     lod,
-    hiddenTypes: [],
     rules: [],
     rulesEnabled: false,
   };
@@ -839,8 +841,8 @@ describe("the coordinate gate", () => {
           ? {
               ...s,
               rings: s.rings.map((ring) =>
-                ring.map((p, v): Vec3 =>
-                  v === 1 ? [Number.NaN, p[1], p[2]] : p,
+                ring.map(
+                  (p, v): Vec3 => (v === 1 ? [Number.NaN, p[1], p[2]] : p),
                 ),
               ),
             }
@@ -890,7 +892,9 @@ describe("rings fetched for one object", () => {
     await send(openReq({ source: { blob }, heightOffset: GEOID_M }));
     await send(fetchMsg(1, cells, box2(extent)));
 
-    const cell = posted.filter(ofType("cell")).find((c) => c.objects.length > 0);
+    const cell = posted
+      .filter(ofType("cell"))
+      .find((c) => c.objects.length > 0);
     expect(cell).toBeDefined();
     const objectId = cell!.objects[0]!.id;
     posted.length = 0;
@@ -921,9 +925,9 @@ describe("rings fetched for one object", () => {
       data!.frame!.latDeg,
       data!.frame!.heightM,
     );
-    const rings = (data!.surfaces as ReadonlyArray<{ rings: Vec3[][] }>).flatMap(
-      (s) => s.rings.flat(),
-    );
+    const rings = (
+      data!.surfaces as ReadonlyArray<{ rings: Vec3[][] }>
+    ).flatMap((s) => s.rings.flat());
     expect(rings.length).toBeGreaterThan(3);
     for (const point of rings) {
       const ecef = enuToEcef(frame, point);

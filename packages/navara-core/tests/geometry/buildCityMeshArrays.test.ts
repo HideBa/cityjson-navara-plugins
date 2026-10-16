@@ -330,6 +330,15 @@ describe("buildCityMeshArrays hidden-type filtering", () => {
   });
   const unfiltered = buildCityMeshArrays(model, "L", [0, 0, 0], null);
 
+  it("names each object's first-level type, so a renderer can hide by flag", () => {
+    expect(unfiltered.objectKeys).toEqual(["b1", "b1p", "tree"]);
+    expect(unfiltered.objectTypes).toEqual([
+      "Building",
+      "Building",
+      "SolitaryVegetationObject",
+    ]);
+  });
+
   it("drops a BuildingPart's triangles when Building is hidden", () => {
     const filtered = buildCityMeshArrays(
       model,

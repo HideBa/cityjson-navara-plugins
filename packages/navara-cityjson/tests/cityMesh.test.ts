@@ -23,7 +23,7 @@ import {
 import { DEFAULT_THEME_STYLE } from "../src/themeStyle";
 import { CITY_MESH_ARRAYS_KEY } from "../src/cityModelRegistry";
 import { FakeThreeView } from "./fakeView";
-import { SLOT_HOVERED, SLOT_SELECTED } from "../src/slotFlags";
+import { SLOT_HIDDEN, SLOT_HOVERED, SLOT_SELECTED } from "../src/slotFlags";
 import {
   CityStyleDepthMaterial,
   type CityStyleMaterial,
@@ -35,6 +35,7 @@ function arrays(): CityMeshArrays {
     positions: Float32Array.from([0, 0, 0, 10, 0, 0, 10, 10, 0]),
     normals: Float32Array.from([0, 0, 1, 0, 0, 1, 0, 0, 1]),
     objectKeys: ["B1"],
+    objectTypes: ["Building"],
     triangleCount: 1,
     slots: Uint32Array.from([0, 0, 0]),
     slotObjects: Uint32Array.from([0]),
@@ -165,6 +166,29 @@ describe("CityMeshArraysMesh", () => {
         direction: { x: 0, y: 0, z: 1 },
       }),
     ).toBeNull();
+    mesh.dispose();
+  });
+
+  it("hides a first-level type by flag: not drawn, not counted, not picked", () => {
+    const requestRender = vi.fn();
+    const mesh = new CityMeshArraysMesh(opts({ requestRender }));
+    requestRender.mockClear();
+    mesh.setHiddenTypes(["Building"]);
+    expect(mesh.styleTexel(0)[3]).toBe(SLOT_HIDDEN);
+    expect(mesh.triangleCount()).toBe(0);
+    expect(mesh.resolveRaycast(ecefRayOntoCell())).toBeNull();
+    expect(requestRender).toHaveBeenCalledTimes(1);
+    mesh.setHiddenTypes(["Building"]);
+    expect(requestRender).toHaveBeenCalledTimes(1);
+    mesh.setHiddenTypes([]);
+    expect(mesh.triangleCount()).toBe(1);
+    expect(mesh.resolveRaycast(ecefRayOntoCell())).not.toBeNull();
+    mesh.dispose();
+  });
+
+  it("starts hidden from the option", () => {
+    const mesh = new CityMeshArraysMesh(opts({ hiddenTypes: ["Building"] }));
+    expect(mesh.triangleCount()).toBe(0);
     mesh.dispose();
   });
 

@@ -301,7 +301,6 @@ export class StreamLayerHandle implements StreamLayerEvents {
    *  the same bookkeeping `_lastLod` is, and read by `planCommit` for the same
    *  reason: a change invalidates cells that are still resident under their
    *  old keys. */
-  private _lastHiddenTypes: ReadonlyArray<string> | null = null;
   /** The theme the resident cells were baked under; `undefined` until the
    *  first commit lands (`null` is a real value — see `PlanCommitInput`). */
   private _lastAppearance: AppearanceTheme | null | undefined = undefined;
@@ -527,8 +526,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
 
       // Read once, and used by BOTH the plan (which decides whether this is a
       // swap) and the fetch below, so the two can never disagree about what
-      // this commit's cells were baked without.
-      const hiddenTypes = this._hiddenTypes;
+      // theme this commit's cells were baked under.
       const appearanceTheme = this._appearance;
 
       const plan = planCommit({
@@ -539,12 +537,10 @@ export class StreamLayerHandle implements StreamLayerEvents {
         prevLevel: this._level,
         prevCommit: this._lastCommit,
         prevLod: this._lastLod,
-        prevHiddenTypes: this._lastHiddenTypes,
         prevAppearance: this._lastAppearance,
         ladder: this._ladder,
         lodMode: this._lodMode,
         selectedLod: this._selectedLod,
-        hiddenTypes,
         appearance: appearanceTheme,
       });
 
@@ -618,7 +614,6 @@ export class StreamLayerHandle implements StreamLayerEvents {
             level: plan.level,
             cells: [...plan.toFetch],
             lod: lodToWireLabel(plan.lod),
-            hiddenTypes,
             rules,
             rulesEnabled,
             appearance: appearanceTheme,
@@ -803,7 +798,6 @@ export class StreamLayerHandle implements StreamLayerEvents {
       }
 
       this._lastLod = plan.lod;
-      this._lastHiddenTypes = hiddenTypes;
       this._lastAppearance = appearanceTheme;
       this._level = plan.level;
       this._lastCommit = plan.commitView;
@@ -882,6 +876,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
       heightOffsetM: this.options.heightOffsetM,
       layerId: this.id,
       themeStyle: this._themeStyle,
+      hiddenTypes: this._hiddenTypes,
     });
     if (stale.length > 0) void this.recolorCells(stale);
     // Only when something is actually highlighted. With no selection every
@@ -1005,30 +1000,27 @@ export class StreamLayerHandle implements StreamLayerEvents {
   }
 
   /**
-   * Which first-level object types the next fetch must NOT bake geometry for
-   * (hiding "Building" hides its BuildingParts too).
+   * Which first-level object types are hidden (hiding "Building" hides its
+   * BuildingParts too).
    *
-   * Follows the {@link setLod} template, not {@link setRules}: this changes
-   * GEOMETRY, so it cannot be repaired by a recolor round trip — the affected
-   * cells have to be re-fetched. `planCommit` therefore treats the change as a
-   * swap, and the forced commit is what makes it happen for a viewport that
-   * has not moved. A commit already in flight is discarded by the epoch bump
-   * the forced commit performs, exactly as for a mid-flight LoD change, so no
-   * cell baked under the old list can be installed afterwards.
+   * On the {@link setVisible} template: every cell carries all of its
+   * objects, and hiding is a flag in each cell's style texture, so a toggle
+   * is fanned out to the resident cells and remembered for the ones
+   * `syncCellMeshes` installs later. No fetch, no commit.
    *
    * Normalised (sorted, deduped) so a re-ordered list from the app is not
-   * mistaken for a change and does not refetch the whole cover.
+   * mistaken for a change and does not rewrite every cell.
    */
   setHiddenTypes(types: ReadonlyArray<string>): void {
     const next = [...new Set(types)].sort();
     if (hiddenTypesEqual(next, this._hiddenTypes)) return;
     this._hiddenTypes = next;
-    this.options.onCommitNeeded?.();
+    for (const cell of this.cells.values()) cell.handle.setHiddenTypes(next);
   }
 
   /**
-   * Draw another appearance theme (or none). Like a hidden-type change, a
-   * forced commit: the worker bakes the theme into each cell (texture-sorted
+   * Draw another appearance theme (or none). Like a LoD change, a forced
+   * commit: the worker bakes the theme into each cell (texture-sorted
    * vertex order, UVs, material base colours), so every resident cell is
    * refetched — `planCommit` treats it as a swap.
    */

@@ -53,6 +53,7 @@ import { CityStyleDepthMaterial, SlotStyle } from "./cityStyle";
 import { resolveCityColors, type ResolvedCityColors } from "./cityColors";
 import type { Selection, SurfaceSelection } from "./selection";
 import { ThemeStyleController, type ThemeStyle } from "./themeStyle";
+import { drawnTriangleCount, hiddenObjectMask } from "./slotVisibility";
 import {
   buildGroupMaterials,
   defaultTextureSource,
@@ -170,6 +171,8 @@ export class CityModelMesh {
   /** What the mesh renders into the shadow map, when the engine supplies
    *  one: a clone of the material that keeps the style patch. */
   private readonly depthMaterial: CityStyleDepthMaterial;
+  /** Triangles not hidden by type or filter: what `triangleCount` reports. */
+  private drawnTriangles = 0;
   private styleColors: Float32Array | null = null;
   private evaluator: SurfaceStyleEvaluator | null = null;
   private selections: readonly Selection[] = [];
@@ -221,6 +224,7 @@ export class CityModelMesh {
 
     this.arrays = this.buildArrays();
     this.style = new SlotStyle(this.arrays, this.colors);
+    this.applyHidden();
 
     const material = createCityMaterial(this.style.uniforms);
     this.object3d = new Mesh(
@@ -246,22 +250,25 @@ export class CityModelMesh {
     // After `applyPlacement`: the theme's edge child copies the mesh's
     // matrixWorld when it builds, and every later placement change runs
     // through `rebuildGeometry` -> `theme.geometryReplaced()`.
-    this.theme = new ThemeStyleController(this.object3d);
+    this.theme = new ThemeStyleController(this.object3d, (t) =>
+      this.isTriangleDrawn(t),
+    );
     // A texture theme swaps the single material for one per image group.
     this.applyMaterials();
     this.repaint();
   }
 
+  /** Every object of the LoD selection, hidden or not: hiding is a flag
+   *  ({@link applyHidden}), so a toggle never rebuilds. */
   private buildArrays(): CityMeshArrays {
     const arrays = buildCityMeshArrays(
       this.model,
       this.id,
       this.originOffset,
       this.lod,
-      this.hiddenTypes.size > 0 ? this.hiddenTypes : null,
+      null,
       this.appearance,
       this.colors.surfaceColorsLinear,
-      this.visibleObjectIds,
     );
     // buildCityMeshArrays emits *source-CRS deltas* from originOffset. Those
     // are NOT ENU metres: a projected CRS carries scale factor and grid
@@ -400,6 +407,25 @@ export class CityModelMesh {
     this.flushTextureChanges();
   }
 
+  /** Write the hidden flag of every slot from the hidden types and the
+   *  attribute filter, and recount the drawn triangles. */
+  private applyHidden(): void {
+    const { objectKeys, objectTypes, slots, slotObjects } = this.arrays;
+    const hidden = hiddenObjectMask(
+      objectKeys,
+      objectTypes,
+      this.hiddenTypes,
+      this.visibleObjectIds,
+    );
+    this.style.setHidden(hidden);
+    this.drawnTriangles = drawnTriangleCount(slots, slotObjects, hidden);
+  }
+
+  /** Whether triangle `t` is drawn, i.e. its slot is not hidden. */
+  private isTriangleDrawn(t: number): boolean {
+    return !this.style.isHidden(this.arrays.slots[t * 3]!);
+  }
+
   /** Every layer of the style texture: colours, the image mask, the
    *  highlight. */
   private repaint(): void {
@@ -439,7 +465,7 @@ export class CityModelMesh {
 
   /**
    * Draw another LoD selection. The selection is always recorded — every later
-   * rebuild (hidden types, filter, appearance, placement) reads it — but the
+   * rebuild (appearance, placement) reads it — but the
    * geometry is rebuilt only when some object's drawn LoD changes: dropping
    * LoD 0 from [2, 1, 0] on a city where every object also has LoD 1 draws the
    * same triangles, and re-triangulating 1.9 M of them took ~2.7 s
@@ -459,30 +485,24 @@ export class CityModelMesh {
   }
 
   /**
-   * Which first-level object types are left out of the geometry — hiding
-   * "Building" hides its BuildingParts too (`toplevelCityObjectType`).
+   * Which first-level object types are hidden — hiding "Building" hides its
+   * BuildingParts too (`toplevelCityObjectType`).
    *
-   * A REBUILD, on the same seam `setLod` uses, because a style evaluator
-   * cannot hide anything: it writes RGB into an opaque material, so a
-   * "hidden" object would still occlude what is behind it and still answer a
-   * raycast. Object indices survive the filter (`buildCityMeshArrays`), so the
-   * style and highlight `rebuildGeometry` repaints are unaffected.
+   * A flag write, not a rebuild: the shader drops a hidden slot from the
+   * colour, G-buffer and shadow passes alike, so it neither occludes nor
+   * casts, the raycast skips it, and the edges outline only what is drawn.
    */
   setHiddenTypes(types: ReadonlyArray<string>): void {
     const next = new Set(types);
     if (sameTypes(next, this.hiddenTypes)) return;
     this.hiddenTypes = next;
-    this.rebuildGeometry();
+    this.hiddenChanged();
   }
 
   /**
    * Draw only the named objects — the geometry side of the table panel's
-   * attribute filter.
-   *
-   * A REBUILD, on the same seam `setLod` and `setHiddenTypes` use, and for the
-   * same reason: a style evaluator writes RGB into an opaque material, so a
-   * "filtered out" object would still occlude what is behind it and still
-   * answer a raycast.
+   * attribute filter. A flag write, like {@link setHiddenTypes}, and ANDed
+   * with it.
    *
    * `null` clears the filter. An EMPTY set is NOT the same thing — it means
    * the filter matched nothing, and nothing is what must be drawn.
@@ -490,7 +510,14 @@ export class CityModelMesh {
   setVisibleObjectIds(ids: ReadonlySet<string> | null): void {
     if (sameVisibleIds(ids, this.visibleObjectIds)) return;
     this.visibleObjectIds = copyVisibleIds(ids);
-    this.rebuildGeometry();
+    this.hiddenChanged();
+  }
+
+  private hiddenChanged(): void {
+    this.applyHidden();
+    // The outline follows what is drawn.
+    this.theme.geometryReplaced();
+    this.requestRender();
   }
 
   /**
@@ -551,6 +578,7 @@ export class CityModelMesh {
     this.object3d.geometry = geometryFromMeshArrays(this.arrays);
     old.dispose();
     this.applyMaterials();
+    this.applyHidden();
     this.repaint();
     // The theme's edge lines were extracted from the geometry just disposed —
     // an outline of surfaces this LoD (or hidden-type list, or placement) no
@@ -673,12 +701,17 @@ export class CityModelMesh {
       0,
       Infinity,
     );
-    // `false`: this mesh has no children, and descending would let some future
-    // helper object answer for it.
-    const hit = raycaster.intersectObject(this.object3d, false)[0];
-    if (!hit?.face) return null;
-    const ref = this.surfaceAt(hit.face.a);
-    return ref ? { ...ref, distance: hit.distance } : null;
+    // `false`: the mesh's only children are its edge lines, and a line hit
+    // must never answer for the surface under the cursor. Nearest first; a
+    // hidden slot is still in the geometry, so it is skipped, not hit.
+    for (const hit of raycaster.intersectObject(this.object3d, false)) {
+      if (!hit.face || this.style.isHidden(this.arrays.slots[hit.face.a]!)) {
+        continue;
+      }
+      const ref = this.surfaceAt(hit.face.a);
+      return ref ? { ...ref, distance: hit.distance } : null;
+    }
+    return null;
   }
 
   /**
@@ -739,8 +772,9 @@ export class CityModelMesh {
     };
   }
 
+  /** Triangles drawn: hidden types and the attribute filter left out. */
   triangleCount(): number {
-    return this.arrays.triangleCount;
+    return this.drawnTriangles;
   }
 
   dispose(): void {

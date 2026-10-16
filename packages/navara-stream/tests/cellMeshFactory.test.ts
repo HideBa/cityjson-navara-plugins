@@ -35,6 +35,7 @@ function entry(withRuleColors: boolean): CellEntry {
       baseColors: new Float32Array(3).fill(0.25),
       ruleColors: withRuleColors ? new Float32Array(3).fill(0.5) : null,
       objectKeys: ["B1"],
+      objectTypes: ["Building"],
       triangleCount: 1,
     },
     objects: [],

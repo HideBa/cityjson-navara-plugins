@@ -82,6 +82,7 @@ function texturedGeometry(): CellGeometry {
     baseColors: new Float32Array(3).fill(0.25),
     ruleColors: null,
     objectKeys: ["B1"],
+    objectTypes: ["Building"],
     triangleCount: 1,
     uvs: new Float32Array(6),
     textureGroups: [{ start: 0, count: 3, textureIndex: 7 }],
@@ -163,6 +164,7 @@ function recordingFactory(cache: TextureCache) {
         ref: mesh,
         setColors: (c) => mesh.setColors(c),
         setHighlight: (sel, hovered) => mesh.setHighlight(sel, hovered),
+        setHiddenTypes: (t) => mesh.setHiddenTypes(t),
         textureChanged: (i) => {
           rec.textureChanges.push(i);
           mesh.textureChanged(i);
@@ -233,11 +235,9 @@ describe("planCommit appearance", () => {
     prevLevel: null,
     prevCommit: null,
     prevLod: null,
-    prevHiddenTypes: [],
     ladder: [],
     lodMode: "auto",
     selectedLod: null,
-    hiddenTypes: [],
   };
 
   it("swaps when the theme changes, and not before the first commit", () => {

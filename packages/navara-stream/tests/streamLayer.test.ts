@@ -147,6 +147,7 @@ function geom(triangleCount: number, objectKey = "B1") {
     baseColors: new Float32Array(n * 3).fill(0.25),
     ruleColors: null,
     objectKeys: [objectKey],
+    objectTypes: ["Building"],
     triangleCount,
   };
 }
@@ -378,6 +379,8 @@ function recordingFactory() {
     entry: CellEntry;
     deleted: boolean;
     style: ThemeStyle;
+    hidden: ReadonlyArray<string>;
+    hides: number;
   }> = [];
   const factory: CellMeshFactory = {
     create(key, entry) {
@@ -388,12 +391,18 @@ function recordingFactory() {
         // A mesh is born photoreal; the layer pushes its active theme at
         // install time, so this is what the fake starts from too.
         style: DEFAULT_THEME_STYLE,
+        hidden: [] as ReadonlyArray<string>,
+        hides: 0,
       };
       created.push(rec);
       const handle: CityMeshHandle = {
         ref: null,
         setColors: vi.fn(),
         setHighlight: vi.fn(),
+        setHiddenTypes: (types) => {
+          rec.hidden = types;
+          rec.hides++;
+        },
         textureChanged: () => {},
         setVisible: vi.fn(),
         setThemeStyle: (style: ThemeStyle) => {
@@ -434,6 +443,7 @@ function realMeshFactory() {
         ref: mesh,
         setColors: (c) => mesh.setColors(c),
         setHighlight: (s, h) => mesh.setHighlight(s, h),
+        setHiddenTypes: (t) => mesh.setHiddenTypes(t),
         setVisible: (v) => mesh.setVisible(v),
         setThemeStyle: (s) => mesh.setThemeStyle(s),
         textureChanged: () => {},
@@ -513,6 +523,7 @@ function pickingFactory(hitDistances: Readonly<Record<string, number>> = {}) {
           );
           rec.paints++;
         },
+        setHiddenTypes: vi.fn(),
         setVisible: (v: boolean) => {
           rec.visible = v;
         },
@@ -827,7 +838,7 @@ describe("StreamLayerHandle.commit", () => {
     // a key the first commit already made resident, and evicting those would
     // blank cells that are still on screen.
     opts.fetchDelayMs = 20;
-    handle.setHiddenTypes(["Building"]); // forces a refetch of the same cover
+    handle.setLod("manual", "2"); // forces a refetch of the same cover
     const pending = handle.commit(topDownRays());
     await flush();
     handle.abortInFlight();
@@ -1755,69 +1766,65 @@ describe("StreamLayerHandle lifecycle", () => {
 });
 
 /**
- * Per-layer type visibility. Geometry is baked in the worker, so a toggle is a
- * REFETCH, not a recolor — the `setLod` template, not the `setRules` one.
+ * Per-layer type visibility. The worker bakes every object, so a toggle is a
+ * flag write in each resident cell's style texture: no fetch, no commit.
  */
 describe("StreamLayerHandle.setHiddenTypes", () => {
-  it("puts the hidden types on the wire and refetches the whole cover as a swap", async () => {
-    const { handle, client } = makeHandle({});
+  it("hides the types in every resident cell, without fetching", async () => {
+    const forced = vi.fn();
+    const { handle, client, meshes } = makeHandle({ onCommitNeeded: forced });
     await handle.commit(topDownRays());
-    const first = requestsOfType(client.sendStreamingCalls, "fetch")[0]!;
-    expect(first.hiddenTypes).toEqual([]);
+    const fetches = client.sendStreamingCalls.length;
+    expect(meshes.created.length).toBeGreaterThan(0);
 
     handle.setHiddenTypes(["Building"]);
+    for (const rec of meshes.created) expect(rec.hidden).toEqual(["Building"]);
+    expect(forced).not.toHaveBeenCalled();
     await handle.commit(topDownRays());
-    const second = requestsOfType(client.sendStreamingCalls, "fetch")[1]!;
-    expect(second.hiddenTypes).toEqual(["Building"]);
-    // Every resident cell was baked with the old list, so all of them are
-    // stale even though none of the keys changed.
-    expect([...(second.cells as string[])].sort()).toEqual(
-      coverFor(topDownRays()).sort(),
-    );
+    expect(client.sendStreamingCalls).toHaveLength(fetches);
   });
 
-  it("forces a commit through onCommitNeeded, and only when the normalised list changed", () => {
-    const forced = vi.fn();
-    const { handle } = makeHandle({ onCommitNeeded: forced });
+  it("puts no hidden types on the wire", async () => {
+    const { handle, client } = makeHandle({});
+    handle.setHiddenTypes(["Building"]);
+    await handle.commit(topDownRays());
+    const fetch = requestsOfType(client.sendStreamingCalls, "fetch")[0]!;
+    expect("hiddenTypes" in fetch).toBe(false);
+  });
+
+  it("writes the cells only when the normalised list changed", async () => {
+    const { handle, meshes } = makeHandle({});
+    await handle.commit(topDownRays());
+    const rec = meshes.created[0]!;
+    const hides = () => rec.hides;
+    const start = hides();
 
     handle.setHiddenTypes(["Building"]);
-    expect(forced).toHaveBeenCalledTimes(1);
+    expect(hides()).toBe(start + 1);
     handle.setHiddenTypes(["Building"]);
-    expect(forced).toHaveBeenCalledTimes(1);
-    // A re-ordered (or duplicated) list is the same set: refetching the whole
-    // cover for it would be a full re-decode for no change on screen.
+    expect(hides()).toBe(start + 1);
+    // A re-ordered (or duplicated) list is the same set.
     handle.setHiddenTypes(["Bridge", "Building"]);
-    expect(forced).toHaveBeenCalledTimes(2);
+    expect(hides()).toBe(start + 2);
     handle.setHiddenTypes(["Building", "Bridge", "Building"]);
-    expect(forced).toHaveBeenCalledTimes(2);
+    expect(hides()).toBe(start + 2);
     expect(handle.hiddenTypes).toEqual(["Bridge", "Building"]);
 
     handle.setHiddenTypes([]);
-    expect(forced).toHaveBeenCalledTimes(3);
+    expect(rec.hidden).toEqual([]);
   });
 
-  it("keeps a cell baked under the old list from landing after a toggle", async () => {
-    const forced = vi.fn();
-    const factory = pickingFactory();
-    const { handle } = makeHandle({
-      meshFactory: factory.factory,
-      // Delivers nothing until after the toggle below has bumped the epoch.
-      fetchDelayMs: 5,
-      onCommitNeeded: forced,
-    });
-
-    const inFlight = handle.commit(topDownRays());
-    handle.setHiddenTypes(["Building"]);
-    // The driver answers `onCommitNeeded` with a commit; its `newEpoch()` is
-    // what strands the fetch above.
-    expect(forced).toHaveBeenCalledTimes(1);
+  it("hides the types in a cell installed after the toggle", async () => {
+    const { handle, meshes } = makeHandle({});
     await handle.commit(topDownRays());
-    const afterToggle = [...factory.all];
-    await inFlight;
+    const before = meshes.created.length;
 
-    // Nothing from the superseded commit was installed on top.
-    expect(factory.all).toEqual(afterToggle);
-    expect(handle.cacheKeysForTest().length).toBeGreaterThan(0);
+    handle.setHiddenTypes(["Building"]);
+    await handle.commit(raysFrom(500, 400, 3000, 3000));
+    const arrivedLater = meshes.created.slice(before);
+
+    expect(arrivedLater.length).toBeGreaterThan(0);
+    for (const rec of arrivedLater) expect(rec.hidden).toEqual(["Building"]);
   });
 });
 
@@ -1854,8 +1861,8 @@ describe("StreamLayerHandle.onTypes", () => {
     await handle.commit(topDownRays());
     handle.setHiddenTypes(["Building"]);
     await handle.commit(topDownRays());
-    // The worker filters GEOMETRY only; `objects` records still name the
-    // hidden objects, which is what keeps the toggle list stable.
+    // Hiding is a flag on the main thread; the cells still carry the hidden
+    // objects, which is what keeps the toggle list stable.
     expect(handle.typesSeen).toEqual(["Building"]);
   });
 });

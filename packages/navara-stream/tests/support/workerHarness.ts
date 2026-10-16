@@ -41,19 +41,18 @@ export function harness(
 export const ofType =
   <T extends WorkerResponse["type"]>(type: T) =>
   (m: WorkerResponse): m is Extract<WorkerResponse, { type: T }> =>
-    m.type === type;;
+    m.type === type;
 
 export const errorOf =
   (id: number) =>
   (m: WorkerResponse): m is Extract<WorkerResponse, { type: "error" }> =>
-    m.type === "error" && m.id === id;;
+    m.type === "error" && m.id === id;
 
 /** The extent an admitted `opened` carried (the wire types it `unknown`). */
 export function openedExtent(posted: WorkerResponse[]): BBox3 {
   const opened = posted.find(ofType("opened"))!;
   return (opened.header as OpenedSource["header"]).extent!;
 }
-
 
 export function fetchAt(
   id: number,
@@ -68,12 +67,10 @@ export function fetchAt(
     level,
     cells,
     lod: null,
-    hiddenTypes: [],
     rules: [],
     rulesEnabled: false,
   };
 }
-
 
 /**
  * One scenario, every adapter: open, fetch every cell covering the extent at

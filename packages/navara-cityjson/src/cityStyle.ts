@@ -220,6 +220,24 @@ export class SlotStyle {
     this.texture.commit();
   }
 
+  /** Hide every slot of the objects `objectHidden` marks (one byte per
+   *  object index, 1 = hidden), and show every other slot. */
+  setHidden(objectHidden: Uint8Array): void {
+    const objects = this.tables.slotObjects;
+    for (let slot = 0; slot < objects.length; slot++) {
+      const flags = this.texture.flags(slot) & ~SLOT_HIDDEN;
+      this.texture.setFlags(
+        slot,
+        objectHidden[objects[slot]!] === 1 ? flags | SLOT_HIDDEN : flags,
+      );
+    }
+    this.texture.commit();
+  }
+
+  isHidden(slot: number): boolean {
+    return (this.texture.flags(slot) & SLOT_HIDDEN) !== 0;
+  }
+
   /** Flag every slot whose image is ready, so it draws unmodulated. */
   setTextured(isReady: (textureIndex: number) => boolean): void {
     const textures = this.tables.slotTextures;

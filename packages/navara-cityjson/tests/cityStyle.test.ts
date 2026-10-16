@@ -145,6 +145,19 @@ describe("SlotStyle", () => {
     expect(style.styleTexture.slotCount).toBe(3);
   });
 
+  it("hides every slot of a hidden object, and nothing else", () => {
+    const style = new SlotStyle(tables, DEFAULT_HIGHLIGHT_RGB);
+    style.setHighlight([{ kind: "object", layerId: "L", objectId: "b" }], null);
+    style.setHidden(Uint8Array.from([0, 1]));
+    expect(style.isHidden(0)).toBe(false);
+    expect(style.isHidden(1)).toBe(true);
+    // The highlight is a separate bit and survives.
+    expect(style.styleTexture.texel(1)[3]).toBe(SLOT_HIDDEN | SLOT_SELECTED);
+    style.setHidden(Uint8Array.from([0, 0]));
+    expect(style.isHidden(1)).toBe(false);
+    expect(style.styleTexture.texel(1)[3]).toBe(SLOT_SELECTED);
+  });
+
   it("draws selection over hover over the image over the colour", () => {
     const style = new SlotStyle(tables, DEFAULT_HIGHLIGHT_RGB);
     style.setColors([0, 0, 0, 0, 0, 0]);

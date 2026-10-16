@@ -127,17 +127,12 @@ export interface PlanCommitInput {
   readonly prevLevel: number | null;
   readonly prevCommit: CommitView | null;
   readonly prevLod: LodSelection | null;
-  /** The hidden-type list the RESIDENT cells were fetched under, or `null`
-   *  before this layer's first commit. */
-  readonly prevHiddenTypes: ReadonlyArray<string> | null;
   /** The theme the RESIDENT cells were baked under; `undefined` before this
    *  layer's first commit (`null` is a real value — plain colours). */
   readonly prevAppearance?: AppearanceTheme | null;
   readonly ladder: ReadonlyArray<string>;
   readonly lodMode: "auto" | "manual";
   readonly selectedLod: string | null;
-  /** The hidden-type list the NEXT fetch will carry. */
-  readonly hiddenTypes: ReadonlyArray<string>;
   /** The theme the NEXT fetch will bake. Omitted reads as `null`. */
   readonly appearance?: AppearanceTheme | null;
 }
@@ -196,21 +191,15 @@ export function planCommit(input: PlanCommitInput): CommitPlan {
   // even though the eviction-policy text only names level changes by name.
   const lodChanged =
     input.prevLod !== null && !lodSelectionEquals(lod, input.prevLod);
-  // Identical argument for the hidden-type set: a resident cell was BAKED
-  // without the types hidden at fetch time, so a toggle leaves every cached
-  // key stale under an unchanged key — invisible to `hasHoles`, and served
-  // forever by hysteresis if it is not treated as a swap.
-  const hiddenTypesChanged =
-    input.prevHiddenTypes !== null &&
-    !hiddenTypesEqual(input.hiddenTypes, input.prevHiddenTypes);
-  // An appearance change is a swap for the same reason a hidden-type change
-  // is: the worker BAKES it (vertex order, UVs, base colours), so a resident
-  // cell built under the old theme cannot be patched, only refetched.
+  // An appearance change is a swap for the same reason a LoD change is: the
+  // worker BAKES it (vertex order, UVs, base colours), so a resident cell
+  // built under the old theme cannot be patched, only refetched.
+  // Hidden types are not here: a cell carries every object, and hiding is a
+  // flag in its style texture (`StreamLayerHandle.setHiddenTypes`).
   const appearanceChanged =
     input.prevAppearance !== undefined &&
     !appearanceEquals(input.appearance ?? null, input.prevAppearance);
-  const isSwap =
-    levelChanged || lodChanged || hiddenTypesChanged || appearanceChanged;
+  const isSwap = levelChanged || lodChanged || appearanceChanged;
 
   const commitView: CommitView = {
     centre: footprint.centre,

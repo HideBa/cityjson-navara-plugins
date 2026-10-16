@@ -31,11 +31,7 @@ import type { CellMeshFactory } from "../src/cellMeshes";
 import type { PickRaySource } from "../src/navaraRays";
 import type { WorkerClient } from "../src/workerClient";
 import type { WorkerResponse } from "../src/workerProtocol";
-import {
-  FLYTO_QUIET_MS,
-  GEOID_TIMEOUT_MS,
-  SETTLE_MS,
-} from "../src/constants";
+import { FLYTO_QUIET_MS, GEOID_TIMEOUT_MS, SETTLE_MS } from "../src/constants";
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -486,7 +482,11 @@ function makeFakeClient(opts: FakeClientOpts) {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("StreamLayerRegistry.openStream", () => {
-  const openOpts = { id: "L1", format: "flatcitybuf", source: { url: "https://example/x.fcb" } };
+  const openOpts = {
+    id: "L1",
+    format: "flatcitybuf",
+    source: { url: "https://example/x.fcb" },
+  };
 
   it("resolves the geoid BEFORE the open that establishes the worker's placement, and sends it there", async () => {
     const trace: string[] = [];
@@ -760,7 +760,8 @@ describe("StreamLayerRegistry.openStream", () => {
       frame: BUCKET_FRAME,
       admission: {
         code: "non-metric-crs",
-        message: "EPSG:2263 is not a metre-based CRS, so it cannot be streamed.",
+        message:
+          "EPSG:2263 is not a metre-based CRS, so it cannot be streamed.",
       },
     });
     const r = makeRegistry({
@@ -869,7 +870,7 @@ describe("StreamLayerRegistry.openStream", () => {
     expect((fetches.at(-1)!.rules as unknown[]).length).toBe(1);
   });
 
-  it("seeds hiddenTypes before the first commit, so the first fetch is already filtered", async () => {
+  it("seeds hiddenTypes before the first commit, so the first cells arrive hidden", async () => {
     const trace: string[] = [];
     const { client } = makeFakeClient({ trace });
     const r = makeRegistry({
@@ -884,16 +885,10 @@ describe("StreamLayerRegistry.openStream", () => {
     });
     await flush();
 
+    // Seeded on the handle, which pushes it to every cell it installs:
+    // unseeded, the first cells would show what the user had hidden until
+    // the next toggle.
     expect(handle.hiddenTypes).toEqual(["Building"]);
-    const fetches = (
-      client.sendStreaming as unknown as ReturnType<typeof vi.fn>
-    ).mock.calls.map((c) => c[0] as Record<string, unknown>);
-    // Unseeded, the first cells would arrive carrying the geometry the user
-    // had hidden, visible until a toggle forced a refetch.
-    expect(fetches.at(-1)).toMatchObject({
-      type: "fetch",
-      hiddenTypes: ["Building"],
-    });
   });
 
   it("creates a CityParquet client for format 'cityparquet'", async () => {

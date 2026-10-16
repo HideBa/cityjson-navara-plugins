@@ -129,7 +129,9 @@ describe("fcb.worker — single traversal per commit", () => {
     const handler = fakeSelf.onmessage;
     if (!handler) throw new Error("worker module did not register onmessage");
 
-    await handler({ data: { type: "open", id: 0, source: { url: "fake://irrelevant" } } });
+    await handler({
+      data: { type: "open", id: 0, source: { url: "fake://irrelevant" } },
+    });
     await handler({
       data: {
         type: "fetch",
@@ -141,7 +143,6 @@ describe("fcb.worker — single traversal per commit", () => {
         // this task exists to replace), selectCalls would be 4, not 1.
         cells: ["2/0/0", "2/1/0", "2/2/0", "2/0/1"],
         lod: null,
-        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },

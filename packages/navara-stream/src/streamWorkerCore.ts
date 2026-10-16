@@ -699,11 +699,6 @@ export function installStreamWorker(
           }
 
           const resident = new Set(msg.cells);
-          // Geometry only: `cellModel` and the `objects` records below stay
-          // unfiltered, because the inspector, the table and type discovery
-          // all read them and must still see a hidden object.
-          const hiddenTypes =
-            msg.hiddenTypes.length > 0 ? new Set(msg.hiddenTypes) : null;
           const buckets = bucketFeatures(
             models,
             theGrid,
@@ -780,7 +775,8 @@ export function installStreamWorker(
               // cell centre otherwise.
               place.kind === "bucket" ? [0, 0, 0] : origin,
               adapter.bakeLod(msg.lod, cellLods),
-              hiddenTypes,
+              // Every object: the main thread hides types by flag.
+              null,
               msg.appearance ?? null,
               surfaceColors,
             );
@@ -820,6 +816,7 @@ export function installStreamWorker(
               baseColors: a.slotColors,
               ruleColors,
               objectKeys: a.objectKeys,
+              objectTypes: a.objectTypes,
               triangleCount: a.triangleCount,
               uvs: a.uvs ?? null,
               textureGroups: a.textureGroups ?? null,

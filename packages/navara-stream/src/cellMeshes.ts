@@ -110,6 +110,9 @@ export interface SyncCtx {
    *  so one that lands mid-theme would stay photoreal until the user switched
    *  theme again. Omitted by callers that never theme. */
   readonly themeStyle?: ThemeStyle;
+  /** The layer's hidden first-level types, pushed to every cell built here
+   *  for the same reason. Omitted or empty: nothing hidden. */
+  readonly hiddenTypes?: ReadonlyArray<string>;
   /** Stamped into each new cell's `PickingIndex` so a pick resolves to the
    *  owning layer. `PickingIndex.layerId` is readonly, so the caller cannot
    *  fill it after the fact without rebuilding the `CellMesh` — it is passed
@@ -166,6 +169,7 @@ export function syncCellMeshes(ctx: SyncCtx): CellKey[] {
     );
     handle.setVisible(ctx.visible);
     if (ctx.themeStyle) handle.setThemeStyle(ctx.themeStyle);
+    if (ctx.hiddenTypes?.length) handle.setHiddenTypes(ctx.hiddenTypes);
     if (entry.geometry.ruleColors) handle.setColors(entry.geometry.ruleColors);
     ctx.cells.set(key, {
       handle,

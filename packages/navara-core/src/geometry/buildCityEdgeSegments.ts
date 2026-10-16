@@ -69,11 +69,15 @@ const quantize = (v: number) => Math.round(v * QUANT);
  *
  * @param positions non-indexed triangle soup, 9 floats per triangle.
  * @param angleThresholdDeg fold angle above which a shared edge is a crease.
+ * @param keepTriangle which triangles are drawn, by index; all when absent.
+ *   A left-out triangle contributes nothing, so the edge it shared with a kept
+ *   one becomes that one's boundary: the outline of what is drawn.
  * @returns 6 floats per segment (x1,y1,z1, x2,y2,z2).
  */
 export function buildCityEdgeSegments(
   positions: Float32Array,
   angleThresholdDeg: number = DEFAULT_EDGE_ANGLE_DEG,
+  keepTriangle?: (triangle: number) => boolean,
 ): Float32Array {
   const triangleCount = Math.floor(positions.length / 9);
   if (triangleCount === 0) return new Float32Array(0);
@@ -84,6 +88,7 @@ export function buildCityEdgeSegments(
   const edges = new Map<string, EdgeRecord>();
 
   for (let t = 0; t < triangleCount; t++) {
+    if (keepTriangle && !keepTriangle(t)) continue;
     const i = t * 9;
     const ax = positions[i]!;
     const ay = positions[i + 1]!;
@@ -167,8 +172,7 @@ function addEdge(
   const qby = quantize(by);
   const qbz = quantize(bz);
   const aFirst =
-    qax < qbx ||
-    (qax === qbx && (qay < qby || (qay === qby && qaz <= qbz)));
+    qax < qbx || (qax === qbx && (qay < qby || (qay === qby && qaz <= qbz)));
   const key = aFirst
     ? `${qax},${qay},${qaz}|${qbx},${qby},${qbz}`
     : `${qbx},${qby},${qbz}|${qax},${qay},${qaz}`;
@@ -179,17 +183,35 @@ function addEdge(
       key,
       aFirst
         ? {
-            ax, ay, az, bx, by, bz,
-            n0x: nx, n0y: ny, n0z: nz,
-            n1x: 0, n1y: 0, n1z: 0,
+            ax,
+            ay,
+            az,
+            bx,
+            by,
+            bz,
+            n0x: nx,
+            n0y: ny,
+            n0z: nz,
+            n1x: 0,
+            n1y: 0,
+            n1z: 0,
             faces: 1,
             crease: false,
             extra: null,
           }
         : {
-            ax: bx, ay: by, az: bz, bx: ax, by: ay, bz: az,
-            n0x: nx, n0y: ny, n0z: nz,
-            n1x: 0, n1y: 0, n1z: 0,
+            ax: bx,
+            ay: by,
+            az: bz,
+            bx: ax,
+            by: ay,
+            bz: az,
+            n0x: nx,
+            n0y: ny,
+            n0z: nz,
+            n1x: 0,
+            n1y: 0,
+            n1z: 0,
             faces: 1,
             crease: false,
             extra: null,

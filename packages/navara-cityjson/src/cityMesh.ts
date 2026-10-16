@@ -35,6 +35,7 @@ import { DEFAULT_PICK_STRATEGY, type PickStrategy } from "./pickStrategy";
 import type { EcefRay, RaycastHit, SurfaceRef } from "./pickTypes";
 import { ThemeStyleController, type ThemeStyle } from "./themeStyle";
 import { buildGroupMaterials, type TextureCache } from "./texturedMaterials";
+import { drawnTriangleCount, hiddenObjectMask } from "./slotVisibility";
 
 export interface AddCityMeshArraysOptions {
   readonly id: string;
@@ -67,6 +68,8 @@ export interface AddCityMeshArraysOptions {
   /** The selection and hover colours, linear; the historical pair when
    *  omitted. A resolved `CityColors` satisfies it. */
   readonly colors?: HighlightRGB;
+  /** First-level types hidden from the start; see `setHiddenTypes`. */
+  readonly hiddenTypes?: ReadonlyArray<string>;
 }
 
 /**
@@ -87,6 +90,8 @@ export interface CityMeshHandle {
     selections: readonly Selection[],
     hovered: Selection | null,
   ): void;
+  /** First-level types to hide, by flag: the cell keeps their geometry. */
+  setHiddenTypes(types: ReadonlyArray<string>): void;
   /** The layer's image cache reported `textureIndex`: attach or drop the
    *  group's map, and flag the surfaces that now show it. */
   textureChanged(textureIndex: number): void;
@@ -127,6 +132,9 @@ export class CityMeshArraysMesh {
   private readonly theme: ThemeStyleController;
   private readonly textures: TextureCache | null;
   private readonly shadowMaterials: ShadowMaterialHooks;
+  private hiddenTypes: ReadonlySet<string> = new Set();
+  /** Triangles not hidden: what `triangleCount` reports. */
+  private drawnTriangles: number;
 
   /** See `AddCityMeshArraysOptions.requestRender`. */
   private readonly requestRender: () => void;
@@ -149,6 +157,11 @@ export class CityMeshArraysMesh {
       options.colors ?? DEFAULT_HIGHLIGHT_RGB,
     );
     this.style.setColors(options.arrays.slotColors);
+    this.drawnTriangles = options.arrays.triangleCount;
+    if (options.hiddenTypes?.length) {
+      this.hiddenTypes = new Set(options.hiddenTypes);
+      this.applyHidden();
+    }
     const material = createCityMaterial(this.style.uniforms);
     this.object3d = new Mesh(
       geometryFromMeshArrays(options.arrays),
@@ -185,7 +198,10 @@ export class CityMeshArraysMesh {
     // Built after the placement above: the edge child copies the mesh's
     // matrixWorld when it is created, and a cell's frame never changes
     // afterwards.
-    this.theme = new ThemeStyleController(this.object3d);
+    this.theme = new ThemeStyleController(
+      this.object3d,
+      (t) => !this.style.isHidden(this.arrays.slots[t * 3]!),
+    );
     if (this.textures) {
       // One material per texture group (`buildGroupMaterials`), same
       // calibration as the single one above; images the cache already holds
@@ -240,6 +256,37 @@ export class CityMeshArraysMesh {
     this.requestRender();
   }
 
+  /**
+   * Hide these first-level types. A flag write: the shader drops their slots
+   * from every pass, the raycast skips them and the edges outline what
+   * remains, so a toggle never refetches or rebuilds the cell.
+   */
+  setHiddenTypes(types: ReadonlyArray<string>): void {
+    const next = new Set(types);
+    if (
+      next.size === this.hiddenTypes.size &&
+      [...next].every((t) => this.hiddenTypes.has(t))
+    ) {
+      return;
+    }
+    this.hiddenTypes = next;
+    this.applyHidden();
+    this.theme.geometryReplaced();
+    this.requestRender();
+  }
+
+  private applyHidden(): void {
+    const { objectKeys, objectTypes, slots, slotObjects } = this.arrays;
+    const hidden = hiddenObjectMask(
+      objectKeys,
+      objectTypes,
+      this.hiddenTypes,
+      null,
+    );
+    this.style.setHidden(hidden);
+    this.drawnTriangles = drawnTriangleCount(slots, slotObjects, hidden);
+  }
+
   /** The style texel of `slot`, sRGB bytes and flags, for tests. */
   styleTexel(slot: number): [number, number, number, number] {
     return this.style.styleTexture.texel(slot);
@@ -258,8 +305,9 @@ export class CityMeshArraysMesh {
     this.requestRender();
   }
 
+  /** Triangles drawn: hidden types left out. */
   triangleCount(): number {
-    return this.arrays.triangleCount;
+    return this.drawnTriangles;
   }
 
   /**
@@ -280,17 +328,21 @@ export class CityMeshArraysMesh {
       0,
       Infinity,
     );
-    // `false`: this mesh has no children, and descending would let some future
-    // helper object answer for it. Hits come back sorted near-to-far, so [0] is
-    // this mesh's nearest face; `distance` lets the caller compare across cells.
-    const hit = raycaster.intersectObject(this.object3d, false)[0];
-    if (!hit?.face) return null;
-    const slot = this.arrays.slots[hit.face.a]!;
-    return {
-      objectIndex: this.arrays.slotObjects[slot]!,
-      surfaceIndex: this.arrays.slotSurfaces[slot]!,
-      distance: hit.distance,
-    };
+    // `false`: the mesh's only children are its edge lines, and a line hit
+    // must never answer for a surface. Hits come back sorted near-to-far, and
+    // a hidden slot is still in the geometry, so the first DRAWN face is this
+    // mesh's answer; `distance` lets the caller compare across cells.
+    for (const hit of raycaster.intersectObject(this.object3d, false)) {
+      if (!hit.face) continue;
+      const slot = this.arrays.slots[hit.face.a]!;
+      if (this.style.isHidden(slot)) continue;
+      return {
+        objectIndex: this.arrays.slotObjects[slot]!,
+        surfaceIndex: this.arrays.slotSurfaces[slot]!,
+        distance: hit.distance,
+      };
+    }
+    return null;
   }
 
   /**
@@ -352,6 +404,7 @@ export function addCityMeshArrays(
     setColors: (colors) => mesh.setColors(colors),
     setHighlight: (selections, hovered) =>
       mesh.setHighlight(selections, hovered),
+    setHiddenTypes: (types) => mesh.setHiddenTypes(types),
     textureChanged: (index) => mesh.textureChanged(index),
     setVisible: (visible) => {
       mesh.setVisible(visible);

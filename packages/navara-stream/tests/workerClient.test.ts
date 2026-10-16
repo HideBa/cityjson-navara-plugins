@@ -30,6 +30,7 @@ function geom(
     baseColors: new Float32Array(slots * 3).fill(3),
     ruleColors: null,
     objectKeys: ["obj-a", "obj-b"],
+    objectTypes: ["Building", "Building"],
     triangleCount,
     ...bad,
   };
@@ -188,7 +189,6 @@ describe("WorkerClient", () => {
         level: 0,
         cells: ["0/0/0", "0/1/0"],
         lod: null,
-        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },
@@ -253,7 +253,6 @@ describe("WorkerClient", () => {
         level: 0,
         cells: ["0/0/0"],
         lod: null,
-        hiddenTypes: [],
         rules: [],
         rulesEnabled: false,
       },

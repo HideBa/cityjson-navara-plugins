@@ -20,6 +20,7 @@ function entry(ruleColors: Float32Array | null): CellEntry {
       baseColors: new Float32Array(3).fill(0.25),
       ruleColors,
       objectKeys: ["B1"],
+      objectTypes: ["Building"],
       triangleCount: 1,
     },
     objects: [],

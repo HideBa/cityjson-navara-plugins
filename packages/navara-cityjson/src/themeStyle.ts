@@ -89,7 +89,15 @@ export class ThemeStyleController {
   private style: ThemeStyle = DEFAULT_THEME_STYLE;
   private edges: LineSegments<BufferGeometry, LineBasicMaterial> | null = null;
 
-  constructor(private readonly mesh: Mesh) {}
+  /**
+   * @param isTriangleDrawn which triangles the outline covers; the mesh's
+   *   hidden slots are left out, so hiding an object outlines what remains.
+   *   Every triangle when absent.
+   */
+  constructor(
+    private readonly mesh: Mesh,
+    private readonly isTriangleDrawn?: (triangle: number) => boolean,
+  ) {}
 
   /** The style currently applied — `DEFAULT_THEME_STYLE` until one is set. */
   get current(): ThemeStyle {
@@ -104,9 +112,9 @@ export class ThemeStyleController {
   }
 
   /**
-   * The mesh swapped its `BufferGeometry` (a LoD change, a hidden-type change,
-   * a geoid re-placement). The cached segments were extracted from the OLD
-   * positions and are now an outline of geometry that is gone, so they are
+   * The mesh swapped its `BufferGeometry` (a LoD change, a geoid
+   * re-placement) or hid some of it. The cached segments were extracted from
+   * the OLD drawn geometry and are now an outline of what is gone, so they are
    * dropped — and rebuilt at once when a theme with edges is live, because the
    * caller is mid-rebuild and there is no later "themed paint" to be lazy
    * until.
@@ -126,7 +134,9 @@ export class ThemeStyleController {
    *  `material.color` into the diffuse term raw, exactly as basic did. */
   private get materials(): MeshLambertMaterial[] {
     const material = this.mesh.material;
-    return (Array.isArray(material) ? material : [material]) as MeshLambertMaterial[];
+    return (
+      Array.isArray(material) ? material : [material]
+    ) as MeshLambertMaterial[];
   }
 
   /** The mesh swapped its material array (a texture-theme rebuild): re-apply
@@ -164,7 +174,11 @@ export class ThemeStyleController {
     const position = this.mesh.geometry.getAttribute("position");
     // `geometryFromMeshArrays` wraps the build's own Float32Array, so this is
     // the projected, non-indexed soup `buildCityEdgeSegments` documents.
-    const segments = buildCityEdgeSegments(position.array as Float32Array);
+    const segments = buildCityEdgeSegments(
+      position.array as Float32Array,
+      undefined,
+      this.isTriangleDrawn,
+    );
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new BufferAttribute(segments, 3));
     // A finite unit normal per vertex, though the line is unlit and never

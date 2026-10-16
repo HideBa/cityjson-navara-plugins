@@ -557,9 +557,8 @@ export class StreamLayerRegistry {
       // cell would need a recolor round trip to catch up (C10a/C10b ledger).
       handle.setVisible(opts.visible ?? true);
       handle.setRules(opts.rules ?? [], opts.rulesEnabled ?? true);
-      // Same reason, one step stronger: an unseeded first fetch would bake the
-      // hidden types' geometry and only drop it on the refetch a later toggle
-      // forces — a visible flash of everything the user had hidden.
+      // Same reason, one step stronger: the first cells would arrive showing
+      // everything the user had hidden, until the next toggle.
       handle.setHiddenTypes(opts.hiddenTypes ?? []);
       handle.setAppearance(opts.appearance ?? null);
 

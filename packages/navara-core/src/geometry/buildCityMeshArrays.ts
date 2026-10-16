@@ -46,6 +46,10 @@ export interface CityMeshArrays {
   readonly positions: Float32Array;
   readonly normals: Float32Array;
   readonly objectKeys: string[];
+  /** Per object, paired with `objectKeys`, its FIRST-LEVEL type
+   *  (`toplevelCityObjectType`): what a renderer hides by flag, so hiding
+   *  "Building" hides its BuildingParts too. */
+  readonly objectTypes: string[];
   readonly triangleCount: number;
   /** Per-vertex texture coordinates (2 per vertex). Only under a texture
    *  theme; `null`/absent otherwise. Untextured vertices carry (0, 0). */
@@ -149,6 +153,7 @@ export function buildCityMeshArrays(
   visibleObjectIds: ReadonlySet<string> | null = null,
 ): CityMeshArrays {
   const objectKeys: string[] = [];
+  const objectTypes: string[] = [];
   const textureTheme = appearance?.kind === "texture" ? appearance.name : null;
   const materialTheme =
     appearance?.kind === "material" ? appearance.name : null;
@@ -167,6 +172,7 @@ export function buildCityMeshArrays(
     // Pushed BEFORE the hidden check: the key list is never filtered, and a
     // hidden object still consumes its index — see `hiddenTypes` above.
     objectKeys.push(id);
+    objectTypes.push(toplevelCityObjectType(obj.objectType));
     const thisObjectIdx = objectIdx++;
     if (isHidden(obj.objectType, hiddenTypes)) continue;
     // An ATTRIBUTE filter, ANDed with the type filter above: an object draws
@@ -356,6 +362,7 @@ export function buildCityMeshArrays(
     positions: posArray,
     normals: normalArray,
     objectKeys,
+    objectTypes,
     triangleCount: totalTriangles,
     uvs: uvArray,
     textureGroups,

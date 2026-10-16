@@ -77,6 +77,27 @@ describe("buildCityEdgeSegments", () => {
     for (const l of lengths(segments)) expect(l).toBeCloseTo(1, 5);
   });
 
+  it("outlines only the triangles it is told to keep", () => {
+    // The cube without its top: the rim of the open box turns from crease to
+    // boundary, so the count stays 12, and nothing of the top face's own
+    // triangulation is drawn.
+    const segments = buildCityEdgeSegments(
+      unitCube(),
+      DEFAULT_EDGE_ANGLE_DEG,
+      (t) => t >= 2,
+    );
+    expect(segmentCount(segments)).toBe(12);
+    for (const l of lengths(segments)) expect(l).toBeCloseTo(1, 5);
+    // Keep only the top face: its four boundary edges, its diagonal dropped.
+    const top = buildCityEdgeSegments(
+      unitCube(),
+      DEFAULT_EDGE_ANGLE_DEG,
+      (t) => t < 2,
+    );
+    expect(segmentCount(top)).toBe(4);
+    for (let i = 2; i < top.length; i += 3) expect(top[i]).toBeCloseTo(1, 5);
+  });
+
   it("keeps a flat quad's four boundary edges and drops its diagonal", () => {
     const flat = Float32Array.from(
       quad([0, 0, 0], [4, 0, 0], [4, 4, 0], [0, 4, 0]),
@@ -116,9 +137,25 @@ describe("buildCityEdgeSegments", () => {
     // shared edge would count as two boundary edges and the total would be 6.
     const e = 1e-6;
     const soup = Float32Array.from([
-      0, 0, 0, 4, 0, 0, 4, 4, 0,
+      0,
+      0,
+      0,
+      4,
+      0,
+      0,
+      4,
+      4,
+      0,
       // second triangle, sharing (0,0,0)-(4,4,0) to within 1e-6
-      e, e, 0, 4 + e, 4 - e, 0, 0, 4, 0,
+      e,
+      e,
+      0,
+      4 + e,
+      4 - e,
+      0,
+      0,
+      4,
+      0,
     ]);
     expect(segmentCount(buildCityEdgeSegments(soup))).toBe(4);
   });
@@ -127,7 +164,15 @@ describe("buildCityEdgeSegments", () => {
     const withSliver = Float32Array.from([
       ...quad([0, 0, 0], [4, 0, 0], [4, 4, 0], [0, 4, 0]),
       // zero area: two coincident vertices, so it has no normal to compare
-      10, 10, 0, 12, 10, 0, 10, 10, 0,
+      10,
+      10,
+      0,
+      12,
+      10,
+      0,
+      10,
+      10,
+      0,
     ]);
     expect(segmentCount(buildCityEdgeSegments(withSliver))).toBe(4);
   });
@@ -136,9 +181,33 @@ describe("buildCityEdgeSegments", () => {
     // Three triangles on one edge: two coplanar, one folded 90° away. The
     // coplanar pair alone would drop it; the folded one must win.
     const soup = Float32Array.from([
-      0, 0, 0, 4, 0, 0, 2, 2, 0, // +y half
-      4, 0, 0, 0, 0, 0, 2, -2, 0, // -y half, coplanar with the first
-      0, 0, 0, 4, 0, 0, 2, 0, 3, // folded up 90°
+      0,
+      0,
+      0,
+      4,
+      0,
+      0,
+      2,
+      2,
+      0, // +y half
+      4,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      -2,
+      0, // -y half, coplanar with the first
+      0,
+      0,
+      0,
+      4,
+      0,
+      0,
+      2,
+      0,
+      3, // folded up 90°
     ]);
     const segments = buildCityEdgeSegments(soup);
     const shared = lengths(segments).filter((l) => Math.abs(l - 4) < 1e-5);

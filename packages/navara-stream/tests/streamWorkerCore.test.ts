@@ -172,7 +172,6 @@ function fetchMsg(
   id: number,
   cells: string[],
   bbox: [number, number, number, number] = [0, 0, 1000, 1000],
-  hiddenTypes: string[] = [],
 ): WorkerRequest {
   return {
     type: "fetch",
@@ -181,7 +180,6 @@ function fetchMsg(
     level: 2,
     cells,
     lod: null,
-    hiddenTypes,
     rules: [],
     rulesEnabled: false,
   };
@@ -689,30 +687,22 @@ describe("streamWorkerCore — adapter conformance", () => {
 
 /**
  * Codex milestone review (Critical): the worker keeps a whole decoded
- * `CityModel` per resident cell — geometry, attributes, object records — but
- * the only number it reported was the geometry it transferred away. With
- * every object type hidden, a cell bakes no triangles at all, so the main
- * thread metered it at nearly nothing and never evicted it, while the worker
- * held the decoded rows for as long as the tab lived.
+ * `CityModel` per resident cell — geometry, attributes, object records — and
+ * must report it, not only the geometry it transfers away, or the main thread
+ * meters a cell whose drawing is small at nearly nothing and never evicts it
+ * while the worker holds the decoded rows for as long as the tab lives.
  */
 describe("streamWorkerCore — retained memory", () => {
-  it("reports the bytes it retains for a cell, even when every type is hidden", async () => {
+  it("reports the bytes it retains for a cell", async () => {
     const { posted, send } = harness(
       fakeAdapter([feature("a", 100, 100), feature("b", 500, 100)]),
     );
     await send({ type: "open", id: 0, source: { url: "fake://x" } });
-    await send(
-      fetchMsg(1, ["2/0/0", "2/1/0"], [0, 0, 1000, 1000], ["Building"]),
-    );
+    await send(fetchMsg(1, ["2/0/0", "2/1/0"], [0, 0, 1000, 1000]));
 
     const cells = posted.filter(ofType("cell"));
     expect(cells).toHaveLength(2);
-    for (const cell of cells) {
-      // Nothing drawn...
-      expect(cell.geometry.triangleCount).toBe(0);
-      // ...but the model behind it is still resident here.
-      expect(cell.retainedBytes).toBeGreaterThan(0);
-    }
+    for (const cell of cells) expect(cell.retainedBytes).toBeGreaterThan(0);
   });
 
   it("charges a cell with more geometry more retained bytes", async () => {

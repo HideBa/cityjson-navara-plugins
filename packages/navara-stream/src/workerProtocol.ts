@@ -33,6 +33,8 @@ export interface CellGeometry {
   /** 3 per slot, linear; `null` when no rule matched (or rules are off). */
   readonly ruleColors: Float32Array | null;
   readonly objectKeys: string[];
+  /** Per object, its first-level type: what the main thread hides by flag. */
+  readonly objectTypes: string[];
   readonly triangleCount: number;
   /** Under a texture theme only: 2 per vertex, and one vertex range per
    *  image (`buildCityMeshArrays`); `null`/absent otherwise. */
@@ -141,10 +143,6 @@ export type WorkerRequest =
       level: number;
       cells: CellKey[];
       lod: string | null;
-      /** First-level object types whose geometry this fetch must NOT bake —
-       *  hiding "Building" also hides its BuildingParts. The cell's own model
-       *  and its `objects` records stay unfiltered. */
-      hiddenTypes: ReadonlyArray<string>;
       rules: ReadonlyArray<Rule>;
       rulesEnabled: boolean;
       /** Which appearance theme to bake (texture: UVs + groups; material:
@@ -278,6 +276,7 @@ export function emptyCellGeometry(): CellGeometry {
     baseColors: new Float32Array(0),
     ruleColors: null,
     objectKeys: [],
+    objectTypes: [],
     triangleCount: 0,
     uvs: null,
     textureGroups: null,
@@ -300,6 +299,7 @@ export function assertCellGeometry(g: CellGeometry): void {
   check("slotSurfaces", g.slotSurfaces.length, slotCount);
   check("slotTextures", g.slotTextures.length, slotCount);
   check("baseColors", g.baseColors.length, slotCount * 3);
+  check("objectTypes", g.objectTypes.length, g.objectKeys.length);
   if (g.ruleColors !== null) {
     check("ruleColors", g.ruleColors.length, slotCount * 3);
   }
