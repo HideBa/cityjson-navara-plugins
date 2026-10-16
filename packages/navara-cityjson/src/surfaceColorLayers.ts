@@ -23,6 +23,7 @@
  */
 
 import {
+  inheritedAttributes,
   srgbHexToLinear,
   type CityObject,
   type RGB,
@@ -62,6 +63,7 @@ export function computeStyleColors(
   // "objIdx:surfIdx" -> resolved color, or null (no style). `undefined` means
   // "not evaluated yet", which is why the map value type includes null.
   const cache = new Map<string, RGB | null>();
+  const attributeCache = new Map<number, Readonly<Record<string, unknown>>>();
   let anyChange = false;
 
   for (let v = 0; v < objectIndices.length; v++) {
@@ -76,10 +78,15 @@ export function computeStyleColors(
       const object = objectId === undefined ? undefined : lookup(objectId);
       const surface = object?.surfaces[surfIdx];
       if (object && objectId !== undefined && surface) {
+        let attributes = attributeCache.get(objIdx);
+        if (!attributes) {
+          attributes = inheritedAttributes(object, lookup);
+          attributeCache.set(objIdx, attributes);
+        }
         // The evaluator already returns Linear-sRGB; no conversion needed.
         rgb = evaluator(
           { surfaceIndex: surfIdx, surface },
-          { objectId, object },
+          { objectId, object, attributes },
         );
       }
       cache.set(key, rgb);

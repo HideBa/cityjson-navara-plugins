@@ -158,4 +158,48 @@ describe("buildStyleColorsFromArrays", () => {
     );
     expect(result).toBeNull();
   });
+
+  it("hands the evaluator the attributes the object inherits from its parents", () => {
+    // 3DBAG: the Building carries the attributes, its BuildingPart the roofs.
+    const roof = makeSurface("RoofSurface");
+    const building: CityObject = {
+      id: "b",
+      objectType: "Building",
+      attributes: { b3_dak_type: "slanted", shared: "building" },
+      surfaces: [],
+      bbox: null,
+      children: ["b-0"],
+      parents: [],
+      lod: "2",
+    };
+    const part: CityObject = {
+      ...building,
+      id: "b-0",
+      objectType: "BuildingPart",
+      attributes: { shared: "part" },
+      surfaces: [roof],
+      children: [],
+      parents: ["b"],
+    };
+    const model: CityModel = {
+      sourceEncoding: "cityjson",
+      metadata: {},
+      bbox: null,
+      objects: { b: building, "b-0": part },
+      vertexCount: 0,
+    };
+    const seen: unknown[] = [];
+    buildStyleColorsFromArrays(
+      model,
+      new Uint32Array([0, 0, 0]),
+      new Uint32Array([0, 0, 0]),
+      ["b-0"],
+      (_surface, object) => {
+        seen.push(object.attributes);
+        return null;
+      },
+      new Float32Array(9),
+    );
+    expect(seen).toEqual([{ b3_dak_type: "slanted", shared: "part" }]);
+  });
 });

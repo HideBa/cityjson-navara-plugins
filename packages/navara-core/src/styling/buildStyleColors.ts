@@ -18,6 +18,7 @@
  * worker does.
  */
 
+import { inheritedAttributes } from "../citymodel/inheritedAttributes";
 import type { CityModel, CityObject, Surface } from "../citymodel/types";
 import type { RGB } from "./srgb";
 
@@ -31,6 +32,12 @@ export interface CityObjectInfo {
   /** ID of the city object the surface belongs to. */
   readonly objectId: string;
   readonly object: CityObject;
+  /**
+   * The object's attributes with its ancestors' underneath
+   * (`inheritedAttributes`): what a rule reads, because a BuildingPart's
+   * roofs need its Building's attributes.
+   */
+  readonly attributes: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -59,6 +66,7 @@ export function buildStyleColorsFromArrays(
 
   // Cache: "objIdx:surfIdx" → resolved color, or null (no style)
   const colorCache = new Map<string, RGB | null>();
+  const attributeCache = new Map<number, Readonly<Record<string, unknown>>>();
 
   for (let v = 0; v < objectIndices.length; v++) {
     const objIdx = objectIndices[v]!;
@@ -73,6 +81,7 @@ export function buildStyleColorsFromArrays(
         model,
         objectKeys,
         evaluate,
+        attributeCache,
       );
       colorCache.set(cacheKey, styleColor);
     }
@@ -95,6 +104,7 @@ function resolveStyleColor(
   model: CityModel,
   objectKeys: ReadonlyArray<string>,
   evaluate: SurfaceStyleEvaluator,
+  attributeCache: Map<number, Readonly<Record<string, unknown>>>,
 ): RGB | null {
   const objectId = objectKeys[objIdx];
   if (!objectId) return null;
@@ -105,5 +115,13 @@ function resolveStyleColor(
   const surface = object.surfaces[surfIdx];
   if (!surface) return null;
 
-  return evaluate({ surfaceIndex: surfIdx, surface }, { objectId, object });
+  let attributes = attributeCache.get(objIdx);
+  if (!attributes) {
+    attributes = inheritedAttributes(object, (id) => model.objects[id]);
+    attributeCache.set(objIdx, attributes);
+  }
+  return evaluate(
+    { surfaceIndex: surfIdx, surface },
+    { objectId, object, attributes },
+  );
 }

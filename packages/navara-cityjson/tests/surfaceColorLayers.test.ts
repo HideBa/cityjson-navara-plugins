@@ -82,6 +82,27 @@ describe("computeStyleColors", () => {
     // 4 vertices, but only 2 distinct (object, surface) pairs.
     expect(seen).toEqual(["B1:0", "B2:1"]);
   });
+
+  it("hands the evaluator the attributes the object inherits from its parents", () => {
+    const building: CityObject = {
+      ...obj("B", "RoofSurface"),
+      attributes: { b3_dak_type: "slanted" },
+    };
+    const part: CityObject = { ...obj("B-0", "RoofSurface"), parents: ["B"] };
+    const seen: unknown[] = [];
+    computeStyleColors(
+      (_surface, object) => {
+        seen.push(object.attributes);
+        return null;
+      },
+      new Uint32Array([0]),
+      new Uint32Array([0]),
+      ["B-0"],
+      (id) => (id === "B" ? building : id === "B-0" ? part : undefined),
+      new Float32Array(3),
+    );
+    expect(seen).toEqual([{ b3_dak_type: "slanted" }]);
+  });
 });
 
 describe("paintLayers", () => {

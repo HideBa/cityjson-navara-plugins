@@ -62,9 +62,9 @@ export function compileRuleEvaluator(
     if (surface.surface.type !== "RoofSurface") return null;
 
     const metrics = computeRoofMetrics(surface.surface);
-    // Merge object attributes and surface attributes for rule evaluation
+    // Surface attributes over the object's, which carry its ancestors'.
     const attributes = {
-      ...object.object.attributes,
+      ...object.attributes,
       ...surface.surface.attributes,
     };
     const colorHex = matchRule(attributes, metrics, enabledRules);

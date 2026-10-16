@@ -158,6 +158,7 @@ export {
 } from "./geometry/buildCityEdgeSegments";
 export type { PickingIndex, PickResult } from "./picking/types";
 
+export { inheritedAttributes } from "./citymodel/inheritedAttributes";
 export type { RoofMetrics } from "./roofMetrics/types";
 export {
   computeArea,
