@@ -232,3 +232,10 @@ export {
   surfaceRingsOf,
 } from "./columnar/cityBatch";
 export { cityBatchFromModel } from "./columnar/fromCityModel";
+export type { BlockRoofMetrics } from "./columnar/styleColumns";
+export {
+  blockRoofMetrics,
+  evaluateBlockRules,
+  inheritedSourceRows,
+  inheritedValue,
+} from "./columnar/styleColumns";
