@@ -230,8 +230,9 @@ describe("decodeTableObjects (fixture)", () => {
     expect(sloped[0]?.type).toBe("RoofSurface");
     // `type` itself is never duplicated into the attributes.
     for (const s of first.surfaces) expect("type" in s.attributes).toBe(false);
-    // The bbox comes from the row's own struct, verbatim.
-    expect(first.bbox).toEqual([85000, 446000, 0, 85010, 446008, 8.4]);
+    // The bbox comes from the row's own struct, verbatim — the union over the
+    // object's subtree, so the Building spans its BuildingPart too.
+    expect(first.bbox).toEqual([85000, 446000, 0, 85016, 446008, 8.4]);
     // Attributes: a DOUBLE stays a number, an INT64 becomes a JS number.
     expect(first.attributes.measuredHeight).toBe(8.4);
     expect(first.attributes.roofType).toBe("gabled");

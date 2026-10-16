@@ -89,7 +89,6 @@ describe("readCityParquetTable", () => {
       "geometry_lod2_2",
       "geometry_properties_lod0_0",
       "geometry_properties_lod2_2",
-      "other_attributes",
       "measuredHeight",
       "roofType",
     ]) {

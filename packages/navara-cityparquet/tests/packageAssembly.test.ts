@@ -102,7 +102,7 @@ describe("parseCityParquetManifest", () => {
       ),
     );
     expect(parseCityParquetManifest(meta).sizes).toEqual({
-      "building.parquet": 252640,
+      "building.parquet": 263119,
     });
     const item = {
       type: "Feature",
@@ -146,7 +146,7 @@ describe("parseCityParquetManifest", () => {
     // again under a generic `data` key): the family key is that name without
     // the extension, so a PLATEAU package reads as `building`, `bridge`, …
     expect(parsed.families).toEqual([
-      { key: "building", href: "building.parquet", size: 22930 },
+      { key: "building", href: "building.parquet", size: 31839 },
     ]);
     // One family per object table, in the same order: the app pairs them up.
     expect(parsed.families.map((f) => f.href)).toEqual(parsed.objectTables);

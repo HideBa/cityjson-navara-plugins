@@ -333,7 +333,7 @@ describe("a streamed projected (EPSG:7415) source", () => {
     const stream = await openCityParquetStream([await bufferOf(PROJECTED)]);
     const ranges = stream.index.query([84999, 445999, 85036, 446013]);
     expect(ranges).toEqual([{ table: 0, start: 0, end: 3 }]);
-    expect(stream.estimateReadBytes(ranges, null)).toBe(2299);
+    expect(stream.estimateReadBytes(ranges, null)).toBe(2274);
 
     const batches = await collect(stream, ranges);
     expect(batches).toHaveLength(1);
@@ -350,6 +350,7 @@ describe("a streamed projected (EPSG:7415) source", () => {
       [85010, 446008, 0],
       [85000, 446008, 0],
     ]);
-    expect(first.bbox).toEqual([85000, 446000, 0, 85010, 446008, 8.4]);
+    // The row's bbox unions its subtree, so it spans the BuildingPart too.
+    expect(first.bbox).toEqual([85000, 446000, 0, 85016, 446008, 8.4]);
   });
 });

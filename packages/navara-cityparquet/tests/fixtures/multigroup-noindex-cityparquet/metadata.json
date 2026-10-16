@@ -43,7 +43,7 @@
     12.1
   ],
   "properties": {
-    "datetime": "2026-08-07T20:37:56Z",
+    "datetime": "2026-10-16T16:17:57Z",
     "city3d:version": "2.0",
     "city3d:city_objects": 60,
     "city3d:lods": [
@@ -84,16 +84,6 @@
   },
   "links": [],
   "assets": {
-    "data": {
-      "href": "./building.parquet",
-      "title": "3D city model data",
-      "type": "application/vnd.apache.parquet",
-      "roles": [
-        "data"
-      ],
-      "file:size": 238764,
-      "file:checksum": "1220ae8e4aa3a9b096616d3686023d5416bc09b5292daa0b348a6a2dd613dd78a0fb"
-    },
     "building.parquet": {
       "href": "./building.parquet",
       "type": "application/vnd.apache.parquet",
@@ -101,8 +91,8 @@
         "data",
         "cityparquet-objects"
       ],
-      "file:size": 238764,
-      "file:checksum": "1220ae8e4aa3a9b096616d3686023d5416bc09b5292daa0b348a6a2dd613dd78a0fb"
+      "file:size": 247106,
+      "file:checksum": "1220bf12d396934caa66300678cb23b9e8b69650c150741f98fb25be817b5b27f880"
     }
   }
 }
