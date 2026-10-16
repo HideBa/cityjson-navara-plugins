@@ -38,6 +38,7 @@ import type {
 } from "@cityjson/navara-core";
 import type { CityFooter } from "./footer";
 import { CityParquetError } from "./footer";
+import { restoreAttributeName } from "./naming";
 import type { PackageAppearance } from "./sidecars";
 import type { CityParquetTableData, GeometryColumnRef } from "./tableReader";
 import type { DecodedWkb } from "./wkb";
@@ -290,9 +291,10 @@ function attributeValue(value: unknown): unknown {
 
 /** The CityJSON attribute name a column name stands for. */
 function attributeKeyForColumn(column: string): string {
-  return column.startsWith(EXTENSION_ATTRIBUTE_PREFIX)
-    ? `+${column.slice(EXTENSION_ATTRIBUTE_PREFIX.length)}`
-    : column;
+  const source = restoreAttributeName(column);
+  return source.startsWith(EXTENSION_ATTRIBUTE_PREFIX)
+    ? `+${source.slice(EXTENSION_ATTRIBUTE_PREFIX.length)}`
+    : source;
 }
 
 /**

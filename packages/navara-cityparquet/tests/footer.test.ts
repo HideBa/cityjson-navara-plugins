@@ -73,6 +73,41 @@ describe("parseCityFooter", () => {
   });
 });
 
+describe("parseCityFooter (attribute column names)", () => {
+  it("refuses an attribute column spelled like a reserved column", () => {
+    // A conforming writer stores such an attribute as `_` + its name, so a
+    // column that collides itself is invalid input, compared case-insensitively.
+    for (const name of ["ID", "children", "Other", "geometry_lod2_2"]) {
+      expect(() =>
+        parseCityFooter([
+          {
+            key: "city",
+            value: JSON.stringify({ version: "0.1.0", attributes: [name] }),
+          },
+        ]),
+      ).toThrow(CityParquetError);
+    }
+  });
+
+  it("accepts the escaped spelling and names that only look reserved", () => {
+    const f = parseCityFooter([
+      {
+        key: "city",
+        value: JSON.stringify({
+          version: "0.1.0",
+          attributes: ["_ID", "identificatie", "geometry", "geometry_lod3"],
+        }),
+      },
+    ]);
+    expect(f.attributes).toEqual([
+      "_ID",
+      "identificatie",
+      "geometry",
+      "geometry_lod3",
+    ]);
+  });
+});
+
 describe("lodFromColumnName / propsColumnFor", () => {
   it("parses LoD suffixes", () => {
     expect(lodFromColumnName("geometry_lod2_2")).toEqual({ lod: "2.2" });

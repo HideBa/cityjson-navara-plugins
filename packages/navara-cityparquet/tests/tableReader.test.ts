@@ -275,19 +275,17 @@ describe("readCityParquetTable (stubbed hyparquet)", () => {
     expect(seen.columns).toEqual(["id", "object_type"]);
   });
 
-  it("does not mistake a declared attribute for a geometry column", async () => {
+  it("reads an escaped geometry-spelled attribute as an attribute", async () => {
+    // A source attribute spelled `geometry_lod3_1` is stored escaped, as
+    // `_geometry_lod3_1`, which the geometry grammar does not match.
     const seen = await readWithStub({
       city: {
         version: "1.0.0",
         columns: [{ name: "geometry_lod1_2", encoding: "WKB" }],
-        // Legal per spec §13.1: a LoD the dataset does not otherwise use may
-        // be an ordinary attribute name.
-        attributes: ["geometry_lod3_1"],
+        attributes: ["_geometry_lod3_1"],
       },
-      schemaColumns: ["id", "geometry_lod1_2", "geometry_lod3_1"],
+      schemaColumns: ["id", "geometry_lod1_2", "_geometry_lod3_1"],
     });
-    // `geometry_lod3_1` is projected as an attribute, not as geometry — and
-    // no `geometry_properties_lod3_1` is asked for.
-    expect(seen.columns).toEqual(["id", "geometry_lod1_2", "geometry_lod3_1"]);
+    expect(seen.columns).toEqual(["id", "geometry_lod1_2", "_geometry_lod3_1"]);
   });
 });

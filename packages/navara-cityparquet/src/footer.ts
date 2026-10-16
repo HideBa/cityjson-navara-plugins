@@ -20,6 +20,8 @@
  * Engine-free: no `@navaramap/*` imports.
  */
 
+import { restoreAttributeName } from "./naming";
+
 /** One `city.columns` entry, as this reader models it. */
 export interface CityGeometryColumnMeta {
   name: string;
@@ -211,6 +213,8 @@ function readColumns(value: unknown): CityGeometryColumnMeta[] {
   });
 }
 
+/** `city.attributes`, each name checked against the reservation rules so a
+ *  file no conforming writer produces is refused before a row is read. */
 function readAttributes(value: unknown): string[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -218,7 +222,9 @@ function readAttributes(value: unknown): string[] {
       "This CityParquet file's 'city' metadata is malformed: 'attributes' is not a list of column names.",
     );
   }
-  return value.filter((a: unknown): a is string => typeof a === "string");
+  const names = value.filter((a: unknown): a is string => typeof a === "string");
+  for (const name of names) restoreAttributeName(name);
+  return names;
 }
 
 /** The reserved prefix every geometry column name starts with. */

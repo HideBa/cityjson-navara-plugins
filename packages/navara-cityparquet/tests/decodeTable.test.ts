@@ -308,6 +308,38 @@ describe("decodeTableObjects (synthetic rows)", () => {
     });
   });
 
+  it("reverses the leading-underscore escape of a reserved-colliding attribute", () => {
+    // Spec "Column naming and reservation rules": a source attribute whose
+    // base (leading `_`s removed) is a reserved name is stored with one more
+    // `_`, and a reader removes exactly one. `_private` does not collide, so
+    // it is its own source name.
+    const objects = decodeTableObjects(
+      tableOf(
+        [
+          {
+            id: "a",
+            object_type: "Building",
+            _ID: "source-id",
+            __ID: "underscored",
+            _Bbox: "box",
+            _geometry_lod2_2: "spelled like geometry",
+            _private: "kept",
+          },
+        ],
+        {
+          attributes: ["_ID", "__ID", "_Bbox", "_geometry_lod2_2", "_private"],
+        },
+      ),
+    );
+    expect(at(objects, "a").attributes).toEqual({
+      ID: "source-id",
+      _ID: "underscored",
+      Bbox: "box",
+      geometry_lod2_2: "spelled like geometry",
+      _private: "kept",
+    });
+  });
+
   it("converts the cell shapes hyparquet can hand back", () => {
     const objects = decodeTableObjects(
       tableOf(
