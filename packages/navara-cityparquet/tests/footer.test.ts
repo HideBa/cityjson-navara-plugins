@@ -73,6 +73,44 @@ describe("parseCityFooter", () => {
   });
 });
 
+describe("parseCityFooter (extensions)", () => {
+  it("reads the declared namespaces from city.extensions", () => {
+    const f = parseCityFooter([
+      {
+        key: "city",
+        value: JSON.stringify({
+          version: "0.1.0",
+          extensions: {
+            energy: { name: "Energy", url: "https://example.org/e.json" },
+            noise: { name: "Noise", url: "https://example.org/n.json" },
+          },
+        }),
+      },
+    ]);
+    expect(f.extensions).toEqual(["energy", "noise"]);
+  });
+
+  it("reads no namespaces when the file declares none", () => {
+    for (const extensions of [undefined, {}]) {
+      const f = parseCityFooter([
+        { key: "city", value: JSON.stringify({ version: "0.1.0", extensions }) },
+      ]);
+      expect(f.extensions).toEqual([]);
+    }
+  });
+
+  it("refuses an extensions member that is not an object", () => {
+    expect(() =>
+      parseCityFooter([
+        {
+          key: "city",
+          value: JSON.stringify({ version: "0.1.0", extensions: ["energy"] }),
+        },
+      ]),
+    ).toThrow(CityParquetError);
+  });
+});
+
 describe("parseCityFooter (attribute column names)", () => {
   it("refuses an attribute column spelled like a reserved column", () => {
     // A conforming writer stores such an attribute as `_` + its name, so a

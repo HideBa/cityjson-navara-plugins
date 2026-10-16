@@ -50,13 +50,17 @@ function at(
 // Synthetic table + WKB builders
 // ---------------------------------------------------------------------------
 
-function footerOf(attributes: string[] = []): CityFooter {
+function footerOf(
+  attributes: string[] = [],
+  extensions: string[] = [],
+): CityFooter {
   return {
     version: "1.0.0",
     epsg: 7415,
     primaryColumn: null,
     geometryColumns: [],
     attributes,
+    extensions,
     sourceFormat: null,
   };
 }
@@ -65,11 +69,12 @@ function tableOf(
   rows: Record<string, unknown>[],
   options: {
     attributes?: string[];
+    extensions?: string[];
     geometryColumns?: GeometryColumnRef[];
   } = {},
 ): CityParquetTableData {
   return {
-    footer: footerOf(options.attributes ?? []),
+    footer: footerOf(options.attributes ?? [], options.extensions ?? []),
     rows,
     geometryColumns: options.geometryColumns ?? [],
   };
@@ -284,7 +289,7 @@ describe("decodeTableObjects (fixture)", () => {
 // ---------------------------------------------------------------------------
 
 describe("decodeTableObjects (synthetic rows)", () => {
-  it("restores the '+' spelling of extension attributes and merges other_attributes", () => {
+  it("keeps attribute names verbatim and merges other_attributes", () => {
     const objects = decodeTableObjects(
       tableOf(
         [
@@ -301,11 +306,61 @@ describe("decodeTableObjects (synthetic rows)", () => {
       ),
     );
     expect(at(objects, "a").attributes).toEqual({
-      "+height": 12.5,
+      ex_height: 12.5,
       plain: "kept",
       diverted: 1,
       bbox: "a string",
     });
+  });
+
+  it("restores the '+' spelling of attributes in a declared extension namespace", () => {
+    // Spec "Extensions": `<namespace>_name`, the namespace a key of
+    // `city.extensions`. A prefix no extension declares is a core name.
+    const objects = decodeTableObjects(
+      tableOf(
+        [
+          {
+            id: "a",
+            object_type: "Building",
+            energy_heatCapacity: 120000.5,
+            ex_height: 12.5,
+            noise_level: 3,
+            energyLabel: "A",
+          },
+        ],
+        {
+          attributes: [
+            "energy_heatCapacity",
+            "ex_height",
+            "noise_level",
+            "energyLabel",
+          ],
+          extensions: ["energy"],
+        },
+      ),
+    );
+    expect(at(objects, "a").attributes).toEqual({
+      "+heatCapacity": 120000.5,
+      ex_height: 12.5,
+      noise_level: 3,
+      energyLabel: "A",
+    });
+  });
+
+  it("restores the '+' spelling of an extension object type", () => {
+    const objects = decodeTableObjects(
+      tableOf(
+        [
+          { id: "z", object_type: "energy_ThermalZone" },
+          { id: "s", object_type: "Storey" },
+          { id: "n", object_type: "noise_Barrier" },
+        ],
+        { extensions: ["energy"] },
+      ),
+    );
+    expect(at(objects, "z").objectType).toBe("+ThermalZone");
+    expect(at(objects, "s").objectType).toBe("BuildingStorey");
+    expect(at(objects, "n").objectType).toBe("noise_Barrier");
   });
 
   it("reverses the leading-underscore escape of a reserved-colliding attribute", () => {
@@ -748,18 +803,16 @@ describe("decodeTableObjects (synthetic rows)", () => {
 
 describe("cityJsonTypeForObjectType", () => {
   it("reverse-maps the four CityGML renames and passes others through", () => {
-    expect(cityJsonTypeForObjectType("Storey")).toBe("BuildingStorey");
-    expect(cityJsonTypeForObjectType("HollowSpace")).toBe("TunnelHollowSpace");
-    expect(cityJsonTypeForObjectType("Square")).toBe("TransportSquare");
-    expect(cityJsonTypeForObjectType("GenericOccupiedSpace")).toBe(
-      "GenericCityObject",
-    );
-    expect(cityJsonTypeForObjectType("Building")).toBe("Building");
+    const t = (name: string) => cityJsonTypeForObjectType(name, ["energy"]);
+    expect(t("Storey")).toBe("BuildingStorey");
+    expect(t("HollowSpace")).toBe("TunnelHollowSpace");
+    expect(t("Square")).toBe("TransportSquare");
+    expect(t("GenericOccupiedSpace")).toBe("GenericCityObject");
+    expect(t("Building")).toBe("Building");
     // The duckdb extension's CityJSON spelling is tolerated too.
-    expect(cityJsonTypeForObjectType("TransportSquare")).toBe(
-      "TransportSquare",
-    );
-    // An extension class has no taxonomy entry and keeps its own name.
-    expect(cityJsonTypeForObjectType("+SolarPanel")).toBe("+SolarPanel");
+    expect(t("TransportSquare")).toBe("TransportSquare");
+    // An extension class carries its namespace, which becomes CityJSON's `+`.
+    expect(t("energy_ThermalZone")).toBe("+ThermalZone");
+    expect(t("+SolarPanel")).toBe("+SolarPanel");
   });
 });

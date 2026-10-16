@@ -38,7 +38,7 @@ import type {
 } from "@cityjson/navara-core";
 import type { CityFooter } from "./footer";
 import { CityParquetError } from "./footer";
-import { restoreAttributeName } from "./naming";
+import { attributeKeyForColumn, decodeExtensionName } from "./naming";
 import type { PackageAppearance } from "./sidecars";
 import type { CityParquetTableData, GeometryColumnRef } from "./tableReader";
 import type { DecodedWkb } from "./wkb";
@@ -60,15 +60,21 @@ const CITYJSON_TYPE_BY_CITYGML_CLASS: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
- * The CityJSON object type for a stored `object_type`, or the name itself when
- * it is not one of the four renames — which covers every other core class, and
- * every extension class (those have no taxonomy entry and keep their own name).
- * The lookup is one-way by construction: a file written by a tool that already
+ * The CityJSON object type for a stored `object_type`: one of the four renames,
+ * an extension class's `<namespace>_Name` as `+Name` (`namespaces` are the
+ * footer's), or the name itself — which covers every other core class. The
+ * lookup is one-way by construction: a file written by a tool that already
  * stores the CityJSON spelling (the duckdb extension does) passes through
  * unchanged, because no CityJSON name is also a divergent CityGML name.
  */
-export function cityJsonTypeForObjectType(objectType: string): string {
-  return CITYJSON_TYPE_BY_CITYGML_CLASS.get(objectType) ?? objectType;
+export function cityJsonTypeForObjectType(
+  objectType: string,
+  namespaces: ReadonlyArray<string>,
+): string {
+  return (
+    CITYJSON_TYPE_BY_CITYGML_CLASS.get(objectType) ??
+    decodeExtensionName(objectType, namespaces)
+  );
 }
 
 /**
@@ -88,22 +94,6 @@ const KNOWN_BUILDING_SURFACE_TYPES: ReadonlySet<string> = new Set([
   "Window",
   "Door",
 ]);
-
-/**
- * The prefix a CityJSON Extension attribute (`+height`) is stored under
- * (`normalise_attribute_name` in `cityparquet-schema/src/model.rs`), since `+`
- * is not a portable column-name character. The footer's `attributes` list
- * carries the normalised spelling, so the `+` has to be restored here or the
- * same dataset would expose `ex_height` as CityParquet and `+height` as
- * CityJSON.
- *
- * The normalisation is lossy in the writer and the name is the only signal a
- * reader has (the "extension" role lives in Arrow field metadata, which the
- * `city` footer does not carry), so a source attribute genuinely named
- * `ex_height` is indistinguishable from `+height` and comes back as the latter.
- * That is a residual of the format, not a decision taken here.
- */
-const EXTENSION_ATTRIBUTE_PREFIX = "ex_";
 
 /** The catch-all attribute container, when the writer emitted one. */
 const OTHER_ATTRIBUTES_COLUMN = "other_attributes";
@@ -289,12 +279,18 @@ function attributeValue(value: unknown): unknown {
   return value;
 }
 
-/** The CityJSON attribute name a column name stands for. */
-function attributeKeyForColumn(column: string): string {
-  const source = restoreAttributeName(column);
-  return source.startsWith(EXTENSION_ATTRIBUTE_PREFIX)
-    ? `+${source.slice(EXTENSION_ATTRIBUTE_PREFIX.length)}`
-    : source;
+/** One footer-declared attribute column and the CityJSON attribute name it
+ *  restores to (`naming.ts`), resolved once per table. */
+interface AttributeColumn {
+  readonly column: string;
+  readonly key: string;
+}
+
+function attributeColumnsOf(footer: CityFooter): AttributeColumn[] {
+  return footer.attributes.map((column) => ({
+    column,
+    key: attributeKeyForColumn(column, footer.extensions),
+  }));
 }
 
 /**
@@ -309,16 +305,16 @@ function attributeKeyForColumn(column: string): string {
  */
 function readAttributes(
   row: Record<string, unknown>,
-  footer: CityFooter,
+  columns: ReadonlyArray<AttributeColumn>,
   id: string,
   warnings: DecodeWarnings,
 ): JsonObject {
   const attributes = bareMap<unknown>();
-  for (const column of footer.attributes) {
+  for (const { column, key } of columns) {
     if (!hasOwn(row, column)) continue;
     const cell = row[column];
     if (isEmptyCell(cell)) continue;
-    attributes[attributeKeyForColumn(column)] = attributeValue(cell);
+    attributes[key] = attributeValue(cell);
   }
 
   const diverted = readOtherAttributes(
@@ -765,6 +761,8 @@ export function decodeTableObjects(
 ): Record<string, CityObject> {
   const objects = bareMap<CityObject>();
   const warnings = new DecodeWarnings();
+  const attributeColumns = attributeColumnsOf(table.footer);
+  const namespaces = table.footer.extensions;
 
   for (const row of table.rows) {
     const id = row.id;
@@ -804,8 +802,8 @@ export function decodeTableObjects(
 
     objects[id] = {
       id,
-      objectType: cityJsonTypeForObjectType(storedType),
-      attributes: readAttributes(row, table.footer, id, warnings),
+      objectType: cityJsonTypeForObjectType(storedType, namespaces),
+      attributes: readAttributes(row, attributeColumns, id, warnings),
       surfaces: geometry.surfaces,
       bbox: readBBox(row.bbox),
       children: readIdList(row.children),

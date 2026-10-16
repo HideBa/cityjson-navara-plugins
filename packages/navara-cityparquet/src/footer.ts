@@ -4,11 +4,11 @@
  * Behaviour mirrors `cityparquet-rs/crates/cityparquet-schema/src/metadata.rs`
  * (`CityMetadata::from_key_values`) and `types.rs` (`Lod::from_column_suffix`,
  * `geometry_column_name`), narrowed to the fields a viewer actually reads: the
- * version, the EPSG code, the geometry-column registry, the attribute list and
- * the provenance token. Everything else in the object (`extensions`,
- * `appearance_defaults`, `other`, the full PROJJSON body) is carried by the
- * file but not needed to draw it, so it is deliberately not modelled — a
- * reader must never *need* those to decode (spec §metadata).
+ * version, the EPSG code, the geometry-column registry, the attribute list,
+ * the extension namespaces (which name an extension attribute or class) and
+ * the provenance token. Everything else in the object (the extension
+ * declarations' bodies, `other`, the full PROJJSON body) is carried by the
+ * file but not needed to draw it, so it is deliberately not modelled.
  *
  * Validation is narrow rather than schema-complete: the `city` key must exist,
  * parse as a JSON object, and declare a version; a `columns` entry must name a
@@ -43,6 +43,9 @@ export interface CityFooter {
   geometryColumns: CityGeometryColumnMeta[];
   /** `city.attributes`, or `[]` when the file declares none. */
   attributes: string[];
+  /** The extension namespaces the file declares (the keys of
+   *  `city.extensions`), or `[]` when it declares none. */
+  extensions: string[];
   sourceFormat: string | null;
   /** The source's default appearance themes (`appearance_defaults`), when
    *  the writer carried them over; both null otherwise. */
@@ -125,6 +128,7 @@ export function parseCityFooter(
     primaryColumn: readOptionalString(parsed.primary_column),
     geometryColumns: readColumns(parsed.columns),
     attributes: readAttributes(parsed.attributes),
+    extensions: readExtensionNamespaces(parsed.extensions),
     sourceFormat: readOptionalString(parsed.source_format),
     appearanceDefaults: readAppearanceDefaults(parsed.appearance_defaults),
   };
@@ -211,6 +215,18 @@ function readColumns(value: unknown): CityGeometryColumnMeta[] {
       orientation3d: readOptionalString(entry.orientation_3d),
     };
   });
+}
+
+/** The keys of `city.extensions`. Each value references an extension's
+ *  schema; only the namespace is needed to read the file's names. */
+function readExtensionNamespaces(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!isJsonObject(value)) {
+    throw new CityParquetError(
+      "This CityParquet file's 'city' metadata is malformed: 'extensions' is not an object keyed by namespace.",
+    );
+  }
+  return Object.keys(value);
 }
 
 /** `city.attributes`, each name checked against the reservation rules so a

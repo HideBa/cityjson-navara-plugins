@@ -1,11 +1,21 @@
 /**
  * The names a CityParquet column carries, turned back into the source names
- * the rest of the plugin uses (spec "Column naming and reservation rules").
+ * the rest of the plugin uses (spec "Column naming and reservation rules" and
+ * "Extensions").
  *
- * **The `_` escape.** A source attribute whose *base* (the name with every
- * leading `_` removed) collides with a reserved column name is stored with one
- * more leading `_` (`ID` → `_ID`, `_ID` → `__ID`). A reader removes exactly
- * one. An attribute column whose own name collides is invalid input.
+ * Two rules apply to an attribute column, in this order:
+ *
+ * 1. **The `_` escape.** A source attribute whose *base* (the name with every
+ *    leading `_` removed) collides with a reserved column name is stored with
+ *    one more leading `_` (`ID` → `_ID`, `_ID` → `__ID`). A reader removes
+ *    exactly one. An attribute column whose own name collides is invalid input.
+ * 2. **The extension namespace.** A name that starts with a namespace the
+ *    footer declares in `city.extensions`, followed by `_`, is an extension
+ *    name, and its CityJSON form replaces that prefix with `+`
+ *    (`energy_heatCapacity` → `+heatCapacity`). Every other name is unchanged.
+ *
+ * The same namespace rule turns an extension `object_type` back into its
+ * CityJSON spelling (`energy_ThermalZone` → `+ThermalZone`).
  *
  * Engine-free: no `@navaramap/*` imports.
  */
@@ -79,4 +89,28 @@ export function restoreAttributeName(column: string): string {
     );
   }
   return column.slice(1);
+}
+
+/**
+ * The CityJSON form of a stored name: a declared namespace's `<ns>_` prefix
+ * becomes `+`; any other name is returned unchanged. A namespace contains no
+ * `_`, so the first `_` of an extension name always ends its namespace.
+ */
+export function decodeExtensionName(
+  name: string,
+  namespaces: ReadonlyArray<string>,
+): string {
+  const underscore = name.indexOf("_");
+  if (underscore <= 0) return name;
+  if (!namespaces.includes(name.slice(0, underscore))) return name;
+  return `+${name.slice(underscore + 1)}`;
+}
+
+/** The attribute key an attribute column restores to: the escape reversed,
+ *  then a declared namespace prefix turned into CityJSON's `+`. */
+export function attributeKeyForColumn(
+  column: string,
+  namespaces: ReadonlyArray<string>,
+): string {
+  return decodeExtensionName(restoreAttributeName(column), namespaces);
 }
