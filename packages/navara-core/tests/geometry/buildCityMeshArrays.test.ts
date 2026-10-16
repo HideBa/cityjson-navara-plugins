@@ -181,11 +181,15 @@ describe("buildCityMeshArrays face normals (independent oracle)", () => {
   it("matches the real BufferGeometry.computeVertexNormals() on the fixture model", () => {
     const arrays = buildCityMeshArrays(model, "L", origin, null);
 
+    // Indexed like the build, so three averages each vertex over its own
+    // surface's triangles — which for the fixture's planar faces is the face
+    // normal.
     const oracleGeometry = new BufferGeometry();
     oracleGeometry.setAttribute(
       "position",
       new BufferAttribute(new Float32Array(arrays.positions), 3),
     );
+    oracleGeometry.setIndex(new BufferAttribute(arrays.indices, 1));
     oracleGeometry.computeVertexNormals();
     const oracleNormals = oracleGeometry.getAttribute("normal")
       .array as Float32Array;
@@ -684,10 +688,8 @@ describe("slots", () => {
 
   it("gives every drawn surface one slot, its vertices contiguous", () => {
     const mesh = buildCityMeshArrays(model, "test");
-    // Two triangles per square: six vertices per slot, in write order.
-    expect([...mesh.slots]).toEqual([
-      0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2,
-    ]);
+    // Four corners per square, in write order.
+    expect([...mesh.slots]).toEqual([0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]);
     expect([...mesh.slotObjects]).toEqual([0, 0, 1]);
     expect([...mesh.slotSurfaces]).toEqual([0, 1, 0]);
     expect([...mesh.slotTextures]).toEqual([-1, -1, -1]);
@@ -715,6 +717,88 @@ describe("slots", () => {
       new Set(["b"]),
     );
     expect([...mesh.slotObjects]).toEqual([1]);
-    expect(mesh.slots.length).toBe(6);
+    expect(mesh.slots.length).toBe(4);
+  });
+});
+
+describe("indexed per surface", () => {
+  const square: Vec3[] = [
+    [0, 0, 0],
+    [10, 0, 0],
+    [10, 10, 0],
+    [0, 10, 0],
+  ];
+  const wall: Vec3[] = [
+    [0, 0, 0],
+    [0, 0, 5],
+    [10, 0, 5],
+    [10, 0, 0],
+  ];
+
+  it("writes a quad's four corners once, and two triangles over them", () => {
+    const mesh = buildCityMeshArrays(
+      makeModel({ a: makeObject("a", [makeSurface("RoofSurface", square)]) }),
+      "test",
+    );
+    expect(mesh.triangleCount).toBe(2);
+    expect(mesh.positions.length).toBe(4 * 3);
+    expect(mesh.indices.length).toBe(6);
+    expectVertexSet(mesh.positions, square);
+    for (const i of mesh.indices) expect(i).toBeLessThan(4);
+  });
+
+  it("never shares a vertex between surfaces, even at a common corner", () => {
+    const mesh = buildCityMeshArrays(
+      makeModel({
+        a: makeObject("a", [
+          makeSurface("RoofSurface", square),
+          makeSurface("WallSurface", wall),
+        ]),
+      }),
+      "test",
+    );
+    expect(mesh.positions.length).toBe(8 * 3);
+    expect([...mesh.slots]).toEqual([0, 0, 0, 0, 1, 1, 1, 1]);
+    // Each triangle's corners belong to one slot.
+    for (let t = 0; t < mesh.triangleCount; t++) {
+      const s = mesh.slots[mesh.indices[t * 3]!]!;
+      expect(mesh.slots[mesh.indices[t * 3 + 1]!]).toBe(s);
+      expect(mesh.slots[mesh.indices[t * 3 + 2]!]).toBe(s);
+    }
+  });
+
+  it("gives every vertex of a surface the surface's normal", () => {
+    const mesh = buildCityMeshArrays(
+      makeModel({ a: makeObject("a", [makeSurface("WallSurface", wall)]) }),
+      "test",
+    );
+    for (let v = 0; v < 4; v++) {
+      const n = [...mesh.normals.subarray(v * 3, v * 3 + 3)];
+      expect(Math.abs(n[1]!)).toBeCloseTo(1, 6);
+      expect(n[0]).toBeCloseTo(0, 6);
+      expect(n[2]).toBeCloseTo(0, 6);
+    }
+  });
+
+  it("uses 16-bit indices while every index fits below the restart value", () => {
+    const small = buildCityMeshArrays(
+      makeModel({ a: makeObject("a", [makeSurface("RoofSurface", square)]) }),
+      "test",
+    );
+    expect(small.indices).toBeInstanceOf(Uint16Array);
+    // 16,384 quads = 65,536 vertices: index 65,535 is WebGL 2's primitive
+    // restart value for 16-bit indices, so this build needs 32 bits.
+    const objects: Record<string, CityObject> = {};
+    for (let i = 0; i < 16_384; i++) {
+      objects[`o${i}`] = makeObject(`o${i}`, [
+        makeSurface(
+          "RoofSurface",
+          square.map(([x, y, z]) => [x + i * 20, y, z] as Vec3),
+        ),
+      ]);
+    }
+    const big = buildCityMeshArrays(makeModel(objects), "test");
+    expect(big.positions.length / 3).toBe(65_536);
+    expect(big.indices).toBeInstanceOf(Uint32Array);
   });
 });

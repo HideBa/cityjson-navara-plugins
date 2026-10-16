@@ -1,7 +1,7 @@
 /**
  * Structural edges of a city mesh: the line segments a hidden-line or
- * cartoon-ink look draws, extracted from the same non-indexed triangle soup the
- * renderer already holds.
+ * cartoon-ink look draws, extracted from the triangles the renderer already
+ * holds, indexed or as a soup.
  *
  * Not `material.wireframe`: that draws EVERY triangle edge, so a triangulated
  * roof reads as a fan of diagonals. An edge is emitted only when it is
@@ -10,7 +10,7 @@
  *   the rim of an open shell), or
  * - a CREASE edge, where two adjacent faces fold by more than the threshold.
  *
- * The soup is expected post-ENU-projection, so the segments come out in the
+ * Positions are expected post-ENU-projection, so the segments come out in the
  * same render space as the mesh's own positions and need no second transform.
  *
  * Engine-free and O(triangles): one pass, one Map keyed by the edge's quantized
@@ -67,19 +67,24 @@ const quantize = (v: number) => Math.round(v * QUANT);
 /**
  * Line-segment endpoints for the structural edges of `positions`.
  *
- * @param positions non-indexed triangle soup, 9 floats per triangle.
+ * @param positions 3 floats per vertex: a triangle soup (9 floats per
+ *   triangle) without `indices`, the vertex pool with them.
  * @param angleThresholdDeg fold angle above which a shared edge is a crease.
  * @param keepTriangle which triangles are drawn, by index; all when absent.
  *   A left-out triangle contributes nothing, so the edge it shared with a kept
  *   one becomes that one's boundary: the outline of what is drawn.
+ * @param indices three per triangle into `positions`, for indexed geometry.
  * @returns 6 floats per segment (x1,y1,z1, x2,y2,z2).
  */
 export function buildCityEdgeSegments(
   positions: Float32Array,
   angleThresholdDeg: number = DEFAULT_EDGE_ANGLE_DEG,
   keepTriangle?: (triangle: number) => boolean,
+  indices?: Uint16Array | Uint32Array,
 ): Float32Array {
-  const triangleCount = Math.floor(positions.length / 9);
+  const triangleCount = indices
+    ? Math.floor(indices.length / 3)
+    : Math.floor(positions.length / 9);
   if (triangleCount === 0) return new Float32Array(0);
 
   const cosThreshold =
@@ -89,16 +94,18 @@ export function buildCityEdgeSegments(
 
   for (let t = 0; t < triangleCount; t++) {
     if (keepTriangle && !keepTriangle(t)) continue;
-    const i = t * 9;
-    const ax = positions[i]!;
-    const ay = positions[i + 1]!;
-    const az = positions[i + 2]!;
-    const bx = positions[i + 3]!;
-    const by = positions[i + 4]!;
-    const bz = positions[i + 5]!;
-    const cx = positions[i + 6]!;
-    const cy = positions[i + 7]!;
-    const cz = positions[i + 8]!;
+    const a = (indices ? indices[t * 3]! : t * 3) * 3;
+    const b = (indices ? indices[t * 3 + 1]! : t * 3 + 1) * 3;
+    const c = (indices ? indices[t * 3 + 2]! : t * 3 + 2) * 3;
+    const ax = positions[a]!;
+    const ay = positions[a + 1]!;
+    const az = positions[a + 2]!;
+    const bx = positions[b]!;
+    const by = positions[b + 1]!;
+    const bz = positions[b + 2]!;
+    const cx = positions[c]!;
+    const cy = positions[c + 1]!;
+    const cz = positions[c + 2]!;
 
     // (b-a) x (c-a): the face normal, unnormalized. Its length is twice the
     // triangle's area, which is also the degeneracy test.

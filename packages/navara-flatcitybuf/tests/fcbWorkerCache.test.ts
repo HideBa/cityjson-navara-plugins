@@ -929,7 +929,9 @@ describe("fcb.worker — cells are baked into exact local ENU metres (Task C5 St
     );
 
     const positions = cellMsg.geometry.positions;
-    expect(positions.length).toBe(cellMsg.geometry.triangleCount * 3 * 3);
+    expect(cellMsg.geometry.indices.length).toBe(
+      cellMsg.geometry.triangleCount * 3,
+    );
     expect(positions.length).toBeGreaterThan(0);
 
     for (let v = 0; v < positions.length / 3; v++) {

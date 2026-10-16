@@ -19,6 +19,7 @@ function arrays(): CityMeshArrays {
   return {
     positions: new Float32Array(v * 3).fill(1),
     normals: new Float32Array(v * 3).fill(0),
+    indices: new Uint16Array(v).map((_, i) => i),
     objectKeys: ["B1"],
     objectTypes: ["Building"],
     triangleCount: 2,

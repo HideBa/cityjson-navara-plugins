@@ -140,6 +140,7 @@ function geom(triangleCount: number, objectKey = "B1") {
   return {
     positions: new Float32Array(v * 3).fill(1),
     normals: new Float32Array(v * 3).fill(2),
+    indices: new Uint16Array(v).map((_, i) => i),
     slots: new Uint32Array(v).fill(0),
     slotObjects: new Uint32Array(n),
     slotSurfaces: new Uint32Array(n),

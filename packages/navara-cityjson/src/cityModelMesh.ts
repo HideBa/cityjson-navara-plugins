@@ -410,7 +410,8 @@ export class CityModelMesh {
   /** Write the hidden flag of every slot from the hidden types and the
    *  attribute filter, and recount the drawn triangles. */
   private applyHidden(): void {
-    const { objectKeys, objectTypes, slots, slotObjects } = this.arrays;
+    const { objectKeys, objectTypes, indices, slots, slotObjects } =
+      this.arrays;
     const hidden = hiddenObjectMask(
       objectKeys,
       objectTypes,
@@ -418,12 +419,19 @@ export class CityModelMesh {
       this.visibleObjectIds,
     );
     this.style.setHidden(hidden);
-    this.drawnTriangles = drawnTriangleCount(slots, slotObjects, hidden);
+    this.drawnTriangles = drawnTriangleCount(
+      indices,
+      slots,
+      slotObjects,
+      hidden,
+    );
   }
 
   /** Whether triangle `t` is drawn, i.e. its slot is not hidden. */
   private isTriangleDrawn(t: number): boolean {
-    return !this.style.isHidden(this.arrays.slots[t * 3]!);
+    return !this.style.isHidden(
+      this.arrays.slots[this.arrays.indices[t * 3]!]!,
+    );
   }
 
   /** Every layer of the style texture: colours, the image mask, the
@@ -747,7 +755,7 @@ export class CityModelMesh {
     if (this.pickStrategy !== "pickable-wrapper") return [];
     const map: SurfaceRef[] = [];
     for (let t = 0; t < this.arrays.triangleCount; t++) {
-      map.push(this.surfaceAt(t * 3)!);
+      map.push(this.surfaceAt(this.arrays.indices[t * 3]!)!);
     }
     return map;
   }

@@ -19,6 +19,7 @@ export function entryToArrays(entry: CellEntry): CityMeshArrays {
   return {
     positions: g.positions,
     normals: g.normals,
+    indices: g.indices,
     objectKeys: g.objectKeys,
     objectTypes: g.objectTypes,
     triangleCount: g.triangleCount,

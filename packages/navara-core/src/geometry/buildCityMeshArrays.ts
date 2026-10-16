@@ -1,7 +1,7 @@
 /**
  * Converts normalized CityModel surfaces into plain typed arrays.
  *
- * Triangulates polygon surfaces and computes flat face normals. Every drawn
+ * Triangulates polygon surfaces and computes one normal per surface. Every drawn
  * surface is a SLOT: each vertex names its slot, and per slot the arrays say
  * which object and surface it is, its base colour and its image. Colour,
  * highlight and picking all go through the slot, so restyling never touches
@@ -31,7 +31,7 @@ import {
 import type { BuildingSurfaceType } from "../citymodel/types";
 
 /**
- * A contiguous VERTEX range of the arrays drawn with one texture image
+ * A contiguous INDEX range of the arrays drawn with one texture image
  * (`textureIndex` into `CityModel.appearance.textures`), or with none
  * (`textureIndex === -1`). Ranges tile the whole array in order; a renderer
  * turns each into a `BufferGeometry` group with its own material.
@@ -42,9 +42,21 @@ export interface TextureGroup {
   readonly textureIndex: number;
 }
 
+/**
+ * The most vertices a build indexes with 16 bits. WebGL 2 always treats the
+ * largest index of the type (65,535 for 16 bits) as a primitive restart, so
+ * the last usable index is 65,534.
+ */
+export const MAX_UINT16_VERTICES = 65_535;
+
 export interface CityMeshArrays {
+  /** Per vertex, 3 each. Indexed per surface: a vertex belongs to one slot. */
   readonly positions: Float32Array;
+  /** Per vertex, 3 each: its surface's normal. */
   readonly normals: Float32Array;
+  /** Three per triangle, into the vertex arrays. 16-bit while the vertices
+   *  fit ({@link MAX_UINT16_VERTICES}), 32-bit otherwise. */
+  readonly indices: Uint16Array | Uint32Array;
   readonly objectKeys: string[];
   /** Per object, paired with `objectKeys`, its FIRST-LEVEL type
    *  (`toplevelCityObjectType`): what a renderer hides by flag, so hiding
@@ -88,18 +100,16 @@ interface PendingSurface {
 
 /**
  * Convert normalized CityModel surfaces into plain typed arrays: positions,
- * per-triangle face normals, and the slot tables.
+ * per-surface normals, indices and the slot tables.
  *
  * Uses a two-pass approach for large-model performance:
  * Pass 1: count total triangles to pre-allocate typed arrays.
  * Pass 2: write directly into typed arrays (no intermediate number[]).
  *
- * Normals are computed per-triangle (flat face normal) and written
- * identically to all three of that triangle's vertices. Because the
- * geometry is non-indexed (no vertex sharing across triangles), this is
- * exactly what `BufferGeometry.computeVertexNormals()` produces: each
- * vertex belongs to only one triangle, so the "accumulated" normal is
- * just that triangle's own face normal, normalized.
+ * The geometry is indexed per surface: a surface's vertices are written once
+ * and its triangles index them, and no vertex is shared between surfaces, so
+ * a vertex's slot is exact and every vertex of a surface carries the
+ * surface's normal.
  *
  * Contains no Three.js DOM/GPU types (no BufferGeometry/BufferAttribute),
  * so it can run inside a Web Worker.
@@ -124,7 +134,7 @@ interface PendingSurface {
  *    as they do over semantic colours;
  *  - a TEXTURE theme writes surfaces SORTED by texture index (untextured
  *    first, file order within a bucket) so each image is one contiguous
- *    vertex range (`textureGroups`), and emits per-vertex `uvs`. Colours stay
+ *    index range (`textureGroups`), and emits per-vertex `uvs`. Colours stay
  *    semantic: a renderer draws a slot white only once its image
  *    (`slotTextures`) has loaded, so a missing image degrades to the plain
  *    look. A texture theme
@@ -165,6 +175,7 @@ export function buildCityMeshArrays(
 
   // Pass 1: triangulate, resolve colour/texture, build the object key list.
   let totalTriangles = 0;
+  let totalVertices = 0;
   const pending: PendingSurface[] = [];
   let objectIdx = 0;
   for (const [id, obj] of Object.entries(model.objects)) {
@@ -230,6 +241,7 @@ export function buildCityMeshArrays(
         color,
       });
       totalTriangles += triangulation.triangles.length;
+      totalVertices += triangulation.vertices.length;
     }
   }
 
@@ -240,7 +252,9 @@ export function buildCityMeshArrays(
     pending.sort((a, b) => a.textureIndex - b.textureIndex);
   }
 
-  const vertexCount = totalTriangles * 3;
+  // Indexed per surface: a surface's ring vertices are written once and its
+  // triangles index them, so a vertex never belongs to two slots.
+  const vertexCount = totalVertices;
   // A texture theme no drawn surface uses is the plain build.
   const anyTextured =
     textureTheme !== null && pending.some((p) => p.textureIndex >= 0);
@@ -249,6 +263,10 @@ export function buildCityMeshArrays(
   const posArray = new Float32Array(vertexCount * 3);
   const normalArray = new Float32Array(vertexCount * 3);
   const uvArray = anyTextured ? new Float32Array(vertexCount * 2) : null;
+  const indices =
+    vertexCount <= MAX_UINT16_VERTICES
+      ? new Uint16Array(totalTriangles * 3)
+      : new Uint32Array(totalTriangles * 3);
   const textureGroups: TextureGroup[] | null = anyTextured ? [] : null;
   const slotCount = pending.length;
   const slots = new Uint32Array(vertexCount);
@@ -258,109 +276,97 @@ export function buildCityMeshArrays(
   const slotColors = new Float32Array(slotCount * 3);
 
   // Pass 2: write directly into typed arrays
-  let writeIdx = 0;
+  let vertexWrite = 0;
+  let indexWrite = 0;
   for (let slot = 0; slot < slotCount; slot++) {
     const entry = pending[slot]!;
     const { objectIdx, surfaceIdx, triangulation, color, textureIndex } = entry;
+    const { vertices, triangles } = triangulation;
     slotObjects[slot] = objectIdx;
     slotSurfaces[slot] = surfaceIdx;
     slotTextures[slot] = textureIndex;
     slotColors[slot * 3] = color.r;
     slotColors[slot * 3 + 1] = color.g;
     slotColors[slot * 3 + 2] = color.b;
-    slots.fill(slot, writeIdx, writeIdx + triangulation.triangles.length * 3);
+    const first = vertexWrite;
+    slots.fill(slot, first, first + vertices.length);
 
     if (textureGroups) {
       const last = textureGroups[textureGroups.length - 1];
       if (last && last.textureIndex === textureIndex) {
         textureGroups[textureGroups.length - 1] = {
           ...last,
-          count: last.count + triangulation.triangles.length * 3,
+          count: last.count + triangles.length * 3,
         };
       } else {
         textureGroups.push({
-          start: writeIdx,
-          count: triangulation.triangles.length * 3,
+          start: indexWrite,
+          count: triangles.length * 3,
           textureIndex,
         });
       }
     }
 
-    {
-      for (const triangle of triangulation.triangles) {
-        const v0 = triangulation.vertices[triangle[0]]!;
-        const v1 = triangulation.vertices[triangle[1]]!;
-        const v2 = triangulation.vertices[triangle[2]]!;
-        const base = writeIdx * 3;
-
-        if (uvArray && triangulation.uvs) {
-          const uv0 = triangulation.uvs[triangle[0]]!;
-          const uv1 = triangulation.uvs[triangle[1]]!;
-          const uv2 = triangulation.uvs[triangle[2]]!;
-          const uvBase = writeIdx * 2;
-          uvArray[uvBase] = uv0[0];
-          uvArray[uvBase + 1] = uv0[1];
-          uvArray[uvBase + 2] = uv1[0];
-          uvArray[uvBase + 3] = uv1[1];
-          uvArray[uvBase + 4] = uv2[0];
-          uvArray[uvBase + 5] = uv2[1];
-        }
-
-        posArray[base] = v0[0] - originOffset[0];
-        posArray[base + 1] = v0[1] - originOffset[1];
-        posArray[base + 2] = v0[2] - originOffset[2];
-        posArray[base + 3] = v1[0] - originOffset[0];
-        posArray[base + 4] = v1[1] - originOffset[1];
-        posArray[base + 5] = v1[2] - originOffset[2];
-        posArray[base + 6] = v2[0] - originOffset[0];
-        posArray[base + 7] = v2[1] - originOffset[1];
-        posArray[base + 8] = v2[2] - originOffset[2];
-
-        // Flat face normal, written to all three vertices. The geometry is
-        // non-indexed (no vertex sharing across triangles), so this exactly
-        // reproduces what BufferGeometry.computeVertexNormals() computes:
-        // normal = normalize(cross(v2 - v1, v0 - v1)).
-        //
-        // Critically, this must be derived from the values just written
-        // into posArray (already rounded to Float32), NOT from the
-        // double-precision v0/v1/v2. computeVertexNormals() reads from the
-        // Float32Array position attribute, so for a triangle whose
-        // double-precision area is tiny relative to its coordinate
-        // magnitude, Float32 rounding can collapse two vertices onto the
-        // same representable value and zero out the cross product — a
-        // real behavioral case that reading from v0/v1/v2 directly would
-        // miss (it would "see" the double-precision area and produce a
-        // non-zero normal where the old computeVertexNormals()-based
-        // implementation produced zero).
-        const [nx, ny, nz] = computeFaceNormal(
-          posArray[base]!,
-          posArray[base + 1]!,
-          posArray[base + 2]!,
-          posArray[base + 3]!,
-          posArray[base + 4]!,
-          posArray[base + 5]!,
-          posArray[base + 6]!,
-          posArray[base + 7]!,
-          posArray[base + 8]!,
-        );
-        normalArray[base] = nx;
-        normalArray[base + 1] = ny;
-        normalArray[base + 2] = nz;
-        normalArray[base + 3] = nx;
-        normalArray[base + 4] = ny;
-        normalArray[base + 5] = nz;
-        normalArray[base + 6] = nx;
-        normalArray[base + 7] = ny;
-        normalArray[base + 8] = nz;
-
-        writeIdx += 3;
+    for (let i = 0; i < vertices.length; i++) {
+      const v = vertices[i]!;
+      const base = (first + i) * 3;
+      posArray[base] = v[0] - originOffset[0];
+      posArray[base + 1] = v[1] - originOffset[1];
+      posArray[base + 2] = v[2] - originOffset[2];
+      if (uvArray && triangulation.uvs) {
+        const uv = triangulation.uvs[i]!;
+        uvArray[(first + i) * 2] = uv[0];
+        uvArray[(first + i) * 2 + 1] = uv[1];
       }
     }
+
+    // One normal per surface: the sum of its triangles' cross products,
+    // normalised. For a planar surface that is every triangle's own face
+    // normal; a bent one gets the area-weighted mean. The crosses are taken
+    // from the values just written to `posArray` (already rounded to
+    // Float32), NOT from the double-precision vertices: a triangle whose
+    // Float32 corners collapse onto one value has zero area on the GPU, and a
+    // surface made only of such triangles gets the zero normal, as three's
+    // `computeVertexNormals` would give it.
+    let nx = 0;
+    let ny = 0;
+    let nz = 0;
+    for (const triangle of triangles) {
+      const a = (first + triangle[0]) * 3;
+      const b = (first + triangle[1]) * 3;
+      const c = (first + triangle[2]) * 3;
+      indices[indexWrite++] = first + triangle[0];
+      indices[indexWrite++] = first + triangle[1];
+      indices[indexWrite++] = first + triangle[2];
+      const cbx = posArray[c]! - posArray[b]!;
+      const cby = posArray[c + 1]! - posArray[b + 1]!;
+      const cbz = posArray[c + 2]! - posArray[b + 2]!;
+      const abx = posArray[a]! - posArray[b]!;
+      const aby = posArray[a + 1]! - posArray[b + 1]!;
+      const abz = posArray[a + 2]! - posArray[b + 2]!;
+      nx += cby * abz - cbz * aby;
+      ny += cbz * abx - cbx * abz;
+      nz += cbx * aby - cby * abx;
+    }
+    const length = Math.hypot(nx, ny, nz);
+    if (length > 0) {
+      nx /= length;
+      ny /= length;
+      nz /= length;
+    }
+    for (let i = 0; i < vertices.length; i++) {
+      const base = (first + i) * 3;
+      normalArray[base] = nx;
+      normalArray[base + 1] = ny;
+      normalArray[base + 2] = nz;
+    }
+    vertexWrite += vertices.length;
   }
 
   return {
     positions: posArray,
     normals: normalArray,
+    indices,
     objectKeys,
     objectTypes,
     triangleCount: totalTriangles,
@@ -381,47 +387,6 @@ function isHidden(
   return (
     hiddenTypes !== null && hiddenTypes.has(toplevelCityObjectType(objectType))
   );
-}
-
-/**
- * Flat face normal for a triangle, normalized to unit length (or the zero
- * vector for a degenerate/zero-area triangle — matching
- * `Vector3.normalize()`'s `divideScalar(length() || 1)`, which leaves a
- * zero-length vector as `(0,0,0)` rather than producing `NaN`).
- *
- * Takes the three vertices as plain numbers already read back from the
- * Float32Array position buffer (see call site) — NOT double-precision
- * coordinates — because `BufferGeometry.computeVertexNormals()` operates on
- * the Float32-rounded position attribute. Uses the same vertex pairing and
- * cross-product order as that function (`cross(pC - pB, pA - pB)`) so
- * results match bit-for-bit (within float rounding) with what the old
- * `computeVertexNormals()`-based implementation produced for non-indexed
- * geometry, including the case where Float32 rounding collapses a
- * double-precision-nondegenerate triangle to zero area.
- */
-function computeFaceNormal(
-  p0x: number,
-  p0y: number,
-  p0z: number,
-  p1x: number,
-  p1y: number,
-  p1z: number,
-  p2x: number,
-  p2y: number,
-  p2z: number,
-): Vec3 {
-  const cbx = p2x - p1x;
-  const cby = p2y - p1y;
-  const cbz = p2z - p1z;
-  const abx = p0x - p1x;
-  const aby = p0y - p1y;
-  const abz = p0z - p1z;
-  const nx = cby * abz - cbz * aby;
-  const ny = cbz * abx - cbx * abz;
-  const nz = cbx * aby - cby * abx;
-  const length = Math.hypot(nx, ny, nz);
-  if (length === 0) return [0, 0, 0];
-  return [nx / length, ny / length, nz / length];
 }
 
 /**

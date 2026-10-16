@@ -98,6 +98,34 @@ describe("buildCityEdgeSegments", () => {
     for (let i = 2; i < top.length; i += 3) expect(top[i]).toBeCloseTo(1, 5);
   });
 
+  it("reads indexed triangles exactly as the soup they expand to", () => {
+    // The cube as 8 shared corners and 36 indices.
+    const soup = unitCube();
+    const corners: number[] = [];
+    const indices: number[] = [];
+    for (let v = 0; v < soup.length / 3; v++) {
+      const p = [...soup.subarray(v * 3, v * 3 + 3)];
+      let at = -1;
+      for (let c = 0; c < corners.length / 3; c++) {
+        if (p.every((x, k) => x === corners[c * 3 + k])) at = c;
+      }
+      if (at < 0) {
+        at = corners.length / 3;
+        corners.push(...p);
+      }
+      indices.push(at);
+    }
+    expect(corners.length / 3).toBe(8);
+    const segments = buildCityEdgeSegments(
+      Float32Array.from(corners),
+      DEFAULT_EDGE_ANGLE_DEG,
+      (t) => t >= 2,
+      Uint16Array.from(indices),
+    );
+    expect(segmentCount(segments)).toBe(12);
+    for (const l of lengths(segments)) expect(l).toBeCloseTo(1, 5);
+  });
+
   it("keeps a flat quad's four boundary edges and drops its diagonal", () => {
     const flat = Float32Array.from(
       quad([0, 0, 0], [4, 0, 0], [4, 4, 0], [0, 4, 0]),

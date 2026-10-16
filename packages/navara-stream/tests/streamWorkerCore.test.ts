@@ -418,8 +418,14 @@ describe("streamWorkerCore", () => {
     const cell = posted.filter(ofType("cell"))[0]!;
     expect(cell.geometry.triangleCount).toBe(2);
     // `+ 0` normalises -0, which `toFixed` keeps and `toEqual` distinguishes.
+    // Compared as the triangle soup the indices expand to: the pin was taken
+    // before the geometry was indexed, and the corners are the same.
+    const soup = (a: Float32Array) =>
+      [...cell.geometry.indices].flatMap((v) => [
+        ...a.subarray(v * 3, v * 3 + 3),
+      ]);
     const round = (a: Float32Array, dp: number) =>
-      [...a].map((v) => Number(v.toFixed(dp)) + 0);
+      soup(a).map((v) => Number(v.toFixed(dp)) + 0);
     // EPSG:28992 -> WGS84 -> ENU about the 2/0/0 cell centre (200, 200): the
     // 10 m roof quad sits ~97 m west and ~102 m south of it, and the ring is
     // wound so its normal points up-and-north.

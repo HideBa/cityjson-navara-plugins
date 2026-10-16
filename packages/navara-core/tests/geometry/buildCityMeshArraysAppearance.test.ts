@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  soupPositions,
   vertexColors,
   vertexObjectIndices,
   vertexSurfaceIndices,
@@ -161,10 +162,10 @@ describe("buildCityMeshArrays hole handling (no theme)", () => {
         model({ a: object("a", [surface], bbox) }),
         "L",
       );
+      const p = soupPositions(arrays);
       let area = 0;
       for (let t = 0; t < arrays.triangleCount; t++) {
         const b = t * 9;
-        const p = arrays.positions;
         const ax = p[b + 3]! - p[b]!;
         const ay = p[b + 4]! - p[b + 1]!;
         const bx = p[b + 6]! - p[b]!;
@@ -292,10 +293,10 @@ describe("buildCityMeshArrays with a texture theme", () => {
       );
       // Triangulated area = outer − hole: proves the hole's 3D vertices are
       // in the order the triangulator was given.
+      const p = soupPositions(arrays);
       let area = 0;
       for (let t = 0; t < arrays.triangleCount; t++) {
         const b = t * 9;
-        const p = arrays.positions;
         const ax = p[b + 3]! - p[b]!;
         const ay = p[b + 4]! - p[b + 1]!;
         const bx = p[b + 6]! - p[b]!;
@@ -337,8 +338,10 @@ describe("buildCityMeshArrays with a texture theme", () => {
       { start: 12, count: 12, textureIndex: 1 },
     ]);
     // Identity travels with the vertex: (obj, surface) per range.
-    const ids = (v: number): string =>
-      `${vertexObjectIndices(arrays)[v]}:${vertexSurfaceIndices(arrays)[v]}`;
+    const ids = (i: number): string => {
+      const v = arrays.indices[i]!;
+      return `${vertexObjectIndices(arrays)[v]}:${vertexSurfaceIndices(arrays)[v]}`;
+    };
     expect(ids(0)).toBe("0:1"); // a's wall, untextured
     expect(ids(6)).toBe("1:0"); // b's roof, texture 0
     expect(ids(12)).toBe("0:0"); // a's roof, texture 1 (file order kept)

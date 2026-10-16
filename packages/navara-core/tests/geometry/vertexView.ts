@@ -19,3 +19,13 @@ export function vertexColors(a: CityMeshArrays): Float32Array {
   });
   return out;
 }
+
+/** The build's triangles as a soup, 9 floats per triangle, for tests that
+ *  measure triangles rather than vertices. */
+export function soupPositions(a: CityMeshArrays): Float32Array {
+  const out = new Float32Array(a.indices.length * 3);
+  a.indices.forEach((v, i) => {
+    out.set(a.positions.subarray(v * 3, v * 3 + 3), i * 3);
+  });
+  return out;
+}

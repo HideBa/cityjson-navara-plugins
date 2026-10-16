@@ -200,7 +200,8 @@ export class CityMeshArraysMesh {
     // afterwards.
     this.theme = new ThemeStyleController(
       this.object3d,
-      (t) => !this.style.isHidden(this.arrays.slots[t * 3]!),
+      (t) =>
+        !this.style.isHidden(this.arrays.slots[this.arrays.indices[t * 3]!]!),
     );
     if (this.textures) {
       // One material per texture group (`buildGroupMaterials`), same
@@ -276,7 +277,8 @@ export class CityMeshArraysMesh {
   }
 
   private applyHidden(): void {
-    const { objectKeys, objectTypes, slots, slotObjects } = this.arrays;
+    const { objectKeys, objectTypes, indices, slots, slotObjects } =
+      this.arrays;
     const hidden = hiddenObjectMask(
       objectKeys,
       objectTypes,
@@ -284,7 +286,12 @@ export class CityMeshArraysMesh {
       null,
     );
     this.style.setHidden(hidden);
-    this.drawnTriangles = drawnTriangleCount(slots, slotObjects, hidden);
+    this.drawnTriangles = drawnTriangleCount(
+      indices,
+      slots,
+      slotObjects,
+      hidden,
+    );
   }
 
   /** The style texel of `slot`, sRGB bytes and flags, for tests. */
@@ -355,9 +362,9 @@ export class CityMeshArraysMesh {
   batchIdMap(): ReadonlyArray<SurfaceRef> {
     if (this.pickStrategy !== "pickable-wrapper") return [];
     const map: SurfaceRef[] = [];
-    const { slots, slotObjects, slotSurfaces } = this.arrays;
+    const { indices, slots, slotObjects, slotSurfaces } = this.arrays;
     for (let t = 0; t < this.arrays.triangleCount; t++) {
-      const slot = slots[t * 3]!;
+      const slot = slots[indices[t * 3]!]!;
       map.push({
         objectIndex: slotObjects[slot]!,
         surfaceIndex: slotSurfaces[slot]!,

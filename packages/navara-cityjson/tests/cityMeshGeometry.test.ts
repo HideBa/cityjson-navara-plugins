@@ -9,6 +9,7 @@ function arrays(): CityMeshArrays {
   return {
     positions: new Float32Array([0, 0, 0, 10, 0, 0, 0, 10, 0]),
     normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    indices: new Uint16Array([0, 1, 2]),
     objectKeys: ["B1"],
     objectTypes: ["Building"],
     triangleCount: 1,
@@ -29,7 +30,7 @@ describe("geometryFromMeshArrays", () => {
     expect(g.getAttribute("position").count).toBe(3);
   });
 
-  it("carries no per-vertex colour or index attributes", () => {
+  it("carries no per-vertex colour, object or surface attributes", () => {
     const g = geometryFromMeshArrays(arrays());
     expect(g.getAttribute("color")).toBeUndefined();
     expect(g.getAttribute("objectIndex")).toBeUndefined();
@@ -48,6 +49,12 @@ describe("geometryFromMeshArrays", () => {
     expect(g.getAttribute("position").array).toBe(a.positions);
     expect(g.getAttribute("normal").array).toBe(a.normals);
     expect(g.getAttribute("citySlot").array).toBe(a.slots);
+  });
+
+  it("draws the build's own indices, shared rather than copied", () => {
+    const a = arrays();
+    const g = geometryFromMeshArrays(a);
+    expect(g.index?.array).toBe(a.indices);
   });
 
   it("leaves the slot attribute un-normalized so the shader reads raw slots", () => {

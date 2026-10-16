@@ -23,6 +23,7 @@ function geom(
   return {
     positions: new Float32Array(v * 3).fill(1),
     normals: new Float32Array(v * 3).fill(2),
+    indices: new Uint16Array(v).map((_, i) => i),
     slots: new Uint32Array(v).map((_, i) => (i < 3 ? 0 : 1)),
     slotObjects: new Uint32Array(slots).fill(1),
     slotSurfaces: new Uint32Array(slots).fill(20),
@@ -47,10 +48,29 @@ describe("assertCellGeometry", () => {
     ).not.toThrow();
   });
 
-  it("rejects a short positions array", () => {
+  it("rejects a short positions array: an index past the last vertex", () => {
     expect(() =>
       assertCellGeometry(geom(2, { positions: new Float32Array(3).fill(1) })),
     ).toThrow(/positions/);
+  });
+
+  it("rejects a short indices array", () => {
+    expect(() =>
+      assertCellGeometry(geom(2, { indices: new Uint16Array(3) })),
+    ).toThrow(/indices/);
+  });
+
+  it("accepts fewer vertices than corners: indexed triangles share them", () => {
+    expect(() =>
+      assertCellGeometry(
+        geom(2, {
+          positions: new Float32Array(12).fill(1),
+          normals: new Float32Array(12).fill(2),
+          indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
+          slots: new Uint32Array(4),
+        }),
+      ),
+    ).not.toThrow();
   });
 
   it("rejects a short normals array", () => {

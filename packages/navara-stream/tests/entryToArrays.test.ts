@@ -13,6 +13,7 @@ function entry(ruleColors: Float32Array | null): CellEntry {
     geometry: {
       positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
       normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+      indices: Uint16Array.from([0, 1, 2]),
       slots: new Uint32Array([0, 0, 0]),
       slotObjects: new Uint32Array([0]),
       slotSurfaces: new Uint32Array([3]),

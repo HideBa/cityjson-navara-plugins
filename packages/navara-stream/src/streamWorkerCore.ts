@@ -809,6 +809,7 @@ export function installStreamWorker(
             const geometry: CellGeometry = {
               positions: a.positions,
               normals: a.normals,
+              indices: a.indices,
               slots: a.slots,
               slotObjects: a.slotObjects,
               slotSurfaces: a.slotSurfaces,
@@ -884,12 +885,13 @@ export function installStreamWorker(
                 // What this cell costs the WORKER, which is not what its
                 // transferred arrays cost: the main thread adds it to the
                 // geometry bytes it meters, so a cell that bakes nothing
-                // (every type hidden) still consumes residency budget.
+                // still consumes residency budget.
                 retainedBytes: retained,
               },
               [
                 a.positions.buffer,
                 a.normals.buffer,
+                a.indices.buffer,
                 a.slots.buffer,
                 a.slotObjects.buffer,
                 a.slotSurfaces.buffer,

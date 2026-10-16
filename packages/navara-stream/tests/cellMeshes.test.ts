@@ -33,6 +33,7 @@ function entry(tag: string, rules: ReadonlyArray<Rule> = []): CellEntry {
     geometry: {
       positions: new Float32Array(9),
       normals: new Float32Array(9),
+      indices: Uint16Array.from([0, 1, 2]),
       slots: new Uint32Array(3),
       slotObjects: new Uint32Array(1),
       slotSurfaces: new Uint32Array(1),

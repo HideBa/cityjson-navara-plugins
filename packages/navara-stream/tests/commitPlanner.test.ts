@@ -23,6 +23,7 @@ function geom(
   return {
     positions: new Float32Array(v * 3).fill(1),
     normals: new Float32Array(v * 3).fill(2),
+    indices: new Uint16Array(v).map((_, i) => i),
     slots: new Uint32Array(v).map((_, i) => Math.floor(i / 3)),
     slotObjects: new Uint32Array(triangleCount),
     slotSurfaces: new Uint32Array(triangleCount),
@@ -126,13 +127,13 @@ describe("ladderEquals", () => {
 
 describe("cellStatsFromGeometry", () => {
   it("sums triangleCount and every typed array's byteLength, excluding ruleColors when null", () => {
-    // v=6: positions/normals 18 f32 (72 B each), slots 6 u32 (24 B); two
-    // slots: three 4-byte tables (8 B each), base colours 6 f32 (24 B), and
-    // two style texels (8 B).
+    // v=6: positions/normals 18 f32 (72 B each), indices 6 u16 (12 B), slots
+    // 6 u32 (24 B); two slots: three 4-byte tables (8 B each), base colours
+    // 6 f32 (24 B), and two style texels (8 B).
     const g = geom(2);
     const stats = cellStatsFromGeometry(g);
     expect(stats.triangles).toBe(2);
-    expect(stats.bytes).toBe(72 + 72 + 24 + 8 + 8 + 8 + 24 + 8);
+    expect(stats.bytes).toBe(72 + 72 + 12 + 24 + 8 + 8 + 8 + 24 + 8);
   });
   it("includes ruleColors bytes when present", () => {
     const g = geom(1, { ruleColors: new Float32Array(3).fill(0) }); // one slot, 12 B

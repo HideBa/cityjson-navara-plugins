@@ -375,7 +375,7 @@ describe("CityModelMesh hidden types", () => {
     expect(m.object3d.geometry).toBe(before);
     // Both the Building and its BuildingPart are gone; the tree remains.
     expect(m.triangleCount()).toBe(2);
-    expect(vertexCount(m)).toBe(18);
+    expect(vertexCount(m)).toBe(12);
 
     m.setHiddenTypes([]);
     expect(m.triangleCount()).toBe(6);
@@ -385,7 +385,7 @@ describe("CityModelMesh hidden types", () => {
   it("starts hidden from the constructor option, with every object built", () => {
     const m = new CityModelMesh({ ...partOpts, hiddenTypes: ["Building"] });
     expect(m.triangleCount()).toBe(2);
-    expect(vertexCount(m)).toBe(18);
+    expect(vertexCount(m)).toBe(12);
     m.dispose();
   });
 
@@ -418,10 +418,10 @@ describe("CityModelMesh hidden types", () => {
     m.setHiddenTypes(["SolitaryVegetationObject"]);
     m.setHiddenTypes([]);
     const colors = drawnColors(m);
-    // Vertices 0-5 are B1's, 12-17 the tree's.
+    // Vertices 0-3 are B1's, 8-11 the tree's.
     expect(colors.getX(0)).toBeGreaterThan(0.5); // highlight orange survived
-    expect(colors.getY(12)).toBeGreaterThan(0.9); // ...and the tree's style
-    expect(m.resolveVertex(12)?.objectId).toBe("T1");
+    expect(colors.getY(8)).toBeGreaterThan(0.9); // ...and the tree's style
+    expect(m.resolveVertex(8)?.objectId).toBe("T1");
     m.dispose();
   });
 
@@ -895,10 +895,11 @@ describe("CityModelMesh setLod skips no-op rebuilds", () => {
     m.setHiddenTypes([]);
     expect(m.triangleCount()).toBe(4);
     // B2 draws its LoD 1 quad (surface 0), never its LoD 0 one (surface 1).
-    const b2 = [0, 3, 6, 9]
-      .map((v) => m.resolveVertex(v))
-      .filter((hit) => hit?.objectId === "B2");
-    expect(b2.map((hit) => hit?.surfaceIndex)).toEqual([0, 0]);
+    const vertices = m.object3d.geometry.getAttribute("position").count;
+    const b2 = Array.from({ length: vertices }, (_, v) =>
+      m.resolveVertex(v),
+    ).filter((hit) => hit?.objectId === "B2");
+    expect(b2.map((hit) => hit?.surfaceIndex)).toEqual([0, 0, 0, 0]);
     m.dispose();
   });
 });

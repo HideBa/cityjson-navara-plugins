@@ -107,6 +107,7 @@ export function cellStatsFromGeometry(
       retainedBytes +
       g.positions.byteLength +
       g.normals.byteLength +
+      g.indices.byteLength +
       g.slots.byteLength +
       g.slotObjects.byteLength +
       g.slotSurfaces.byteLength +

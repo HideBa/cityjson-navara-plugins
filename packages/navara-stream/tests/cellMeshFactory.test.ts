@@ -28,6 +28,7 @@ function entry(withRuleColors: boolean): CellEntry {
     geometry: {
       positions: Float32Array.from([0, 0, 0, 10, 0, 0, 10, 10, 0]),
       normals: new Float32Array(v * 3).fill(0),
+      indices: new Uint16Array(v).map((_, i) => i),
       slots: new Uint32Array(v).fill(0),
       slotObjects: new Uint32Array([0]),
       slotSurfaces: new Uint32Array([2]),

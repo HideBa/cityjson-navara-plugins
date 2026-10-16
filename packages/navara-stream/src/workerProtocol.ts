@@ -25,6 +25,8 @@ export interface CellTexture {
 export interface CellGeometry {
   readonly positions: Float32Array; // 3 per vertex
   readonly normals: Float32Array; // 3 per vertex
+  /** 3 per triangle, into the vertices; indexed per surface. */
+  readonly indices: Uint16Array | Uint32Array;
   readonly slots: Uint32Array; // 1 per vertex
   readonly slotObjects: Uint32Array; // 1 per slot
   readonly slotSurfaces: Uint32Array; // 1 per slot
@@ -36,7 +38,7 @@ export interface CellGeometry {
   /** Per object, its first-level type: what the main thread hides by flag. */
   readonly objectTypes: string[];
   readonly triangleCount: number;
-  /** Under a texture theme only: 2 per vertex, and one vertex range per
+  /** Under a texture theme only: 2 per vertex, and one index range per
    *  image (`buildCityMeshArrays`); `null`/absent otherwise. */
   readonly uvs?: Float32Array | null;
   readonly textureGroups?: ReadonlyArray<TextureGroup> | null;
@@ -269,6 +271,7 @@ export function emptyCellGeometry(): CellGeometry {
   return {
     positions: new Float32Array(0),
     normals: new Float32Array(0),
+    indices: new Uint16Array(0),
     slots: new Uint32Array(0),
     slotObjects: new Uint32Array(0),
     slotSurfaces: new Uint32Array(0),
@@ -286,13 +289,25 @@ export function emptyCellGeometry(): CellGeometry {
 
 /** Throws if a received cell violates the length invariants. */
 export function assertCellGeometry(g: CellGeometry): void {
-  const v = g.triangleCount * 3;
   const check = (name: string, len: number, want: number) => {
     if (len !== want) {
       throw new Error(`cell geometry ${name}: expected ${want}, got ${len}`);
     }
   };
-  check("positions", g.positions.length, v * 3);
+  check("indices", g.indices.length, g.triangleCount * 3);
+  if (g.positions.length % 3 !== 0) {
+    throw new Error(
+      `cell geometry positions: ${g.positions.length} floats is not whole vertices`,
+    );
+  }
+  const v = g.positions.length / 3;
+  for (let i = 0; i < g.indices.length; i++) {
+    if (g.indices[i]! >= v) {
+      throw new Error(
+        `cell geometry positions: index ${g.indices[i]} past the last of ${v} vertices`,
+      );
+    }
+  }
   check("normals", g.normals.length, v * 3);
   check("slots", g.slots.length, v);
   const slotCount = g.slotObjects.length;
@@ -321,6 +336,6 @@ export function assertCellGeometry(g: CellGeometry): void {
       }
       covered += group.count;
     }
-    check("textureGroups coverage", covered, v);
+    check("textureGroups coverage", covered, g.indices.length);
   }
 }

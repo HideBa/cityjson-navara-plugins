@@ -172,12 +172,14 @@ export class ThemeStyleController {
 
   private buildEdges(edges: ThemeEdgeStyle): void {
     const position = this.mesh.geometry.getAttribute("position");
-    // `geometryFromMeshArrays` wraps the build's own Float32Array, so this is
-    // the projected, non-indexed soup `buildCityEdgeSegments` documents.
+    const index = this.mesh.geometry.getIndex();
+    // `geometryFromMeshArrays` wraps the build's own arrays, so these are the
+    // projected vertices and the per-surface index.
     const segments = buildCityEdgeSegments(
       position.array as Float32Array,
       undefined,
       this.isTriangleDrawn,
+      index ? (index.array as Uint16Array | Uint32Array) : undefined,
     );
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new BufferAttribute(segments, 3));

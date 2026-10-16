@@ -26,9 +26,10 @@ import type { CityMeshArrays } from "@cityjson/navara-core";
 import { BufferAttribute, BufferGeometry } from "three";
 
 /**
- * Wrap `arrays` in a non-indexed `BufferGeometry` with the attributes the
+ * Wrap `arrays` in an indexed `BufferGeometry` with the attributes the
  * city material reads: `position`(3), `normal`(3) and `citySlot`(1), plus
- * `uv`(2) under a texture theme. The bounding sphere is computed eagerly
+ * `uv`(2) under a texture theme. The index is the build's own, per surface,
+ * so a hit's `face.a` names a vertex of the hit surface. The bounding sphere is computed eagerly
  * because Navara frustum-culls meshes on the first frame after `addMesh`.
  */
 export function geometryFromMeshArrays(arrays: CityMeshArrays): BufferGeometry {
@@ -36,8 +37,9 @@ export function geometryFromMeshArrays(arrays: CityMeshArrays): BufferGeometry {
   geometry.setAttribute("position", new BufferAttribute(arrays.positions, 3));
   geometry.setAttribute("normal", new BufferAttribute(arrays.normals, 3));
   geometry.setAttribute("citySlot", new BufferAttribute(arrays.slots, 1));
+  geometry.setIndex(new BufferAttribute(arrays.indices, 1));
   // Under a texture theme the build also carries per-vertex UVs and one
-  // vertex range per image; each range becomes a draw group whose material
+  // index range per image; each range becomes a draw group whose material
   // index is its position, matching `buildGroupMaterials`.
   if (arrays.uvs) {
     geometry.setAttribute("uv", new BufferAttribute(arrays.uvs, 2));

@@ -34,13 +34,14 @@ export function hiddenObjectMask(
 
 /** Triangles whose object `hidden` does not mark: what a mesh draws. */
 export function drawnTriangleCount(
+  indices: Uint16Array | Uint32Array,
   slots: Uint32Array,
   slotObjects: Uint32Array,
   hidden: Uint8Array,
 ): number {
   let drawn = 0;
-  for (let v = 0; v < slots.length; v += 3) {
-    if (hidden[slotObjects[slots[v]!]!] !== 1) drawn++;
+  for (let i = 0; i < indices.length; i += 3) {
+    if (hidden[slotObjects[slots[indices[i]!]!]!] !== 1) drawn++;
   }
   return drawn;
 }

@@ -75,6 +75,7 @@ function texturedGeometry(): CellGeometry {
   return {
     positions: new Float32Array(9).fill(1),
     normals: new Float32Array(9).fill(2),
+    indices: Uint16Array.from([0, 1, 2]),
     slots: new Uint32Array(3),
     slotObjects: new Uint32Array(1),
     slotSurfaces: new Uint32Array(1),
