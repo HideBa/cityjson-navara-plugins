@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import proj4 from "proj4";
-import type { WorkerResponse } from "../src/workerProtocol";
+import type { WorkerResponse } from "@cityjson/navara-stream/worker";
 import {
   ensureProjDef,
   enuToEcef,
@@ -22,10 +22,10 @@ import {
   srgbHexToLinear,
 } from "@cityjson/navara-core";
 import type { Rule } from "@cityjson/navara-core";
-import { cellCentre, makeGrid } from "../src/tileGrid";
+import { cellCentre, makeGrid } from "@cityjson/navara-stream";
 // The other side of the placement seam (Task C8): the frame the MAIN THREAD
 // builds for a cell, asserted here against the vertices the worker bakes.
-import { cellFrame } from "../src/cellMeshes";
+import { cellFrame } from "@cityjson/navara-stream";
 
 interface FakeCityJSONFeature {
   toCityJSON: () => {

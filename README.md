@@ -7,8 +7,9 @@ format-agnostic CityJSON domain code they share.
 | ------------------------------ | --------------------------------------------------------- |
 | `@cityjson/navara-core`        | CityJSON types, parsers, geometry building, styling hooks |
 | `@cityjson/navara-cityjson`    | Navara plugin for static CityJSON / CityJSONSeq layers    |
-| `@cityjson/navara-flatcitybuf` | Navara plugin for camera-driven FlatCityBuf streaming     |
-| `@cityjson/navara-cityparquet` | Placeholder, not implemented                              |
+| `@cityjson/navara-stream`      | Navara plugin for camera-driven streaming, any format     |
+| `@cityjson/navara-flatcitybuf` | FlatCityBuf stream source: admission, adapter, worker     |
+| `@cityjson/navara-cityparquet` | CityParquet reader, plus its stream adapter and worker    |
 
 ## Development
 

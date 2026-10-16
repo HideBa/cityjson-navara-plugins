@@ -1,5 +1,5 @@
 /**
- * The whole of the FlatCityBuf plugin's behaviour, with no engine import.
+ * The whole of the stream plugin's behaviour, with no engine import.
  *
  * Same split as `@cityjson/navara-cityjson`'s `CityModelRegistry` /
  * `CityJSONPlugin` (Task B7): everything the Navara engine supplies is
@@ -21,7 +21,7 @@
  *   `idle`) commits every layer once.
  * - **`openStream`**, the old app's `openStreamingLayer.ts` with the store
  *   writes replaced by a handle: worker open -> admission -> CRS gate ->
- *   vertical datum -> grid/cache/frame -> `FcbStreamLayerHandle`.
+ *   vertical datum -> grid/cache/frame -> `StreamLayerHandle`.
  * - **`suppressSettle`**, the single "this camera move is mine, not the
  *   user's" entry point, re-published by the plugin and used by every
  *   programmatic camera move (restore, fitAll, alignView, flyTo).
@@ -45,7 +45,7 @@ import {
   RESIDENT_TRIANGLE_BUDGET,
   SETTLE_MS,
 } from "./constants";
-import type { AdmissionError, FcbHeaderModel } from "./fcbSource";
+import type { AdmissionError, StreamHeader } from "./streamSourceAdapter";
 import { cornerRays, type PickRaySource } from "./navaraRays";
 import {
   attachSettleController,
@@ -55,7 +55,7 @@ import {
   type SettleController,
   type TimerApi,
 } from "./settleController";
-import { FcbStreamLayerHandle, type CellEntry } from "./streamLayer";
+import { StreamLayerHandle, type CellEntry } from "./streamLayer";
 import { createLayerTextures } from "./layerTextures";
 import type { TextureCache, TextureSource } from "@cityjson/navara-cityjson";
 import { resolveCityColors, type CityColors } from "@cityjson/navara-cityjson";
@@ -128,8 +128,8 @@ export interface StreamLayerRegistryDeps {
 export interface OpenStreamOptions {
   readonly id: string;
   readonly source: StreamSource;
-  /** Which worker reads `source`. Omitted means `"flatcitybuf"`. */
-  readonly format?: WorkerFormat;
+  /** Which worker reads `source`: a key of the plugin's `workers`. */
+  readonly format: WorkerFormat;
   readonly rules?: ReadonlyArray<Rule>;
   readonly rulesEnabled?: boolean;
   readonly visible?: boolean;
@@ -192,7 +192,7 @@ interface Georeference {
  * and no frame — states nothing about where its extent is and is refused with
  * the same message an unknown code gets.
  */
-function georeference(layerId: string, header: FcbHeaderModel): Georeference {
+function georeference(layerId: string, header: StreamHeader): Georeference {
   const epsg = header.epsg;
   if (epsg !== null) {
     if (!ensureProjDef(epsg)) {
@@ -447,20 +447,20 @@ export class StreamLayerRegistry {
    * the way out — nothing else would ever terminate it, so it would otherwise
    * leak for the lifetime of the tab.
    */
-  async openStream(opts: OpenStreamOptions): Promise<FcbStreamLayerHandle> {
+  async openStream(opts: OpenStreamOptions): Promise<StreamLayerHandle> {
     if (this.disposed) {
       // Not merely tidy: a layer opened here would spin up a worker that
       // `dispose` has already stopped being able to reach.
       throw new Error(
-        `FlatCityBufPlugin.openStream("${opts.id}") after dispose().`,
+        `CityStreamPlugin.openStream("${opts.id}") after dispose().`,
       );
     }
     if (this.layers.has(opts.id)) {
       throw new Error(
-        `FlatCityBufPlugin.openStream: a layer with id "${opts.id}" is already registered. Remove it first — otherwise its worker would be unreachable and never terminated.`,
+        `CityStreamPlugin.openStream: a layer with id "${opts.id}" is already registered. Remove it first — otherwise its worker would be unreachable and never terminated.`,
       );
     }
-    const client = this.deps.createClient(opts.format ?? "flatcitybuf");
+    const client = this.deps.createClient(opts.format);
     // Once per stream, before the worker opens: the worker needs the palette
     // in its `open`, the handle needs the highlight pair.
     const colors = resolveCityColors(this.deps.colors, opts.colors);
@@ -513,7 +513,7 @@ export class StreamLayerRegistry {
         source: this.deps.createTextureSource?.(),
         warn: (message) => console.warn(`[stream:${opts.id}] ${message}`),
       });
-      const handle: FcbStreamLayerHandle = new FcbStreamLayerHandle({
+      const handle: StreamLayerHandle = new StreamLayerHandle({
         id: opts.id,
         client,
         textures,
@@ -666,7 +666,7 @@ export class StreamLayerRegistry {
     opts: OpenStreamOptions,
     heightOffset: number | undefined,
     surfaceColors: SurfacePalette | undefined,
-  ): Promise<FcbHeaderModel> {
+  ): Promise<StreamHeader> {
     const resp = await client.send({
       type: "open",
       source: opts.source,
@@ -687,7 +687,7 @@ export class StreamLayerRegistry {
     // sent — not an unchecked assumption about foreign data.
     const admission = resp.admission as AdmissionError | null;
     if (admission) throw new Error(admission.message);
-    return resp.header as FcbHeaderModel;
+    return resp.header as StreamHeader;
   }
 
   /** Put a layer under the settle loop. Public so a host can drive a layer it

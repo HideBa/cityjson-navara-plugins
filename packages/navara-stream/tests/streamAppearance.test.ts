@@ -12,13 +12,13 @@ import {
   type TextureSource,
 } from "@cityjson/navara-cityjson";
 import { Texture } from "three";
-import { FcbStreamLayerHandle, type CellEntry } from "../src/streamLayer";
+import { StreamLayerHandle, type CellEntry } from "../src/streamLayer";
 import { CellCache } from "../src/cellCache";
 import { planCommit, type PlanCommitInput } from "../src/commitPlanner";
 import { createLayerTextures } from "../src/layerTextures";
 import type { CellMeshFactory } from "../src/cellMeshes";
 import type { Grid } from "../src/tileGrid";
-import type { FcbHeaderModel } from "../src/fcbSource";
+import type { StreamHeader } from "../src/streamSourceAdapter";
 import { viewportFootprint, type Ray } from "../src/viewportFootprint";
 import { enuToEcef } from "@cityjson/navara-core";
 import type { WorkerClient } from "../src/workerClient";
@@ -30,7 +30,7 @@ import {
 
 const FRAME = makeEnuFrame(4.3571, 52.0116, 0);
 const GRID: Grid = { originX: -5000, originY: -5000, rootCell: 10000, maxLevel: 8 };
-const HEADER: FcbHeaderModel = {
+const HEADER: StreamHeader = {
   version: "1.0",
   featuresCount: 100,
   extent: [-5000, -5000, 0, 5000, 5000, 50],
@@ -180,7 +180,7 @@ function makeHandle(opts: { onCommitNeeded?: () => void } = {}) {
     source,
   });
   const meshes = recordingFactory(textures.cache);
-  const handle = new FcbStreamLayerHandle({
+  const handle = new StreamLayerHandle({
     id: "l1",
     client,
     grid: GRID,
@@ -243,7 +243,7 @@ describe("planCommit appearance", () => {
   });
 });
 
-describe("FcbStreamLayerHandle appearance", () => {
+describe("StreamLayerHandle appearance", () => {
   it("setAppearance forces a commit and the fetch carries the theme", async () => {
     const onCommitNeeded = vi.fn();
     const { handle, fetches } = makeHandle({ onCommitNeeded });

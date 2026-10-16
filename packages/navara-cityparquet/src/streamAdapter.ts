@@ -12,15 +12,17 @@
  * Engine-free: no `@navaramap/*` imports.
  */
 import {
-  AdmissionRefusedError,
   asyncBufferFromBlob,
   asyncBufferFromHttp,
-  openCityParquetStream,
   RangeNotSupportedError,
-  type CityParquetStream,
   type RangeBuffer,
+} from "./rangeSource";
+import {
+  AdmissionRefusedError,
+  openCityParquetStream,
+  type CityParquetStream,
   type ReadBatch,
-} from "@cityjson/navara-cityparquet";
+} from "./streamReader";
 import {
   localMetricFrameFromDescriptor,
   mergeBBox,
@@ -34,9 +36,9 @@ import type {
   OpenedSource,
   OpenRequest,
   StreamHeader,
+  StreamSource,
   StreamSourceAdapter,
-} from "./streamSourceAdapter";
-import type { StreamSource } from "./workerProtocol";
+} from "@cityjson/navara-stream/worker";
 
 /** A fetch whose query box would read more rows than this (hits plus merge
  *  gaps, `FamilyIndex.readCost`) is refused before anything is read. A fetch

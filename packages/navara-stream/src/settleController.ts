@@ -48,7 +48,7 @@
  * every programmatic camera move (camera restore, share link, `fitAll`,
  * `fitLayer`, `alignView`, `flyTo`) goes through them so it cannot masquerade
  * as a user gesture. Task C11 re-publishes them as
- * `FlatCityBufPlugin.suppressSettle`; Task C13 wraps `NavaraViewport`'s camera
+ * `CityStreamPlugin.suppressSettle`; Task C13 wraps `NavaraViewport`'s camera
  * methods in that.
  *
  * Engine-free by construction (Task B1's NODE_IMPORT_SAFE = false rule): the
@@ -84,7 +84,7 @@ export interface SettleController {
    *  `quietMs` after it returns (default `settleMs`). */
   suppress<T>(fn: () => T, quietMs?: number): T;
   /** Same, but the gate is held until `promise` settles — the shape an
-   *  animated `flyTo` needs, and what `FlatCityBufPlugin.suppressSettle`
+   *  animated `flyTo` needs, and what `CityStreamPlugin.suppressSettle`
    *  (Task C11) is built on. */
   suppressUntil(promise: Promise<unknown>, quietMs?: number): void;
   dispose(): void;

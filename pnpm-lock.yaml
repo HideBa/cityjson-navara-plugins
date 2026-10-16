@@ -66,6 +66,9 @@ importers:
       '@cityjson/navara-core':
         specifier: file:../navara-core
         version: link:../navara-core
+      '@cityjson/navara-stream':
+        specifier: file:../navara-stream
+        version: link:../navara-stream
       hyparquet-compressors:
         specifier: 1.1.1
         version: 1.1.1
@@ -109,12 +112,34 @@ importers:
       '@cityjson/flatcitybuf':
         specifier: ^0.3.0
         version: 0.3.0
+      '@cityjson/navara-core':
+        specifier: file:../navara-core
+        version: link:../navara-core
+      '@cityjson/navara-stream':
+        specifier: file:../navara-stream
+        version: link:../navara-stream
+    devDependencies:
+      proj4:
+        specifier: 2.21.0
+        version: 2.21.0
+      three:
+        specifier: 0.183.2
+        version: 0.183.2
+      tsup:
+        specifier: 8.5.1
+        version: 8.5.1(postcss@8.5.25)(typescript@6.0.3)
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@26.2.0)(vite@7.3.6(@types/node@26.2.0))
+
+  packages/navara-stream:
+    dependencies:
       '@cityjson/navara-cityjson':
         specifier: file:../navara-cityjson
         version: link:../navara-cityjson
-      '@cityjson/navara-cityparquet':
-        specifier: file:../navara-cityparquet
-        version: link:../navara-cityparquet
       '@cityjson/navara-core':
         specifier: file:../navara-core
         version: link:../navara-core

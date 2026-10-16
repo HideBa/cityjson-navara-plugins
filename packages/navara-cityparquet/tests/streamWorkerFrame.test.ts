@@ -42,20 +42,20 @@ import {
   type ReadBatch,
 } from "@cityjson/navara-cityparquet";
 import proj4 from "proj4";
-import { cellFrame } from "../src/cellMeshes";
+import { cellFrame } from "@cityjson/navara-stream";
 import {
   createCityParquetSourceAdapter,
   familyModels,
-} from "../src/cityParquetSourceAdapter";
-import { installStreamWorker } from "../src/streamWorkerCore";
+} from "../src/streamAdapter";
+import { installStreamWorker } from "@cityjson/navara-stream/worker";
 import type {
   OpenedSource,
   OpenRequest,
   StreamHeader,
   StreamSourceAdapter,
-} from "../src/streamSourceAdapter";
-import { keysCovering, makeGrid, type Grid } from "../src/tileGrid";
-import type { WorkerRequest, WorkerResponse } from "../src/workerProtocol";
+} from "@cityjson/navara-stream/worker";
+import { keysCovering, makeGrid, type Grid } from "@cityjson/navara-stream";
+import type { WorkerRequest, WorkerResponse } from "@cityjson/navara-stream/worker";
 
 /** Calls of the proj4 FACTORY: no converter, no per-vertex `forward`. */
 const proj4Calls = vi.hoisted(() => ({ count: 0 }));

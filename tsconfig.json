@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/navara-core" },
     { "path": "./packages/navara-cityjson" },
+    { "path": "./packages/navara-stream" },
     { "path": "./packages/navara-flatcitybuf" },
     { "path": "./packages/navara-cityparquet" }
   ]

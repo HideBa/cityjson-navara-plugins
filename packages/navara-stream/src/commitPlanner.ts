@@ -84,7 +84,7 @@ export function ladderEquals(
 }
 
 /** Order-and-content equality for two hidden-type lists. Both sides come from
- *  `FcbStreamLayerHandle`, which normalises (sorts and dedups) every list it
+ *  `StreamLayerHandle`, which normalises (sorts and dedups) every list it
  *  accepts, so a positional compare is exact. */
 export function hiddenTypesEqual(
   a: ReadonlyArray<string>,

@@ -11,7 +11,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   assertCellGeometry,
   type WorkerResponse,
-} from "../src/workerProtocol";
+} from "@cityjson/navara-stream/worker";
 
 interface FakeCityJSONFeature {
   toCityJSON: () => {

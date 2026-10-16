@@ -1,73 +1,12 @@
 /**
- * @cityjson/navara-flatcitybuf — Navara plugin for camera-driven FlatCityBuf
- * streaming.
+ * @cityjson/navara-flatcitybuf — FlatCityBuf as a source for
+ * `@cityjson/navara-stream`: the header admission rules, the source adapter
+ * its worker runs, and the factory that starts that worker.
  *
- * This barrel is engine-free and Node-importable: everything exported here is
- * pure TypeScript over plain data (tile arithmetic, cache budgets, hysteresis,
- * feature bucketing, worker message shapes, FCB header admission) plus
- * `WorkerClient`, which only touches the DOM `Worker` constructor from inside
- * its own constructor, and `StreamLayerRegistry`, whose engine seams are all
- * injected.
- *
- * The engine-bound half — `FlatCityBufPlugin` and the `getPickRay` binding —
- * lives behind the `./plugin` entry point, exactly as
- * `@cityjson/navara-cityjson/plugin` does; see Task B1's
- * NODE_IMPORT_SAFE = false verdict.
- *
- * `./fcb.worker.ts` and `./cityparquet.worker.ts` are deliberately NOT
- * re-exported: each is a worker entry point whose module scope installs an
- * `onmessage` handler, and each is reached only through `WorkerClient`'s
- * `new Worker(new URL(...))`.
+ * Engine-free and Node-importable. `./fcb.worker.ts` is deliberately NOT
+ * re-exported: it is a worker entry whose module scope installs an
+ * `onmessage` handler, reached only through {@link createFlatCityBufWorker}.
  */
-import { NAVARA_CORE_VERSION } from "@cityjson/navara-core";
-
-export const FLATCITYBUF_PLUGIN_PLACEHOLDER = `@cityjson/navara-flatcitybuf (core ${NAVARA_CORE_VERSION})`;
-
-export * from "./constants";
-export * from "./tileGrid";
-export * from "./cellCache";
-export * from "./levelPolicy";
-export * from "./throttleGates";
-export * from "./bucketFeatures";
-export * from "./objectRecords";
-export * from "./workerProtocol";
-export * from "./workerClient";
-// AdmissionCode / AdmissionError already come through `./fcbSource`.
-export type {
-  OpenedSource,
-  StreamHeader,
-  StreamSourceAdapter,
-} from "./streamSourceAdapter";
-export * from "./fcbSource";
-// The CityParquet adapter is engine-free too; the app reads its per-fetch
-// budget for the "zoom in" message.
-export {
-  bakeLodSelection,
-  createCityParquetSourceAdapter,
-  MAX_FETCH_READ_BYTES,
-  MAX_FETCH_READ_ROWS,
-  type CityParquetSourceAdapterOptions,
-} from "./cityParquetSourceAdapter";
-export * from "./viewportFootprint";
-export * from "./queryRegion";
-export * from "./streamLayer";
-export * from "./streamRegistry";
-export * from "./residentModel";
-export * from "./commitPlanner";
-export * from "./settleController";
-export * from "./cellMeshes";
-export * from "./cellMeshFactory";
-export * from "./entryToArrays";
-export * from "./layerTextures";
-// The ray *adapter* is engine-free and belongs here; the binding that supplies
-// Navara's real `getPickRay` (`./engineRays`) does NOT, and is re-exported from
-// the `./plugin` entry point instead (Task C11).
-export * from "./navaraRays";
-
-// Re-exported rather than redeclared: `FcbStreamLayerHandle.setThemeStyle`
-// takes exactly the type `CityModelHandle.setThemeStyle` does, and an app
-// holding both kinds of layer must be able to push ONE style object to both.
-// The definition lives in `@cityjson/navara-cityjson/themeStyle`, which takes
-// `three` but never `@navaramap/*`, so this barrel stays Node-importable.
-export type { ThemeEdgeStyle, ThemeStyle } from "@cityjson/navara-cityjson";
-export { DEFAULT_THEME_STYLE } from "@cityjson/navara-cityjson";
+export { checkAdmission, headerModel, openFcb } from "./fcbSource";
+export { createFcbSourceAdapter } from "./fcbSourceAdapter";
+export { createFlatCityBufWorker } from "./createWorker";

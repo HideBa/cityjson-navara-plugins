@@ -6,11 +6,7 @@
  * newer request was issued.
  */
 import { assertCellGeometry } from "./workerProtocol";
-import type {
-  WorkerFormat,
-  WorkerRequest,
-  WorkerResponse,
-} from "./workerProtocol";
+import type { WorkerRequest, WorkerResponse } from "./workerProtocol";
 
 /**
  * `Omit<WorkerRequest, "id">` does NOT do what it looks like it does: `Omit`
@@ -48,23 +44,15 @@ export class WorkerClient {
   private nextId = 0;
   private epoch = 0;
 
-  constructor(format: WorkerFormat = "flatcitybuf") {
-    // URL form + Vite config validated by the Task C4b bundling spike (dev and
-    // production preview): with this package consumed through the app's source
-    // alias, Vite resolves the specifier relative to THIS module's real path
-    // inside the submodule and emits the worker chunk with no config changes.
-    // (tsup does not emit workers, so a published-dist consumer would need a
-    // different packaging — recorded in the C4b findings, not needed here.)
-    // One literal `new Worker(new URL(...))` per format: Vite only rewrites a
-    // literal specifier into a worker chunk, so the URL cannot be computed.
-    this.worker =
-      format === "cityparquet"
-        ? new Worker(new URL("./cityparquet.worker.ts", import.meta.url), {
-            type: "module",
-          })
-        : new Worker(new URL("./fcb.worker.ts", import.meta.url), {
-            type: "module",
-          });
+  /**
+   * `worker` is a started stream worker, built by its format package's
+   * factory (`createFlatCityBufWorker`, `createCityParquetWorker`): Vite
+   * only rewrites a LITERAL `new Worker(new URL(...))` into a worker chunk,
+   * so the literal lives next to the worker entry it names, and this package
+   * never learns which formats exist.
+   */
+  constructor(worker: Worker) {
+    this.worker = worker;
     this.worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
       const stream = this.streaming.get(ev.data.id);
       if (stream) {
@@ -103,7 +91,7 @@ export class WorkerClient {
   /**
    * Genuinely fire-and-forget: registers NO pending entry, so there is
    * nothing for it to leak. Only for a request the worker never
-   * acknowledges — `evict`/`cancel`/`close` (see fcb.worker.ts's handlers
+   * acknowledges — `evict`/`cancel`/`close` (see `streamWorkerCore`'s handlers
    * for those three, none of which ever `post()`s a response) — and that no
    * caller reads a return value from. Using `send()` for these instead (as
    * this module originally did) permanently retains a `pending` entry per

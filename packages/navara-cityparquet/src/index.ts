@@ -76,3 +76,15 @@ export type {
   StreamRow,
 } from "./streamReader";
 export { AdmissionRefusedError, openCityParquetStream } from "./streamReader";
+
+// Streaming: the source adapter `@cityjson/navara-stream`'s worker core runs
+// over, and the factory that starts that worker. The app reads the per-fetch
+// budget for the "zoom in" message.
+export {
+  bakeLodSelection,
+  createCityParquetSourceAdapter,
+  MAX_FETCH_READ_BYTES,
+  MAX_FETCH_READ_ROWS,
+  type CityParquetSourceAdapterOptions,
+} from "./streamAdapter";
+export { createCityParquetWorker } from "./createStreamWorker";

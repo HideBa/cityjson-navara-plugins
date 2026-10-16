@@ -1,21 +1,19 @@
 {
   "name": "@cityjson/navara-flatcitybuf",
   "version": "0.0.0",
-  "description": "Navara plugin streaming FlatCityBuf city models by camera footprint",
+  "description": "FlatCityBuf source for @cityjson/navara-stream: admission, adapter, worker",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./plugin": {
-      "types": "./dist/plugin.d.ts",
-      "import": "./dist/plugin.js"
     },
     "./package.json": "./package.json"
   },
@@ -25,21 +23,14 @@
   },
   "dependencies": {
     "@cityjson/navara-core": "file:../navara-core",
-    "@cityjson/navara-cityjson": "file:../navara-cityjson",
-    "@cityjson/navara-cityparquet": "file:../navara-cityparquet",
+    "@cityjson/navara-stream": "file:../navara-stream",
     "@cityjson/flatcitybuf": "^0.3.0"
   },
   "peerDependencies": {
-    "@navaramap/three": "0.2.1",
-    "@navaramap/three-default-plugin": "0.2.1",
-    "proj4": ">=2.20.0",
-    "three": ">=0.183.0"
+    "proj4": ">=2.20.0"
   },
   "devDependencies": {
-    "@navaramap/three": "0.2.1",
-    "@types/three": "0.183.1",
     "proj4": "2.21.0",
-    "@navaramap/three-default-plugin": "0.2.1",
     "three": "0.183.2",
     "tsup": "8.5.1",
     "typescript": "6.0.3",

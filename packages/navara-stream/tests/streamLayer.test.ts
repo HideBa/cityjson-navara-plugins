@@ -1,5 +1,5 @@
 /**
- * Tasks C10a/C10b: `FcbStreamLayerHandle`'s commit loop, and the recolor /
+ * Tasks C10a/C10b: `StreamLayerHandle`'s commit loop, and the recolor /
  * LoD / interaction-parity surface built on top of it.
  *
  * These are the driver-level regressions from the app's
@@ -36,7 +36,7 @@ import {
   type ThemeStyle,
 } from "@cityjson/navara-cityjson";
 import {
-  FcbStreamLayerHandle,
+  StreamLayerHandle,
   type CellEntry,
   type StreamStatus,
 } from "../src/streamLayer";
@@ -45,7 +45,7 @@ import { entryToArrays } from "../src/entryToArrays";
 import type { CellMeshFactory } from "../src/cellMeshes";
 import { keysCovering, type CellKey, type Grid } from "../src/tileGrid";
 import { chooseLevel } from "../src/levelPolicy";
-import type { FcbHeaderModel } from "../src/fcbSource";
+import type { StreamHeader } from "../src/streamSourceAdapter";
 import { viewportFootprint, type Ray } from "../src/viewportFootprint";
 import type { PickRaySource } from "../src/navaraRays";
 import type { WorkerClient } from "../src/workerClient";
@@ -67,7 +67,7 @@ const GRID: Grid = {
   rootCell: 10000,
   maxLevel: 8,
 };
-const HEADER: FcbHeaderModel = {
+const HEADER: StreamHeader = {
   version: "1.0",
   featuresCount: 100,
   extent: [-5000, -5000, 0, 5000, 5000, 50],
@@ -541,7 +541,7 @@ function makeHandle(
 ) {
   const fake = makeFakeClient(opts);
   const meshes = recordingFactory();
-  const handle = new FcbStreamLayerHandle({
+  const handle = new StreamLayerHandle({
     id: "l1",
     client: fake.client,
     grid: GRID,
@@ -568,7 +568,7 @@ function makeHandle(
  *  round trip `setRules`/`syncMeshes` kick off. */
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-describe("FcbStreamLayerHandle.commit", () => {
+describe("StreamLayerHandle.commit", () => {
   it("backfills a zero-triangle entry for a requested cell the worker found empty, so it counts as resident (B5)", async () => {
     const { handle, client } = makeHandle({ emptyCellIndices: [0] });
     await handle.commit(topDownRays());
@@ -907,7 +907,7 @@ describe("FcbStreamLayerHandle.commit", () => {
 // for?", published so a UI can draw it without recomputing it.
 // ---------------------------------------------------------------------
 
-describe("FcbStreamLayerHandle.onQueryRegion", () => {
+describe("StreamLayerHandle.onQueryRegion", () => {
   it("publishes exactly the bbox the fetch put on the wire", async () => {
     const { handle, client } = makeHandle({});
     const seen: Array<unknown> = [];
@@ -1031,7 +1031,7 @@ const rendered = (rec: { colors: Float32Array | null }): number[] => [
  *  resident (`commitNormal` never evicts outside the cover). */
 const pannedRays = () => raysFrom(500, 400, 600, 0);
 
-describe("FcbStreamLayerHandle rules and LoD", () => {
+describe("StreamLayerHandle rules and LoD", () => {
   it("stamps every cached entry — real AND backfilled — with the rules active at dispatch time (B2)", async () => {
     const { handle } = makeHandle({ emptyCellIndices: [0] });
     handle.setRules([RULE_G], true);
@@ -1221,7 +1221,7 @@ describe("FcbStreamLayerHandle rules and LoD", () => {
   });
 });
 
-describe("FcbStreamLayerHandle.setCameraSync", () => {
+describe("StreamLayerHandle.setCameraSync", () => {
   it("fetches nothing once sync is off — not even a probe — and keeps the resident set", async () => {
     const { handle, client } = makeHandle({});
     await handle.commit(topDownRays());
@@ -1277,7 +1277,7 @@ describe("FcbStreamLayerHandle.setCameraSync", () => {
   });
 });
 
-describe("FcbStreamLayerHandle interaction parity", () => {
+describe("StreamLayerHandle interaction parity", () => {
   it("triangleCount sums the RESIDENT cells, so the status bar is non-zero for an FCB-only workspace", async () => {
     const factory = pickingFactory();
     const { handle } = makeHandle({ meshFactory: factory.factory });
@@ -1661,7 +1661,7 @@ describe("FcbStreamLayerHandle interaction parity", () => {
   });
 });
 
-describe("FcbStreamLayerHandle lifecycle", () => {
+describe("StreamLayerHandle lifecycle", () => {
   it("getResidentModel is memoised per commit version", async () => {
     const { handle } = makeHandle({ meshFactory: pickingFactory().factory });
     await handle.commit(topDownRays());
@@ -1742,7 +1742,7 @@ describe("FcbStreamLayerHandle lifecycle", () => {
  * Per-layer type visibility. Geometry is baked in the worker, so a toggle is a
  * REFETCH, not a recolor — the `setLod` template, not the `setRules` one.
  */
-describe("FcbStreamLayerHandle.setHiddenTypes", () => {
+describe("StreamLayerHandle.setHiddenTypes", () => {
   it("puts the hidden types on the wire and refetches the whole cover as a swap", async () => {
     const { handle, client } = makeHandle({});
     await handle.commit(topDownRays());
@@ -1805,7 +1805,7 @@ describe("FcbStreamLayerHandle.setHiddenTypes", () => {
   });
 });
 
-describe("FcbStreamLayerHandle.onTypes", () => {
+describe("StreamLayerHandle.onTypes", () => {
   it("unions the first-level types across commits and fires only on growth", async () => {
     // `lodsSeen` makes the SECOND commit a real fetch (the ladder learned in
     // commit 1 changes the auto LoD selection, which is a swap) rather than a
@@ -1849,7 +1849,7 @@ describe("FcbStreamLayerHandle.onTypes", () => {
  * `@cityjson/navara-cityjson` and is asserted there; what only this class can
  * break is REACH — every resident cell, and every cell that lands afterwards.
  */
-describe("FcbStreamLayerHandle.setThemeStyle", () => {
+describe("StreamLayerHandle.setThemeStyle", () => {
   const CYBER: ThemeStyle = {
     fill: "tint",
     tintRGB: [0.06, 0.07, 0.12],

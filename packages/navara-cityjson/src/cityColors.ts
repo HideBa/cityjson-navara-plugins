@@ -7,7 +7,7 @@
  *
  * Three colours the plugins used to hard-code — the selection highlight, the
  * hover tint and the semantic surface palette — now arrive through
- * `CityJSONPluginOptions.colors` / `FlatCityBufPluginOptions.colors`
+ * `CityJSONPluginOptions.colors` / `CityStreamPluginOptions.colors`
  * (a per-plugin default) and `AddCityModelOptions.colors` /
  * `OpenStreamOptions.colors` (a per-layer override), so a host's brand
  * never has to be edited into this package. Omitting everything keeps the

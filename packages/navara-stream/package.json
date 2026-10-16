@@ -1,0 +1,52 @@
+{
+  "name": "@cityjson/navara-stream",
+  "version": "0.0.0",
+  "description": "Navara plugin streaming city models by camera footprint, format-agnostic",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "import": "./dist/plugin.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run --dir tests"
+  },
+  "dependencies": {
+    "@cityjson/navara-core": "file:../navara-core",
+    "@cityjson/navara-cityjson": "file:../navara-cityjson"
+  },
+  "peerDependencies": {
+    "@navaramap/three": "0.2.1",
+    "@navaramap/three-default-plugin": "0.2.1",
+    "proj4": ">=2.20.0",
+    "three": ">=0.183.0"
+  },
+  "devDependencies": {
+    "@navaramap/three": "0.2.1",
+    "@types/three": "0.183.1",
+    "proj4": "2.21.0",
+    "@navaramap/three-default-plugin": "0.2.1",
+    "three": "0.183.2",
+    "tsup": "8.5.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}

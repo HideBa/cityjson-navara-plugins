@@ -85,9 +85,10 @@ export interface ResidentObjectRecord {
   readonly children: ReadonlyArray<string>;
 }
 
-/** Which worker entry a stream runs in: each format has its own worker chunk,
- *  both speaking this protocol. */
-export type WorkerFormat = "flatcitybuf" | "cityparquet";
+/** Which worker a stream runs in: the id the host registered a worker factory
+ *  under (`CityStreamPluginOptions.workers`). Each format package ships its
+ *  own worker entry, all speaking this protocol; this package names none. */
+export type WorkerFormat = string;
 
 /**
  * What a stream reads from: one remote file, one local file, or a set of

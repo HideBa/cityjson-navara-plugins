@@ -26,9 +26,9 @@ import { checkAdmission, headerModel, openFcb } from "./fcbSource";
 import type {
   OpenedSource,
   OpenRequest,
+  StreamSource,
   StreamSourceAdapter,
-} from "./streamSourceAdapter";
-import type { StreamSource } from "./workerProtocol";
+} from "@cityjson/navara-stream/worker";
 
 /** The one file a FlatCityBuf stream reads: a single url or blob, or a list
  *  of exactly one; `null` for a list of several (a `.fcb` is one file). */

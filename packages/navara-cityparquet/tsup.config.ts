@@ -39,5 +39,7 @@ export default defineConfig({
     "@navaramap/three-default-plugin",
     "three",
     "@cityjson/navara-core",
+    "@cityjson/navara-stream",
+    "@cityjson/navara-stream/worker",
   ],
 });

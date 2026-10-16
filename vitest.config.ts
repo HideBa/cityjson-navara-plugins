@@ -14,6 +14,13 @@ export default defineConfig({
     alias: {
       "@cityjson/navara-core": pkg("navara-core"),
       "@cityjson/navara-cityjson": pkg("navara-cityjson"),
+      // The subpath first: an alias is a prefix match, so the bare entry would
+      // otherwise rewrite "@cityjson/navara-stream/worker" to ".../index.ts/worker".
+      "@cityjson/navara-stream/worker": resolve(
+        import.meta.dirname,
+        "packages/navara-stream/src/worker.ts",
+      ),
+      "@cityjson/navara-stream": pkg("navara-stream"),
       "@cityjson/navara-flatcitybuf": pkg("navara-flatcitybuf"),
       "@cityjson/navara-cityparquet": pkg("navara-cityparquet"),
     },

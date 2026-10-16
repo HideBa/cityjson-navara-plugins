@@ -21,9 +21,9 @@ import {
   familyModels,
   MAX_FETCH_READ_BYTES,
   MAX_FETCH_READ_ROWS,
-} from "../src/cityParquetSourceAdapter";
-import type { OpenRequest } from "../src/streamSourceAdapter";
-import type { StreamSource } from "../src/workerProtocol";
+} from "../src/streamAdapter";
+import type { OpenRequest } from "@cityjson/navara-stream/worker";
+import type { StreamSource } from "@cityjson/navara-stream/worker";
 
 async function fixtureBytes(dir: string): Promise<Uint8Array<ArrayBuffer>> {
   const file = await readFile(

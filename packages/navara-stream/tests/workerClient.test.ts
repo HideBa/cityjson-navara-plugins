@@ -136,28 +136,21 @@ function sentId(worker: FakeWorker, callIndex = 0): number {
   return call[0].id;
 }
 
+/** A client over a fresh fake worker, which {@link currentWorker} returns. */
+function newClient(): WorkerClient {
+  return new WorkerClient(new FakeWorker("fake://worker") as unknown as Worker);
+}
+
 describe("WorkerClient", () => {
-  it("defaults to the FlatCityBuf worker entry", () => {
-    new WorkerClient();
-    expect(String(currentWorker().url)).toMatch(/\/fcb\.worker\.ts$/);
-    expect(currentWorker().options).toEqual({ type: "module" });
-  });
-
-  it("constructs the CityParquet worker entry for the cityparquet format", () => {
-    new WorkerClient("cityparquet");
-    expect(String(currentWorker().url)).toMatch(
-      /\/cityparquet\.worker\.ts$/,
-    );
-    expect(currentWorker().options).toEqual({ type: "module" });
-  });
-
-  it("constructs the FlatCityBuf worker entry for the flatcitybuf format", () => {
-    new WorkerClient("flatcitybuf");
-    expect(String(currentWorker().url)).toMatch(/\/fcb\.worker\.ts$/);
+  it("drives the worker it is handed", () => {
+    const worker = new FakeWorker("fake://worker");
+    const client = new WorkerClient(worker as unknown as Worker);
+    client.notify({ type: "cancel" });
+    expect(worker.postMessage).toHaveBeenCalledTimes(1);
   });
 
   it("send() resolves the promise matching the dispatched id", async () => {
-    const client = new WorkerClient();
+    const client = newClient();
     const worker = currentWorker();
     const promise = client.send({ type: "probe", bbox: [0, 0, 1, 1] });
     const id = sentId(worker);
@@ -168,7 +161,7 @@ describe("WorkerClient", () => {
   });
 
   it("routes concurrent send() responses to the correct caller regardless of arrival order", async () => {
-    const client = new WorkerClient();
+    const client = newClient();
     const worker = currentWorker();
     const p1 = client.send({ type: "probe", bbox: [0, 0, 1, 1] });
     const p2 = client.send({ type: "probe", bbox: [1, 1, 2, 2] });
@@ -186,7 +179,7 @@ describe("WorkerClient", () => {
   });
 
   it("sendStreaming() delivers every cell before resolving on done — not just the first", async () => {
-    const client = new WorkerClient();
+    const client = newClient();
     const worker = currentWorker();
     const received: WorkerResponse[] = [];
     const done = client.sendStreaming(
@@ -234,7 +227,7 @@ describe("WorkerClient", () => {
   });
 
   it("sendStreaming() resolves on an error response too, not only on done", async () => {
-    const client = new WorkerClient();
+    const client = newClient();
     const worker = currentWorker();
     const received: WorkerResponse[] = [];
     const done = client.sendStreaming({ type: "evict", cells: [] }, (r) =>
@@ -249,7 +242,7 @@ describe("WorkerClient", () => {
   });
 
   it("validates each streamed cell's geometry on receipt and throws on a malformed one", () => {
-    const client = new WorkerClient();
+    const client = newClient();
     const worker = currentWorker();
     // Not awaited: this test asserts the *synchronous* throw on receipt of a
     // malformed cell, which happens before the streaming promise ever
@@ -285,7 +278,7 @@ describe("WorkerClient", () => {
   });
 
   it("newEpoch()/isCurrent() track the most recently started epoch", () => {
-    const client = new WorkerClient();
+    const client = newClient();
     const e1 = client.newEpoch();
     expect(client.isCurrent(e1)).toBe(true);
     const e2 = client.newEpoch();
@@ -294,7 +287,7 @@ describe("WorkerClient", () => {
   });
 
   it("terminate() tears down the underlying worker and REJECTS pending calls, rather than leaking them", async () => {
-    const client = new WorkerClient();
+    const client = newClient();
     const worker = currentWorker();
     const promise = client.send({ type: "probe", bbox: [0, 0, 1, 1] });
     const id = sentId(worker);
@@ -312,7 +305,7 @@ describe("WorkerClient", () => {
   });
 
   it("notify() posts the message but returns void — nothing for a caller to await, unlike send()", () => {
-    const client = new WorkerClient();
+    const client = newClient();
     const worker = currentWorker();
     const result = client.notify({ type: "cancel" });
     expect(result).toBeUndefined();
@@ -321,7 +314,7 @@ describe("WorkerClient", () => {
   });
 
   it("notify() registers no pending entry — terminate() afterwards has nothing to reject", async () => {
-    const client = new WorkerClient();
+    const client = newClient();
     client.notify({ type: "cancel" });
     client.notify({ type: "evict", cells: ["0/0/0"] });
     client.notify({ type: "close" });
@@ -342,7 +335,7 @@ describe("WorkerClient", () => {
   });
 
   it("terminate() rejects an in-flight sendStreaming() promise too", async () => {
-    const client = new WorkerClient();
+    const client = newClient();
     const received: WorkerResponse[] = [];
     const done = client.sendStreaming({ type: "evict", cells: [] }, (r) =>
       received.push(r),

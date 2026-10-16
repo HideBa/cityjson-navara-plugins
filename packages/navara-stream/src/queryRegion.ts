@@ -2,7 +2,7 @@
  * "What the last fetch actually asked for", published for a UI to draw.
  *
  * A commit's query region is `viewportFootprint()`'s `bbox` — the same value
- * `FcbStreamLayerHandle.commit` puts on the wire as `{ type: "probe", bbox }`
+ * `StreamLayerHandle.commit` puts on the wire as `{ type: "probe", bbox }`
  * and `{ type: "fetch", bbox }`, and the same value `planCommit` derives the
  * level and the cell cover from. There is deliberately NO second computation
  * here: this module only RESHAPES the footprint the commit already used, so a

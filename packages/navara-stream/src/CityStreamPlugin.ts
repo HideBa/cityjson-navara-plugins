@@ -3,7 +3,8 @@
  * the package barrel, which does NOT re-export it: this file is reachable only
  * through the `./plugin` subpath).
  *
- * Navara plugin streaming FlatCityBuf city models by camera footprint. All
+ * Navara plugin streaming city models by camera footprint, in whichever
+ * format the host registered a worker for (`workers`). All
  * behaviour lives in `StreamLayerRegistry`, which is engine-free and therefore
  * unit-testable in Node; this class only supplies the three things that
  * genuinely come from the engine — the descriptor class, `getPickRay` (via
@@ -26,16 +27,21 @@ import { CityMeshArraysDesc } from "@cityjson/navara-cityjson/plugin";
 import { createCellMeshFactory } from "./cellMeshFactory";
 import { navaraViewRaySource } from "./engineRays";
 import type { ViewportSize, PickRaySource } from "./navaraRays";
-import type { FcbStreamLayerHandle } from "./streamLayer";
+import type { StreamLayerHandle } from "./streamLayer";
 import {
   StreamLayerRegistry,
   type OpenStreamOptions,
   type StreamLayerLike,
 } from "./streamRegistry";
 import { WorkerClient } from "./workerClient";
+import type { WorkerFormat } from "./workerProtocol";
 import type { CityColors } from "@cityjson/navara-cityjson";
 
-export interface FlatCityBufPluginOptions {
+export interface CityStreamPluginOptions {
+  /** One worker factory per stream format, keyed by the id a stream's
+   *  `OpenStreamOptions.format` names: `{ flatcitybuf:
+   *  createFlatCityBufWorker, cityparquet: createCityParquetWorker }`. */
+  readonly workers: Readonly<Record<WorkerFormat, () => Worker>>;
   /** Task B1's PICK_PATH verdict, forwarded to every cell mesh. */
   readonly pickStrategy?: PickStrategy;
   /**
@@ -55,12 +61,12 @@ export interface FlatCityBufPluginOptions {
   readonly colors?: CityColors;
 }
 
-export class FlatCityBufPlugin extends Plugin<ThreeView, ViewContext> {
+export class CityStreamPlugin extends Plugin<ThreeView, ViewContext> {
   private view: ThreeView | null = null;
   private raySource: PickRaySource | null = null;
   private readonly registry: StreamLayerRegistry;
 
-  constructor(private readonly options: FlatCityBufPluginOptions) {
+  constructor(private readonly options: CityStreamPluginOptions) {
     super();
     this.registry = new StreamLayerRegistry({
       // A streamed cell is exactly a static layer's arrays-backed mesh, so it
@@ -69,7 +75,15 @@ export class FlatCityBufPlugin extends Plugin<ThreeView, ViewContext> {
       // name, and both plugins register the same class from the same module
       // instance) and is what makes this plugin usable on its own.
       descriptors: [[CITY_MESH_ARRAYS_KEY, CityMeshArraysDesc]],
-      createClient: (format) => new WorkerClient(format),
+      createClient: (format) => {
+        const create = this.options.workers[format];
+        if (create === undefined) {
+          throw new Error(
+            `CityStreamPlugin: no stream worker is registered for "${format}".`,
+          );
+        }
+        return new WorkerClient(create());
+      },
       // The stamping (layerId / cellKey / pickStrategy) lives in an
       // engine-free module so it is provable in Node — see `cellMeshFactory`.
       createMeshFactory: (layerId, textures) =>
@@ -115,7 +129,7 @@ export class FlatCityBufPlugin extends Plugin<ThreeView, ViewContext> {
     return this.registry.suppressSettleThenCommit(fn);
   }
 
-  openStream(opts: OpenStreamOptions): Promise<FcbStreamLayerHandle> {
+  openStream(opts: OpenStreamOptions): Promise<StreamLayerHandle> {
     return this.registry.openStream(opts);
   }
 

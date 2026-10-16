@@ -36,6 +36,10 @@
       "@cityjson/navara-cityjson/plugin": [
         "./packages/navara-cityjson/src/plugin.ts"
       ],
+      "@cityjson/navara-stream": ["./packages/navara-stream/src/index.ts"],
+      "@cityjson/navara-stream/worker": [
+        "./packages/navara-stream/src/worker.ts"
+      ],
       "@cityjson/navara-flatcitybuf": [
         "./packages/navara-flatcitybuf/src/index.ts"
       ],

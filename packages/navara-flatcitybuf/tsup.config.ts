@@ -1,11 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  // Two entries: the default barrel is engine-free and Node-importable, while
-  // `./plugin` carries the two @navaramap-binding modules (`FlatCityBufPlugin`
-  // and `engineRays`) — the engine crashes at module scope under Node
-  // (Task B1's NODE_IMPORT_SAFE = false).
-  entry: ["src/index.ts", "src/plugin.ts"],
+  entry: ["src/index.ts"],
   format: ["esm"],
   target: "es2022",
   dts: {
@@ -38,17 +34,10 @@ export default defineConfig({
   clean: true,
   treeshake: true,
   external: [
-    "@navaramap/three",
-    "@navaramap/three-default-plugin",
     "proj4",
-    "three",
+    "@cityjson/flatcitybuf",
     "@cityjson/navara-core",
-    "@cityjson/navara-cityjson",
-    "@cityjson/navara-cityparquet",
-    // The subpath must be listed separately: esbuild's `external` entries are
-    // matched literally, so the bare package name above would not cover it and
-    // `CityMeshArraysDesc` (and with it the whole engine) would be inlined
-    // into this package's dist.
-    "@cityjson/navara-cityjson/plugin",
+    "@cityjson/navara-stream",
+    "@cityjson/navara-stream/worker",
   ],
 });

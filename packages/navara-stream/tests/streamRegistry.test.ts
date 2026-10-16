@@ -3,7 +3,7 @@
  * loop, `suppressSettle`, and `openStream`'s admission / CRS / vertical-datum
  * orchestration.
  *
- * These drive `StreamLayerRegistry`, not `FlatCityBufPlugin`: the plugin class
+ * These drive `StreamLayerRegistry`, not `CityStreamPlugin`: the plugin class
  * imports `@navaramap/three`, which crashes at module scope under Node (Task
  * B1's `NODE_IMPORT_SAFE = false` — reconfirmed for this task), so it is the
  * three-line binding and this is everything it forwards to. Every engine seam
@@ -486,7 +486,7 @@ function makeFakeClient(opts: FakeClientOpts) {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("StreamLayerRegistry.openStream", () => {
-  const openOpts = { id: "L1", source: { url: "https://example/x.fcb" } };
+  const openOpts = { id: "L1", format: "flatcitybuf", source: { url: "https://example/x.fcb" } };
 
   it("resolves the geoid BEFORE the open that establishes the worker's placement, and sends it there", async () => {
     const trace: string[] = [];
@@ -932,7 +932,7 @@ describe("StreamLayerRegistry.openStream", () => {
       sampleGeoidHeight: async () => GEOID_M,
     });
     const urls = ["https://example/a.parquet", "https://example/b.parquet"];
-    await r.openStream({ id: "L2", source: { urls } });
+    await r.openStream({ id: "L2", format: "flatcitybuf", source: { urls } });
     const send = client.send as unknown as ReturnType<typeof vi.fn>;
     const opens = send.mock.calls
       .map((c) => c[0] as Record<string, unknown>)

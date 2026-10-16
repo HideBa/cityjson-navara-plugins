@@ -11,15 +11,10 @@
  */
 import { FcbReader, type HeaderView } from "@cityjson/flatcitybuf";
 import { isMetricCrs } from "@cityjson/navara-core";
-import type { AdmissionError, StreamHeader } from "./streamSourceAdapter";
-
-export type {
-  AdmissionCode,
+import type {
   AdmissionError,
-} from "./streamSourceAdapter";
-
-/** The FlatCityBuf header as the app reads it: the generic stream header. */
-export type FcbHeaderModel = StreamHeader;
+  StreamHeader,
+} from "@cityjson/navara-stream/worker";
 
 /**
  * The EPSG code, read from the header's STRUCTURED reference-system fields
@@ -115,7 +110,7 @@ export function checkAdmission(header: HeaderView): AdmissionError | null {
   return null;
 }
 
-export function headerModel(header: HeaderView): FcbHeaderModel {
+export function headerModel(header: HeaderView): StreamHeader {
   const info = header.info;
   return {
     version: info.version,

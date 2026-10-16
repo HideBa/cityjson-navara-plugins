@@ -1,8 +1,8 @@
 /**
  * The real {@link CellMeshFactory}: one engine mesh per resident cell.
  *
- * This is the seam `FcbStreamLayerHandle` was given so it could stay engine-
- * free (Task C10a), and it is deliberately NOT inside `FlatCityBufPlugin.ts`.
+ * This is the seam `StreamLayerHandle` was given so it could stay engine-
+ * free (Task C10a), and it is deliberately NOT inside `CityStreamPlugin.ts`.
  * `addCityMeshArrays` imports `three` but never `@navaramap/*` — it takes the
  * view structurally (`CityMeshArraysViewLike`) — so keeping the factory here
  * means the stamping this whole path depends on is provable in Node against
@@ -52,7 +52,7 @@ export function createCellMeshFactory(
       const view = deps.getView();
       if (!view) {
         throw new Error(
-          `FlatCityBufPlugin: cell "${deps.layerId}:${key}" was built before view.init() — add the plugin with view.addPlugin(plugin) and await view.init() first.`,
+          `CityStreamPlugin: cell "${deps.layerId}:${key}" was built before view.init() — add the plugin with view.addPlugin(plugin) and await view.init() first.`,
         );
       }
       return addCityMeshArrays(view, {

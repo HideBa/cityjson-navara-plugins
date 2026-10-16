@@ -1,7 +1,7 @@
 /**
  * One streaming layer: the resident-cell payload, and the handle that owns it.
  *
- * `FcbStreamLayerHandle` is the pre-migration driver
+ * `StreamLayerHandle` is the pre-migration driver
  * (`src/features/streaming/useTileStreaming.ts`'s `commitStreamingLayer`) with
  * every store lookup replaced by its own state. What used to be
  * `useStreamStore` writes — status, ladder, version — are events, so a UI can
@@ -51,7 +51,7 @@ import type { WorkerResponse } from "./workerProtocol";
 import type { WorkerClient } from "./workerClient";
 import type { CellCache } from "./cellCache";
 import type { CellKey, Grid } from "./tileGrid";
-import type { FcbHeaderModel } from "./fcbSource";
+import type { StreamHeader } from "./streamSourceAdapter";
 import type { CommitView } from "./throttleGates";
 import { toRay, type PickRaySource } from "./navaraRays";
 import {
@@ -131,7 +131,7 @@ export type StreamStatus =
 
 /**
  * One object's rings, and the space they are measured in — the result of
- * {@link FcbStreamLayerHandle.fetchSurfaces}.
+ * {@link StreamLayerHandle.fetchSurfaces}.
  *
  * The space is a property of the CELL, not of the layer, which is why it
  * travels with the geometry: a geographic source's rings are the owning cell's
@@ -184,11 +184,11 @@ export interface StreamLayerEvents {
   onQueryRegion(cb: (region: QueryRegion | null) => void): () => void;
 }
 
-export interface FcbStreamLayerHandleOptions {
+export interface StreamLayerHandleOptions {
   readonly id: string;
   readonly client: WorkerClient;
   readonly grid: Grid;
-  readonly header: FcbHeaderModel;
+  readonly header: StreamHeader;
   readonly cache: CellCache<CellEntry>;
   /** The layer's own ENU frame. Its z = 0 plane is the footprint's ground
    *  plane, and it is the anchor `fitLayer` flies to. */
@@ -226,13 +226,13 @@ export interface FcbStreamLayerHandleOptions {
    *
    * Two callers, both of them state changes the camera knows nothing about:
    *
-   * - {@link FcbStreamLayerHandle.setLod}, because a LoD change must refetch
+   * - {@link StreamLayerHandle.setLod}, because a LoD change must refetch
    *   even for a viewport that has not moved — hysteresis would otherwise skip
    *   the commit and leave the old LoD resident indefinitely (B1);
-   * - {@link FcbStreamLayerHandle.setHiddenTypes}, for the identical reason:
+   * - {@link StreamLayerHandle.setHiddenTypes}, for the identical reason:
    *   the resident cells were BAKED without the hidden types, so a toggle is
    *   only visible after a refetch;
-   * - {@link FcbStreamLayerHandle.setCameraSync} when sync is switched back
+   * - {@link StreamLayerHandle.setCameraSync} when sync is switched back
    *   ON, because the layer ignored every settle while it was off and is
    *   therefore resident on some older viewport (and possibly some older LoD).
    */
@@ -261,7 +261,7 @@ function subscribe<T extends unknown[]>(
 }
 
 /**
- * One camera-driven FlatCityBuf layer.
+ * One camera-driven streamed layer.
  *
  * `commit(rays)` is the whole pipeline: footprint -> probe -> level/LoD ->
  * fetch -> cache commit -> mesh sync. It is driven by `settleController`
@@ -278,13 +278,13 @@ function subscribe<T extends unknown[]>(
  * rules are baked in the worker here, never evaluated on the main thread
  * (shared contract -> Streaming styling).
  */
-export class FcbStreamLayerHandle implements StreamLayerEvents {
+export class StreamLayerHandle implements StreamLayerEvents {
   readonly id: string;
   readonly grid: Grid;
-  readonly header: FcbHeaderModel;
+  readonly header: StreamHeader;
   readonly frame: EnuFrame;
 
-  private readonly options: FcbStreamLayerHandleOptions;
+  private readonly options: StreamLayerHandleOptions;
   private readonly cache: CellCache<CellEntry>;
   /** Mesh mirror of `cache`, keyed identically. Owned here (not by
    *  `syncCellMeshes`, which mutates it in place) so it survives commits. */
@@ -320,13 +320,13 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
 
   private _visible = true;
   /** Whether this layer follows the camera at all — see
-   *  {@link FcbStreamLayerHandle.setCameraSync}. */
+   *  {@link StreamLayerHandle.setCameraSync}. */
   private _cameraSync = true;
   private _rules: ReadonlyArray<Rule> = [];
   private _rulesEnabled = false;
   private _lodMode: "auto" | "manual" = "auto";
   private _selectedLod: string | null = null;
-  /** Sorted and deduped by {@link FcbStreamLayerHandle.setHiddenTypes}. */
+  /** Sorted and deduped by {@link StreamLayerHandle.setHiddenTypes}. */
   private _hiddenTypes: ReadonlyArray<string> = [];
   /** Held for the same reason the highlight is: cells arrive asynchronously,
    *  so a cell that lands under an active theme has to be able to find out
@@ -368,7 +368,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
     Listener<[QueryRegion | null]>
   >();
 
-  constructor(options: FcbStreamLayerHandleOptions) {
+  constructor(options: StreamLayerHandleOptions) {
     this.options = options;
     this.id = options.id;
     this.grid = options.grid;
@@ -1152,7 +1152,7 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
   async fetchSurfaces(objectId: string): Promise<ObjectSurfaces> {
     if (this._deleted) {
       throw new Error(
-        `FcbStreamLayerHandle("${this.id}"): fetchSurfaces after delete()`,
+        `StreamLayerHandle("${this.id}"): fetchSurfaces after delete()`,
       );
     }
     const r = await this.options.client.send({ type: "surfaces", objectId });

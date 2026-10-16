@@ -1,21 +1,21 @@
 /**
- * `@cityjson/navara-flatcitybuf/plugin` — the engine-bound entry point.
+ * `@cityjson/navara-stream/plugin` — the engine-bound entry point.
  *
  * Everything reachable from here imports `@navaramap/three`, which crashes at
  * module scope under Node (`os.cpus is not a function`; Task B1's
  * `NODE_IMPORT_SAFE = false`). It therefore lives behind its own subpath rather
- * than in the main barrel, so `@cityjson/navara-flatcitybuf` stays importable
+ * than in the main barrel, so `@cityjson/navara-stream` stays importable
  * from Node — by unit tests, by the streaming worker, and by any tooling that
  * only needs the tile arithmetic, the wire protocol or the layer handle.
  *
  * Host apps (Task C13 onward) import the plugin from here:
  *
  * ```ts
- * import { FlatCityBufPlugin } from "@cityjson/navara-flatcitybuf/plugin";
+ * import { CityStreamPlugin } from "@cityjson/navara-stream/plugin";
  * ```
  */
-export { FlatCityBufPlugin } from "./FlatCityBufPlugin";
-export type { FlatCityBufPluginOptions } from "./FlatCityBufPlugin";
+export { CityStreamPlugin } from "./CityStreamPlugin";
+export type { CityStreamPluginOptions } from "./CityStreamPlugin";
 
 /**
  * The binding that supplies Navara's real `getPickRay`. Exported here (not
@@ -30,4 +30,4 @@ export { navaraViewRaySource } from "./engineRays";
 // open options and the handle type in the same breath, and both come from
 // engine-free modules, so importing them here costs nothing extra.
 export type { OpenStreamOptions, StreamLayerLike } from "./streamRegistry";
-export type { FcbStreamLayerHandle } from "./streamLayer";
+export type { StreamLayerHandle } from "./streamLayer";
