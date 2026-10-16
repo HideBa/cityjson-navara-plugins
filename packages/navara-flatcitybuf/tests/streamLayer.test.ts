@@ -458,6 +458,8 @@ function pickingFactory(hitDistances: Readonly<Record<string, number>> = {}) {
   interface Rec {
     readonly key: string;
     colors: Float32Array | null;
+    /** setColors calls: each one is a full colour-buffer upload. */
+    paints: number;
     visible: boolean;
     deleted: boolean;
     readonly objectKeys: readonly string[];
@@ -469,6 +471,7 @@ function pickingFactory(hitDistances: Readonly<Record<string, number>> = {}) {
       const rec: Rec = {
         key,
         colors: null,
+        paints: 0,
         visible: true,
         deleted: false,
         objectKeys: entry.geometry.objectKeys,
@@ -479,6 +482,7 @@ function pickingFactory(hitDistances: Readonly<Record<string, number>> = {}) {
         ref: null,
         setColors: (c: Float32Array) => {
           rec.colors = c;
+          rec.paints++;
         },
         setVisible: (v: boolean) => {
           rec.visible = v;
@@ -1559,6 +1563,36 @@ describe("FcbStreamLayerHandle interaction parity", () => {
     expect(rendered(factory.created.get(ownerKey)!)).toEqual(
       new Array(CELL_COLOR_LEN).fill(BASE),
     );
+  });
+
+  it("repaints only the cells holding an object whose highlight changed", async () => {
+    // Hover moves at pointer rate: repainting every resident cell for it
+    // uploads every cell's colour buffer on every move.
+    const factory = pickingFactory();
+    const { handle } = makeHandle({ meshFactory: factory.factory });
+    await handle.commit(topDownRays());
+    const [ownerKey, otherKey] = [...factory.created.keys()] as [
+      string,
+      string,
+    ];
+    const owner = factory.created.get(ownerKey)!;
+    const other = factory.created.get(otherKey)!;
+    const objectId = owner.objectKeys[0]!;
+    const before = { owner: owner.paints, other: other.paints };
+
+    handle.setHighlight([], { kind: "object", layerId: "l1", objectId });
+    expect(owner.paints).toBe(before.owner + 1);
+    expect(other.paints).toBe(before.other);
+
+    // The same highlight again changes nothing, so it paints nothing.
+    handle.setHighlight([], { kind: "object", layerId: "l1", objectId });
+    expect(owner.paints).toBe(before.owner + 1);
+
+    // Moving off it repaints the cell it leaves.
+    handle.setHighlight([]);
+    expect(owner.paints).toBe(before.owner + 2);
+    expect(other.paints).toBe(before.other);
+    expect(rendered(owner)).toEqual(new Array(CELL_COLOR_LEN).fill(BASE));
   });
 
   it("RE-APPLIES the current highlight to a cell REBUILT by a later commit", async () => {

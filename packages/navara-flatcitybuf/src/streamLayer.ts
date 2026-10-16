@@ -17,6 +17,7 @@ import {
   type AppearanceTheme,
   type BBox3,
   type EnuFrame,
+  type PickingIndex,
   type Rule,
   type Surface,
 } from "@cityjson/navara-core";
@@ -1459,9 +1460,26 @@ export class FcbStreamLayerHandle implements StreamLayerEvents {
    * next user interaction.
    */
   setHighlight(sel: readonly Selection[], hovered?: Selection): void {
-    this._selections = sel.filter((s) => s.layerId === this.id);
-    this._hovered = hovered?.layerId === this.id ? hovered : null;
-    this.applyHighlight();
+    const selections = sel.filter((s) => s.layerId === this.id);
+    const hover = hovered?.layerId === this.id ? hovered : null;
+    // Only the cells holding an object that gains or loses a highlight are
+    // repainted: hover arrives at pointer rate, and each paint uploads the
+    // cell's whole colour buffer.
+    const touched = new Set<string>();
+    const before = highlightKeys(this._selections, this._hovered);
+    const after = highlightKeys(selections, hover);
+    for (const [key, objectId] of before) {
+      if (!after.has(key)) touched.add(objectId);
+    }
+    for (const [key, objectId] of after) {
+      if (!before.has(key)) touched.add(objectId);
+    }
+    this._selections = selections;
+    this._hovered = hover;
+    if (touched.size === 0) return;
+    for (const cell of this.cells.values()) {
+      if (cellHoldsAny(cell, touched)) this.paintCell(cell);
+    }
   }
 
   private applyHighlight(): void {
@@ -1553,4 +1571,35 @@ function isScreenPoint(
     typeof (pick as ScreenPoint).x === "number" &&
     typeof (pick as ScreenPoint).y === "number"
   );
+}
+
+/**
+ * Every highlight as a key that changes whenever the paint changes: the role
+ * (hover or selection), the object and, for a surface selection, the surface.
+ */
+function highlightKeys(
+  selections: ReadonlyArray<Selection>,
+  hovered: Selection | null,
+): Map<string, string> {
+  const keys = new Map<string, string>();
+  const add = (role: string, s: Selection) =>
+    keys.set(
+      `${role}\u0000${s.objectId}\u0000${s.kind === "surface" ? s.surfaceIndex : ""}`,
+      s.objectId,
+    );
+  for (const s of selections) add("selected", s);
+  if (hovered) add("hovered", hovered);
+  return keys;
+}
+
+const cellObjectSets = new WeakMap<PickingIndex, ReadonlySet<string>>();
+
+function cellHoldsAny(cell: CellMesh, objectIds: ReadonlySet<string>): boolean {
+  let held = cellObjectSets.get(cell.pickingIndex);
+  if (!held) {
+    held = new Set(cell.pickingIndex.objectKeys);
+    cellObjectSets.set(cell.pickingIndex, held);
+  }
+  for (const id of objectIds) if (held.has(id)) return true;
+  return false;
 }
