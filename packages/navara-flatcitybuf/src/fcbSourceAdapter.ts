@@ -15,12 +15,14 @@ import {
   mapMetadata,
   mergeBBox,
   parseCityObject,
+  parseGeometryTemplates,
   type BBox3,
   type CityJSONFeature,
   type CityJSONObject,
   type CityJSONRoot,
   type CityModel,
   type CityObject,
+  type ImplicitTemplate,
 } from "@cityjson/navara-core";
 import { checkAdmission, headerModel, openFcb } from "./fcbSource";
 import type {
@@ -62,6 +64,10 @@ export function createFcbSourceAdapter(): StreamSourceAdapter {
    * the main thread share one image cache across cells and across commits.
    */
   let appearance = new AppearanceMerger();
+  /** The header's `geometry-templates`, parsed on the first select after an
+   *  open: their appearance registers with the merger once, not per select. */
+  let templates: ReadonlyMap<number, ImplicitTemplate> | undefined | null =
+    null;
 
   const openReader = (): FcbReader => {
     if (!reader) throw new Error("no file open");
@@ -89,6 +95,7 @@ export function createFcbSourceAdapter(): StreamSourceAdapter {
       }
       reader = await openFcb(one);
       appearance = new AppearanceMerger();
+      templates = null;
       return {
         header: headerModel(reader.header),
         admission: checkAdmission(reader.header),
@@ -119,14 +126,14 @@ export function createFcbSourceAdapter(): StreamSourceAdapter {
       // data (no methods), so casting them into our own domain CityJSON
       // types is the same move parseCityJSONSeq makes on `JSON.parse`
       // output — not a type-unsafe escape hatch like `as never`.
-      const cjHeader = toCityJSONMetadata(
-        r.header,
-      ) as unknown as CityJSONRoot;
+      const cjHeader = toCityJSONMetadata(r.header) as unknown as CityJSONRoot;
       const metadata = mapMetadata(cjHeader.metadata);
+      templates ??= parseGeometryTemplates(
+        cjHeader["geometry-templates"],
+        appearance.register(cjHeader.appearance),
+      );
       for await (const f of cursor) {
-        const cjFeature = f.toCityJSON(
-          r.header,
-        ) as unknown as CityJSONFeature;
+        const cjFeature = f.toCityJSON(r.header) as unknown as CityJSONFeature;
         const realVertices = dequantizeAll(
           cjFeature.vertices,
           // FlatCityBuf always carries a transform; the fallback exists
@@ -141,7 +148,13 @@ export function createFcbSourceAdapter(): StreamSourceAdapter {
           string,
           CityJSONObject,
         ][]) {
-          const obj = parseCityObject(id, rawObj, realVertices, appearanceCtx);
+          const obj = parseCityObject(
+            id,
+            rawObj,
+            realVertices,
+            appearanceCtx,
+            templates,
+          );
           objects[id] = obj;
           modelBBox = mergeBBox(modelBBox, obj.bbox);
         }
@@ -151,6 +164,7 @@ export function createFcbSourceAdapter(): StreamSourceAdapter {
           bbox: modelBBox,
           objects,
           vertexCount: cjFeature.vertices.length,
+          ...(templates ? { implicitTemplates: templates } : {}),
         };
       }
     },
@@ -163,6 +177,7 @@ export function createFcbSourceAdapter(): StreamSourceAdapter {
     close(): void {
       reader = undefined;
       appearance = new AppearanceMerger();
+      templates = null;
     },
   };
 }

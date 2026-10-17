@@ -64,6 +64,7 @@ export {
   dequantizeAll,
   mergeBBox,
   parseCityObject,
+  parseGeometryTemplates,
   mapMetadata,
 } from "./citymodel/cityjson/parseHelpers";
 export { parseCityJSON } from "./citymodel/cityjson/parseCityJSON";
