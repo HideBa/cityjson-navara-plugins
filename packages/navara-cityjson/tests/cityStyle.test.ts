@@ -53,6 +53,50 @@ describe("CityStyleTexture", () => {
     t.clearFlags(SLOT_SELECTED);
     expect(t.texel(1)[3]).toBe(SLOT_TEXTURED);
   });
+
+  /** What three does after it uploads the texture. */
+  function uploaded(t: CityStyleTexture): void {
+    t.texture.onUpdate?.(t.texture);
+    t.texture.clearUpdateRanges();
+  }
+
+  it("uploads whole until the first upload, so the GPU copy starts complete", () => {
+    const t = new CityStyleTexture(2500);
+    t.setFlags(5, SLOT_SELECTED);
+    t.commit();
+    expect(t.texture.version).toBeGreaterThan(0);
+    expect(t.texture.updateRanges).toEqual([]);
+  });
+
+  it("then uploads only the texels a commit changed, one range per row", () => {
+    const t = new CityStyleTexture(2500);
+    t.commit();
+    uploaded(t);
+    const version = t.texture.version;
+    t.setFlags(1030, SLOT_SELECTED);
+    t.setFlags(5, SLOT_SELECTED);
+    t.setFlags(7, SLOT_SELECTED);
+    t.commit();
+    expect(t.texture.version).toBe(version + 1);
+    expect(t.texture.updateRanges).toEqual([
+      { start: 5 * 4, count: 3 * 4 },
+      { start: 1030 * 4, count: 4 },
+    ]);
+  });
+
+  it("does not upload a commit that changed nothing", () => {
+    const t = new CityStyleTexture(10);
+    t.setColor(2, 1, 0, 0);
+    t.setFlags(2, SLOT_SELECTED);
+    t.commit();
+    uploaded(t);
+    const version = t.texture.version;
+    t.setColor(2, 1, 0, 0);
+    t.setFlags(2, SLOT_SELECTED);
+    t.clearFlags(SLOT_TEXTURED);
+    t.commit();
+    expect(t.texture.version).toBe(version);
+  });
 });
 
 describe("CityStyleMaterial", () => {

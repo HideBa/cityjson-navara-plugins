@@ -58,19 +58,38 @@ function linearToSrgbByte(c: number): number {
 }
 
 /**
- * One texel per slot. Writes go to the CPU copy; {@link commit} uploads it,
- * once per burst of writes.
+ * One texel per slot. Writes go to the CPU copy; {@link commit} uploads what
+ * changed, once per burst of writes.
+ *
+ * The first upload sends the whole texture (three allocates the GPU copy from
+ * it). After that a commit sends, per row, the span of texels whose bytes
+ * changed, through three's `updateRanges`: a hover touches one object's
+ * slots, not the cell's. A write that leaves a byte as it was is not a
+ * change, so a commit after a no-op repaint uploads nothing.
  */
 export class CityStyleTexture {
   readonly texture: DataTexture;
   readonly slotCount: number;
   private readonly data: Uint8Array;
+  private readonly width: number;
+  /** Per row, the first and last changed texel since the last commit; `lo`
+   *  above `hi` is a clean row. */
+  private readonly rowLo: Int32Array;
+  private readonly rowHi: Int32Array;
+  private dirty = false;
+  /** Whether three has uploaded the texture once. Until then a commit must
+   *  leave `updateRanges` empty: a range on the allocating upload would
+   *  leave the rest of the GPU copy undefined. */
+  private uploaded = false;
 
   constructor(slotCount: number) {
     this.slotCount = slotCount;
     const width = Math.max(1, Math.min(STYLE_TEXTURE_WIDTH, slotCount));
     const height = Math.max(1, Math.ceil(slotCount / width));
+    this.width = width;
     this.data = new Uint8Array(width * height * 4);
+    this.rowLo = new Int32Array(height).fill(width);
+    this.rowHi = new Int32Array(height).fill(-1);
     this.texture = new DataTexture(
       this.data,
       width,
@@ -83,15 +102,29 @@ export class CityStyleTexture {
     this.texture.minFilter = NearestFilter;
     this.texture.generateMipmaps = false;
     this.texture.flipY = false;
+    this.texture.onUpdate = () => {
+      this.uploaded = true;
+    };
     this.texture.needsUpdate = true;
+  }
+
+  private write(index: number, value: number): void {
+    if (this.data[index] === value) return;
+    this.data[index] = value;
+    const texel = index >> 2;
+    const row = Math.floor(texel / this.width);
+    const col = texel - row * this.width;
+    if (col < this.rowLo[row]!) this.rowLo[row] = col;
+    if (col > this.rowHi[row]!) this.rowHi[row] = col;
+    this.dirty = true;
   }
 
   /** Set a slot's colour from LINEAR rgb (what the palettes hold). */
   setColor(slot: number, r: number, g: number, b: number): void {
     const i = slot * 4;
-    this.data[i] = linearToSrgbByte(r);
-    this.data[i + 1] = linearToSrgbByte(g);
-    this.data[i + 2] = linearToSrgbByte(b);
+    this.write(i, linearToSrgbByte(r));
+    this.write(i + 1, linearToSrgbByte(g));
+    this.write(i + 2, linearToSrgbByte(b));
   }
 
   /** Every slot's colour from a linear rgb array, 3 per slot. */
@@ -106,13 +139,15 @@ export class CityStyleTexture {
   }
 
   setFlags(slot: number, flags: number): void {
-    this.data[slot * 4 + 3] = flags;
+    this.write(slot * 4 + 3, flags);
   }
 
   /** Clear `bits` on every slot. */
   clearFlags(bits: number): void {
     const keep = ~bits & 0xff;
-    for (let s = 0; s < this.slotCount; s++) this.data[s * 4 + 3]! &= keep;
+    for (let s = 0; s < this.slotCount; s++) {
+      this.write(s * 4 + 3, this.data[s * 4 + 3]! & keep);
+    }
   }
 
   /** The texel bytes, for tests. */
@@ -127,6 +162,21 @@ export class CityStyleTexture {
   }
 
   commit(): void {
+    if (!this.dirty) return;
+    this.dirty = false;
+    for (let row = 0; row < this.rowLo.length; row++) {
+      const lo = this.rowLo[row]!;
+      const hi = this.rowHi[row]!;
+      if (lo > hi) continue;
+      if (this.uploaded) {
+        this.texture.addUpdateRange(
+          (row * this.width + lo) * 4,
+          (hi - lo + 1) * 4,
+        );
+      }
+      this.rowLo[row] = this.width;
+      this.rowHi[row] = -1;
+    }
     this.texture.needsUpdate = true;
   }
 
