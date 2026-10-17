@@ -29,6 +29,7 @@ function entry(ruleColors: Float32Array | null): CellEntry {
     lodsSeen: [],
     builtWithRulesEnabled: false,
     builtWithRules: [],
+    builtWithExpression: null,
   };
 }
 

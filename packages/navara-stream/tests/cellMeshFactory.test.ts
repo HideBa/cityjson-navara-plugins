@@ -44,6 +44,7 @@ function entry(withRuleColors: boolean): CellEntry {
     lodsSeen: [],
     builtWithRulesEnabled: false,
     builtWithRules: [],
+    builtWithExpression: null,
   };
 }
 

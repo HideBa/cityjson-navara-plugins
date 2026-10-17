@@ -1102,6 +1102,35 @@ describe("StreamLayerHandle rules and LoD", () => {
     expect(backfilled).toHaveLength(1);
   });
 
+  it("sends a colour expression with every fetch and recolor, and stamps it", async () => {
+    const { handle, client } = makeHandle({});
+    const expression = [
+      "match",
+      ["get", "$surface"],
+      "RoofSurface",
+      "#ff0000",
+      "#00ff00",
+    ];
+    handle.setRules([], false, expression);
+    await handle.commit(topDownRays());
+    await flush();
+    const fetches = requestsOfType(client.sendStreamingCalls, "fetch");
+    expect(fetches.at(-1)!.expression).toEqual(expression);
+    for (const key of handle.cacheKeysForTest()) {
+      expect(handle.cacheEntryForTest(key)!.builtWithExpression).toEqual(
+        expression,
+      );
+    }
+    // The same style again is dropped; a different one recolors.
+    const before = requestsOfType(client.sendStreamingCalls, "recolor").length;
+    handle.setRules([], false, [...expression]);
+    handle.setRules([], false, "#0000ff");
+    await flush();
+    const recolors = requestsOfType(client.sendStreamingCalls, "recolor");
+    expect(recolors).toHaveLength(before + 1);
+    expect(recolors.at(-1)!.expression).toBe("#0000ff");
+  });
+
   it("recolors, through the worker, exactly the cells whose fetch landed after the rules changed (B2)", async () => {
     const factory = pickingFactory();
     let onDispatch: (() => void) | null = null;

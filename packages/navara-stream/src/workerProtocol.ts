@@ -147,6 +147,9 @@ export type WorkerRequest =
       lod: string | null;
       rules: ReadonlyArray<Rule>;
       rulesEnabled: boolean;
+      /** A style-spec colour expression (`compileStyleExpression`); when
+       *  present it colours the cell instead of the rules. */
+      expression?: unknown;
       /** Which appearance theme to bake (texture: UVs + groups; material:
        *  diffuse base colours); `null`/omitted for the plain colours. */
       appearance?: AppearanceTheme | null;
@@ -157,6 +160,8 @@ export type WorkerRequest =
       cells: CellKey[];
       rules: ReadonlyArray<Rule>;
       rulesEnabled: boolean;
+      /** As on `fetch`. */
+      expression?: unknown;
     }
   | { type: "surfaces"; id: number; objectId: string }
   | { type: "evict"; id: number; cells: CellKey[] }

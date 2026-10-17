@@ -159,6 +159,11 @@ export {
   placeImplicitSurfaces,
   withImplicitSurfaces,
 } from "./citymodel/implicitSurfaces";
+export type { CompiledStyle, StyleExpression } from "./styling/layerStyle";
+export {
+  compileStyleExpression,
+  rulesToStyleExpression,
+} from "./styling/layerStyle";
 export type { LodSelection } from "./geometry/lodSelection";
 export { sameLodGeometry } from "./geometry/lodSelection";
 export {

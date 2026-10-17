@@ -13,6 +13,10 @@ import proj4 from "proj4";
 import {
   buildCityMeshArrays,
   buildSlotRuleColors,
+  buildSlotStyleColors,
+  compileStyleExpression,
+  type Rule,
+  type SurfaceStyleEvaluator,
   ensureProjDef,
   geodeticRingsToEnu,
   localMetricFrameFromDescriptor,
@@ -84,6 +88,68 @@ const BYTES_PER_OBJECT = 320;
 const BYTES_PER_SURFACE = 160;
 const BYTES_PER_RING = 40;
 const BYTES_PER_VERTEX = 88;
+
+/** The last expression compiled, by its JSON: a layer's style changes far
+ *  less often than its cells are baked. `null` evaluator: it does not
+ *  compile, and the cell keeps its base colours (the app shows the errors). */
+let compiledExpression: {
+  key: string;
+  evaluator: SurfaceStyleEvaluator | null;
+} | null = null;
+
+function expressionEvaluator(
+  expression: unknown,
+): SurfaceStyleEvaluator | null {
+  const key = JSON.stringify(expression);
+  if (compiledExpression?.key !== key) {
+    const compiled = compileStyleExpression(expression);
+    compiledExpression = {
+      key,
+      evaluator: compiled.ok ? compiled.evaluator : null,
+    };
+  }
+  return compiledExpression.evaluator;
+}
+
+/** Per slot, the style's colours over `slotColors`: the expression when the
+ *  request carries one, else the rules when they are on; `null` when
+ *  nothing changes a colour. */
+function styleColors(
+  msg: {
+    readonly rules: ReadonlyArray<Rule>;
+    readonly rulesEnabled: boolean;
+    readonly expression?: unknown;
+  },
+  model: CityModel,
+  slotObjects: Uint32Array,
+  slotSurfaces: Uint32Array,
+  objectKeys: ReadonlyArray<string>,
+  slotColors: Float32Array,
+): Float32Array | null {
+  if (msg.expression !== undefined && msg.expression !== null) {
+    const evaluate = expressionEvaluator(msg.expression);
+    return evaluate
+      ? buildSlotStyleColors(
+          model,
+          slotObjects,
+          slotSurfaces,
+          objectKeys,
+          evaluate,
+          slotColors,
+        )
+      : null;
+  }
+  return msg.rulesEnabled
+    ? buildSlotRuleColors(
+        model,
+        slotObjects,
+        slotSurfaces,
+        objectKeys,
+        msg.rules,
+        slotColors,
+      )
+    : null;
+}
 
 /**
  * What the worker retains for one cell, estimated from its STRUCTURE — the
@@ -793,16 +859,14 @@ export function installStreamWorker(
                 heightOffset: place.heightOffset,
               });
             }
-            const ruleColors = msg.rulesEnabled
-              ? buildSlotRuleColors(
-                  cellModel,
-                  a.slotObjects,
-                  a.slotSurfaces,
-                  a.objectKeys,
-                  msg.rules,
-                  a.slotColors,
-                )
-              : null;
+            const ruleColors = styleColors(
+              msg,
+              cellModel,
+              a.slotObjects,
+              a.slotSurfaces,
+              a.objectKeys,
+              a.slotColors,
+            );
             // Build the payload explicitly. Do NOT spread `a`: CityMeshArrays
             // has `slotColors`, CellGeometry has `baseColors`, and a spread
             // would emit both.
@@ -925,16 +989,15 @@ export function installStreamWorker(
           // non-streaming path uses (see highlightMesh.ts). Always a *copy*:
           // transferring the cache's own buffer would detach it out from
           // under this cache entry.
-          const ruleColors = msg.rulesEnabled
-            ? (buildSlotRuleColors(
-                cached.model,
-                cached.slotObjects,
-                cached.slotSurfaces,
-                cached.objectKeys,
-                msg.rules,
-                cached.colors,
-              ) ?? cached.colors.slice())
-            : cached.colors.slice();
+          const ruleColors =
+            styleColors(
+              msg,
+              cached.model,
+              cached.slotObjects,
+              cached.slotSurfaces,
+              cached.objectKeys,
+              cached.colors,
+            ) ?? cached.colors.slice();
           post({ type: "recolored", id: msg.id, key, ruleColors }, [
             ruleColors.buffer,
           ]);

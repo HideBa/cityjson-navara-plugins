@@ -88,7 +88,15 @@ export function rulesStale(
   entry: CellEntry,
   rules: ReadonlyArray<Rule>,
   rulesEnabled: boolean,
+  expression: unknown = null,
 ): boolean {
+  if (
+    JSON.stringify(entry.builtWithExpression ?? null) !==
+    JSON.stringify(expression)
+  ) {
+    return true;
+  }
+  if (expression !== null) return false;
   if (entry.builtWithRulesEnabled !== rulesEnabled) return true;
   if (!rulesEnabled) return false;
   return JSON.stringify(entry.builtWithRules) !== JSON.stringify(rules);
@@ -103,6 +111,8 @@ export interface SyncCtx {
   readonly visible: boolean;
   readonly rules: ReadonlyArray<Rule>;
   readonly rulesEnabled: boolean;
+  /** The layer's colour expression, `null` for none (see `rulesStale`). */
+  readonly expression?: unknown;
   /** Vertical-datum offset the worker already applied; the frame must match. */
   readonly heightOffsetM?: number;
   /** The layer's active scene theme, pushed to every cell built here for the
@@ -181,7 +191,11 @@ export function syncCellMeshes(ctx: SyncCtx): CellKey[] {
       ruleColors: entry.geometry.ruleColors,
       sourceEntry: entry,
     });
-    if (rulesStale(entry, ctx.rules, ctx.rulesEnabled)) stale.push(key);
+    if (
+      rulesStale(entry, ctx.rules, ctx.rulesEnabled, ctx.expression ?? null)
+    ) {
+      stale.push(key);
+    }
   }
 
   return stale;

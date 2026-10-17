@@ -334,6 +334,41 @@ describe("streamWorkerCore", () => {
     expect(posted.at(-1)).toEqual({ type: "done", id: 2 });
   });
 
+  it("bakes a colour expression, over the rules, on fetch and on recolor", async () => {
+    const { posted, send } = harness(fakeAdapter([feature("a", 100, 100)]));
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    // Every surface pure red, whatever its type: the rules (off) are ignored.
+    await send({
+      ...(fetchMsg(1, ["2/0/0"]) as Extract<WorkerRequest, { type: "fetch" }>),
+      expression: "#ff0000",
+    });
+    const cell = posted.find(ofType("cell"))!;
+    expect([...cell.geometry.ruleColors!.slice(0, 3)]).toEqual([1, 0, 0]);
+
+    await send({
+      type: "recolor",
+      id: 2,
+      cells: ["2/0/0"],
+      rules: [],
+      rulesEnabled: false,
+      expression: ["to-color", ["get", "$base"]],
+    });
+    const recolored = posted.find(ofType("recolored"))!;
+    expect([...recolored.ruleColors]).toEqual([...cell.geometry.baseColors]);
+
+    // An expression that does not compile keeps the base colours.
+    await send({
+      type: "recolor",
+      id: 3,
+      cells: ["2/0/0"],
+      rules: [MATCH_ALL],
+      rulesEnabled: true,
+      expression: ["frobnicate"],
+    });
+    const last = posted.filter(ofType("recolored")).at(-1)!;
+    expect([...last.ruleColors]).toEqual([...cell.geometry.baseColors]);
+  });
+
   it("folds the header's up-front LoDs into every cell's lodsSeen", async () => {
     const adapter = fakeAdapter([feature("a", 100, 100)]);
     adapter.lods = ["1.2", "2"];

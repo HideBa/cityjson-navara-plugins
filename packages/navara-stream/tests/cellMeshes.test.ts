@@ -49,6 +49,7 @@ function entry(tag: string, rules: ReadonlyArray<Rule> = []): CellEntry {
     lodsSeen: [],
     builtWithRulesEnabled: rules.length > 0,
     builtWithRules: rules,
+    builtWithExpression: null,
   };
 }
 
@@ -460,6 +461,14 @@ describe("syncCellMeshes", () => {
 });
 
 describe("rulesStale", () => {
+  it("is stale when the colour expression differs, and then ignores the rules", () => {
+    const red = { ...entry("a", [RULE]), builtWithExpression: "#ff0000" };
+    expect(rulesStale(red, [RULE], true)).toBe(true);
+    expect(rulesStale(red, [], false, "#00ff00")).toBe(true);
+    expect(rulesStale(red, [], false, "#ff0000")).toBe(false);
+    expect(rulesStale(entry("a", [RULE]), [RULE], true, "#ff0000")).toBe(true);
+  });
+
   it("is false for disabled-vs-disabled regardless of rule content", () => {
     // Built with rules PRESENT but colorization OFF — `entry()`'s shorthand
     // ties the two together, so spell the disabled-with-rules case out. While

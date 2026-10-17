@@ -76,6 +76,11 @@ export function computeStyleColors(
     const rgb = evaluator(
       { surfaceIndex: surfIdx, surface },
       { objectId, object, attributes },
+      [
+        slotColors[slot * 3]!,
+        slotColors[slot * 3 + 1]!,
+        slotColors[slot * 3 + 2]!,
+      ],
     );
     if (!rgb) continue;
     const base = slot * 3;

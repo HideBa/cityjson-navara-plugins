@@ -50,6 +50,8 @@ export interface CityObjectInfo {
 export type SurfaceStyleEvaluator = (
   surface: SurfaceInfo,
   object: CityObjectInfo,
+  /** The slot's unstyled colour, Linear-sRGB, when the caller has one. */
+  base?: RGB,
 ) => RGB | null;
 
 /**
@@ -81,6 +83,11 @@ export function buildSlotStyleColors(
       objectKeys,
       evaluate,
       attributeCache,
+      [
+        slotColors[slot * 3]!,
+        slotColors[slot * 3 + 1]!,
+        slotColors[slot * 3 + 2]!,
+      ],
     );
     if (styleColor) {
       const base = slot * 3;
@@ -101,6 +108,7 @@ function resolveStyleColor(
   objectKeys: ReadonlyArray<string>,
   evaluate: SurfaceStyleEvaluator,
   attributeCache: Map<number, Readonly<Record<string, unknown>>>,
+  base: RGB,
 ): RGB | null {
   const objectId = objectKeys[objIdx];
   if (!objectId) return null;
@@ -119,5 +127,6 @@ function resolveStyleColor(
   return evaluate(
     { surfaceIndex: surfIdx, surface },
     { objectId, object, attributes },
+    base,
   );
 }

@@ -99,11 +99,14 @@ export interface CellEntry {
    *  triggers it again on its own (B2, 2026-07-28 final review). */
   readonly builtWithRulesEnabled: boolean;
   readonly builtWithRules: ReadonlyArray<Rule>;
+  /** The colour expression of the same moment, `null` for none. */
+  readonly builtWithExpression: unknown;
 }
 
 export function emptyCellEntry(
   rulesEnabled: boolean,
   rules: ReadonlyArray<Rule>,
+  expression: unknown = null,
 ): CellEntry {
   return {
     geometry: emptyCellGeometry(),
@@ -112,6 +115,7 @@ export function emptyCellEntry(
     lodsSeen: [],
     builtWithRulesEnabled: rulesEnabled,
     builtWithRules: rules,
+    builtWithExpression: expression,
   };
 }
 
@@ -314,6 +318,8 @@ export class StreamLayerHandle implements StreamLayerEvents {
   private _cameraSync = true;
   private _rules: ReadonlyArray<Rule> = [];
   private _rulesEnabled = false;
+  /** A colour expression that replaces the rules; `null` for none. */
+  private _expression: unknown = null;
   private _lodMode: "auto" | "manual" = "auto";
   private _selectedLod: string | null = null;
   /** Sorted and deduped by {@link StreamLayerHandle.setHiddenTypes}. */
@@ -605,6 +611,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
       // `CellEntry`'s doc comment, B2).
       const rules = this._rules;
       const rulesEnabled = this._rulesEnabled;
+      const expression = this._expression;
 
       const fetchPromise = client
         .sendStreaming(
@@ -616,6 +623,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
             lod: lodToWireLabel(plan.lod),
             rules,
             rulesEnabled,
+            ...(expression === null ? {} : { expression }),
             appearance: appearanceTheme,
           },
           (msg: WorkerResponse) => {
@@ -629,6 +637,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
                   lodsSeen: msg.lodsSeen,
                   builtWithRulesEnabled: rulesEnabled,
                   builtWithRules: rules,
+                  builtWithExpression: expression,
                 },
                 stats: cellStatsFromGeometry(msg.geometry, msg.retainedBytes),
               });
@@ -750,7 +759,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
       for (const key of plan.toFetch) {
         if (!fetched.has(key)) {
           fetched.set(key, {
-            entry: emptyCellEntry(rulesEnabled, rules),
+            entry: emptyCellEntry(rulesEnabled, rules, expression),
             stats: { triangles: 0, bytes: 0 },
           });
         }
@@ -873,6 +882,7 @@ export class StreamLayerHandle implements StreamLayerEvents {
       visible: this._visible,
       rules: this._rules,
       rulesEnabled: this._rulesEnabled,
+      expression: this._expression,
       heightOffsetM: this.options.heightOffsetM,
       layerId: this.id,
       themeStyle: this._themeStyle,
@@ -932,10 +942,17 @@ export class StreamLayerHandle implements StreamLayerEvents {
     // discipline `commit` applies to a fetch).
     const rules = this._rules;
     const rulesEnabled = this._rulesEnabled;
+    const expression = this._expression;
 
     try {
       await this.options.client.sendStreaming(
-        { type: "recolor", cells: [...targets.keys()], rules, rulesEnabled },
+        {
+          type: "recolor",
+          cells: [...targets.keys()],
+          rules,
+          rulesEnabled,
+          ...(expression === null ? {} : { expression }),
+        },
         (msg: WorkerResponse) => {
           if (msg.type !== "recolored") return;
           const target = targets.get(msg.key);
@@ -967,16 +984,25 @@ export class StreamLayerHandle implements StreamLayerEvents {
    *
    * A no-op set is dropped rather than sent — the app re-pushes layer state on
    * every sync, and each round trip re-bakes every resident cell.
+   *
+   * `expression`, a style-spec colour expression, colours the cells instead
+   * of the rules when given (`compileStyleExpression`).
    */
-  setRules(rules: ReadonlyArray<Rule>, enabled: boolean): void {
+  setRules(
+    rules: ReadonlyArray<Rule>,
+    enabled: boolean,
+    expression: unknown = null,
+  ): void {
     if (
       this._rulesEnabled === enabled &&
-      JSON.stringify(this._rules) === JSON.stringify(rules)
+      JSON.stringify(this._rules) === JSON.stringify(rules) &&
+      JSON.stringify(this._expression) === JSON.stringify(expression)
     ) {
       return;
     }
     this._rules = rules;
     this._rulesEnabled = enabled;
+    this._expression = expression;
     void this.recolorCells();
   }
 

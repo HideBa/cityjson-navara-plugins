@@ -45,6 +45,7 @@ function fakeEntry(tag: string): CellEntry {
     lodsSeen: [],
     builtWithRulesEnabled: false,
     builtWithRules: [],
+    builtWithExpression: null,
   };
 }
 
