@@ -295,6 +295,57 @@ describe("rulesToStyleExpression", () => {
     }
   }
 
+  it("refuses a number written as text in both, so they agree on it", () => {
+    // 3DBAG and others write numbers as strings; neither evaluator coerces.
+    const tall: Rule = {
+      id: "t",
+      name: "Tall",
+      color: "#ff0000",
+      logic: "AND",
+      enabled: true,
+      conditions: [{ field: "height", operator: ">", value: 10 }],
+    };
+    const rules = compileRuleEvaluator([tall])!;
+    const expression = evaluator(rulesToStyleExpression([tall]));
+    for (const height of ["12", 12, "x", null]) {
+      const object = {
+        objectId: "B1",
+        object: {
+          id: "B1",
+          objectType: "Building",
+          attributes: { height },
+          surfaces: [roof],
+          bbox: null,
+          children: [],
+          parents: [],
+          lod: "2",
+        },
+        attributes: { height },
+      };
+      const surface = { surfaceIndex: 0, surface: { ...roof, attributes: {} } };
+      expect(expression(surface, object, BASE)).toEqual(
+        rules(surface, object, BASE),
+      );
+    }
+    const numeric = {
+      objectId: "B1",
+      object: {
+        id: "B1",
+        objectType: "Building",
+        attributes: { height: 12 },
+        surfaces: [roof],
+        bbox: null,
+        children: [],
+        parents: [],
+        lod: "2",
+      },
+      attributes: { height: 12 },
+    };
+    expect(
+      expression({ surfaceIndex: 0, surface: roof }, numeric, BASE),
+    ).toEqual(RED);
+  });
+
   it("matches some roofs and not others on the fixtures, so the parity is not vacuous", () => {
     const base = slotColours(twoBuildings, null);
     const flatRoofs = slotColours(twoBuildings, compileRuleEvaluator([flat()]));

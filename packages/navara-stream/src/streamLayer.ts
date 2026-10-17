@@ -224,9 +224,6 @@ export interface StreamLayerHandleOptions {
    * - {@link StreamLayerHandle.setLod}, because a LoD change must refetch
    *   even for a viewport that has not moved — hysteresis would otherwise skip
    *   the commit and leave the old LoD resident indefinitely (B1);
-   * - {@link StreamLayerHandle.setHiddenTypes}, for the identical reason:
-   *   the resident cells were BAKED without the hidden types, so a toggle is
-   *   only visible after a refetch;
    * - {@link StreamLayerHandle.setCameraSync} when sync is switched back
    *   ON, because the layer ignored every settle while it was off and is
    *   therefore resident on some older viewport (and possibly some older LoD).
@@ -264,8 +261,8 @@ function subscribe<T extends unknown[]>(
  * controller calls on the first event of a gesture.
  *
  * Everything else is the parity surface:
- * `setRules`/`setLod`/`setHiddenTypes`/`setVisible` drive what the next commit
- * fetches and how it is coloured, and
+ * `setRules`/`setLod` drive what the next commit fetches and how it is
+ * coloured, `setHiddenTypes`/`setVisible` what the resident cells show, and
  * `setHighlight`/`resolvePick`/`getBoundsGeodetic`/`triangleCount` make the
  * layer a full participant in the app's picking, highlighting, fit and
  * triangle readout — the four members `InteractionHandle` (Task C13) shares
