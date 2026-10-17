@@ -870,6 +870,41 @@ describe("StreamLayerRegistry.openStream", () => {
     expect((fetches.at(-1)!.rules as unknown[]).length).toBe(1);
   });
 
+  it("seeds a colour expression before the first commit too", async () => {
+    const trace: string[] = [];
+    const { client } = makeFakeClient({ trace });
+    const r = makeRegistry({
+      createClient: (_format) => client,
+      getPickRays: () => topDownRays(),
+      sampleGeoidHeight: async () => GEOID_M,
+    });
+
+    await r.openStream({
+      ...openOpts,
+      rules: [
+        {
+          id: "r1",
+          name: "roofs",
+          color: "#ff0000",
+          logic: "AND",
+          conditions: [],
+          enabled: true,
+        },
+      ],
+      rulesEnabled: false,
+      expression: ["get", "$base"],
+    });
+    await flush();
+
+    const fetches = (
+      client.sendStreaming as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls.map((c) => c[0] as Record<string, unknown>);
+    expect(fetches.at(-1)).toMatchObject({
+      type: "fetch",
+      expression: ["get", "$base"],
+    });
+  });
+
   it("seeds hiddenTypes before the first commit, so the first cells arrive hidden", async () => {
     const trace: string[] = [];
     const { client } = makeFakeClient({ trace });

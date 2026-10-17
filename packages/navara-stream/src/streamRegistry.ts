@@ -137,6 +137,9 @@ export interface OpenStreamOptions {
   readonly format: WorkerFormat;
   readonly rules?: ReadonlyArray<Rule>;
   readonly rulesEnabled?: boolean;
+  /** A colour expression (`compileStyleExpression`), baked in place of the
+   *  rules when present. Seeded with them. */
+  readonly expression?: unknown;
   readonly visible?: boolean;
   /** First-level object types to stream WITHOUT geometry — hiding "Building"
    *  also hides its BuildingParts. Seeded before the first commit, so a
@@ -556,7 +559,11 @@ export class StreamLayerRegistry {
       // unseeded first fetch would bake no rule colours and every resident
       // cell would need a recolor round trip to catch up (C10a/C10b ledger).
       handle.setVisible(opts.visible ?? true);
-      handle.setRules(opts.rules ?? [], opts.rulesEnabled ?? true);
+      handle.setRules(
+        opts.rules ?? [],
+        opts.rulesEnabled ?? true,
+        opts.expression ?? null,
+      );
       // Same reason, one step stronger: the first cells would arrive showing
       // everything the user had hidden, until the next toggle.
       handle.setHiddenTypes(opts.hiddenTypes ?? []);
