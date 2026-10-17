@@ -29,7 +29,7 @@
  */
 
 import type { BBox3, CityModel, CityObject, Vec3 } from "@cityjson/navara-core";
-import { mergeBBox } from "@cityjson/navara-core";
+import { mergeBBox, withImplicitSurfaces } from "@cityjson/navara-core";
 import { CityParquetError } from "./footer";
 import { decodeImplicitTemplates, decodeTableObjects } from "./decodeTable";
 import {
@@ -513,7 +513,9 @@ export async function assembleCityParquetModel(
     : undefined;
 
   const builtAppearance = buildPackageAppearance(appearance);
-  return {
+  // Each instance's template, placed, joins its object's surfaces, so the
+  // model draws, picks and counts trees like any other object.
+  return withImplicitSurfaces({
     sourceEncoding: "cityparquet",
     metadata: {
       referenceSystem: `https://www.opengis.net/def/crs/EPSG/0/${String(epsg)}`,
@@ -523,5 +525,5 @@ export async function assembleCityParquetModel(
     vertexCount,
     ...(builtAppearance ? { appearance: builtAppearance } : {}),
     ...(implicitTemplates ? { implicitTemplates } : {}),
-  };
+  });
 }

@@ -155,6 +155,10 @@ export {
 } from "./geometry/buildCityMeshArrays";
 export type { MeshCell, PartitionedArrays } from "./geometry/partitionCells";
 export { partitionCells } from "./geometry/partitionCells";
+export {
+  placeImplicitSurfaces,
+  withImplicitSurfaces,
+} from "./citymodel/implicitSurfaces";
 export type { LodSelection } from "./geometry/lodSelection";
 export { sameLodGeometry } from "./geometry/lodSelection";
 export {

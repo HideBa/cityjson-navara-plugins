@@ -12,10 +12,13 @@ import type {
   BuildingSurfaceType,
   CityModelMetadata,
   CityObject,
+  ImplicitGeometryRef,
+  ImplicitTemplate,
   Surface,
   SurfaceTexture,
   Vec3,
 } from "../types";
+import { higherLod, placeImplicitSurfaces } from "../implicitSurfaces";
 import {
   EMPTY_APPEARANCE_CONTEXT,
   resolveSurfaceMaterial,
@@ -27,6 +30,8 @@ import type {
   CityJSONGeometryType,
   CityJSONObject,
   CityJSONRoot,
+  CityJSONGeometryInstance,
+  CityJSONGeometryTemplates,
   CityJSONSemanticSurface,
   CityJSONSurfaceGeometry,
   CityJSONTransform,
@@ -307,6 +312,7 @@ export function parseCityObject(
   raw: CityJSONObject,
   realVertices: Vec3[],
   ctx: AppearanceContext = EMPTY_APPEARANCE_CONTEXT,
+  templates?: ReadonlyMap<number, ImplicitTemplate>,
 ): CityObject {
   const allSurfaces: Surface[] = [];
   const objectBBox: MutableBBox = [
@@ -318,9 +324,26 @@ export function parseCityObject(
     -Infinity,
   ];
   let lod: string | null = null;
+  let implicitGeometry: ImplicitGeometryRef | undefined;
 
   for (const geom of raw.geometry ?? []) {
-    if (geom.type === "GeometryInstance") continue;
+    if (geom.type === "GeometryInstance") {
+      // Placed into the object's own surfaces, in geometry order; the first
+      // instance is also kept as the reference (CityParquet stores one).
+      const ref = instanceRef(geom, realVertices);
+      const template = ref ? templates?.get(ref.templateId) : undefined;
+      if (!ref || !template) continue;
+      implicitGeometry ??= ref;
+      const placed = placeImplicitSurfaces(template, ref);
+      for (const surface of placed) {
+        for (const ring of surface.rings) {
+          for (const v of ring) expandBBox(objectBBox, v);
+        }
+      }
+      allSurfaces.push(...placed);
+      lod = higherLod(lod, template.lod);
+      continue;
+    }
     // Normalised to STRING here, at the boundary: v1.0 wrote `"lod": 2` (a
     // number), and passing it through as one makes the first render work —
     // `2 !== 2` keeps every surface — while the first LoD-dropdown pick
@@ -362,8 +385,64 @@ export function parseCityObject(
       : null,
     children: raw.children ? [...raw.children] : [],
     parents: raw.parents ? [...raw.parents] : [],
+    ...(implicitGeometry ? { implicitGeometry } : {}),
     lod,
   };
+}
+
+const IDENTITY_MATRIX: ReadonlyArray<number> = [
+  1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+];
+
+/** A `GeometryInstance` as a reference: its template, its reference point (a
+ *  vertex of the object's own list) and its matrix. `null` when malformed. */
+function instanceRef(
+  geom: CityJSONGeometryInstance,
+  realVertices: Vec3[],
+): ImplicitGeometryRef | null {
+  const point = realVertices[geom.boundaries?.[0] ?? -1];
+  if (!point || typeof geom.template !== "number") return null;
+  const m = geom.transformationMatrix;
+  return {
+    templateId: geom.template,
+    referencePoint: point,
+    transformationMatrix:
+      Array.isArray(m) && m.length === 16 ? [...m] : IDENTITY_MATRIX,
+  };
+}
+
+/**
+ * A document's `geometry-templates`, by index, in their local coordinates:
+ * `vertices-templates` are real coordinates and never go through the
+ * document's `transform`. `ctx` resolves their appearance like an object's.
+ */
+export function parseGeometryTemplates(
+  raw: CityJSONGeometryTemplates | undefined,
+  ctx: AppearanceContext = EMPTY_APPEARANCE_CONTEXT,
+): Map<number, ImplicitTemplate> | undefined {
+  if (!raw || !Array.isArray(raw.templates)) return undefined;
+  const vertices = (raw["vertices-templates"] ?? []).map(
+    (v) => [v[0], v[1], v[2]] as Vec3,
+  );
+  const templates = new Map<number, ImplicitTemplate>();
+  raw.templates.forEach((geom, id) => {
+    const lod = geom.lod === undefined ? null : String(geom.lod);
+    const bbox: MutableBBox = [
+      Infinity,
+      Infinity,
+      Infinity,
+      -Infinity,
+      -Infinity,
+      -Infinity,
+    ];
+    templates.set(id, {
+      id,
+      name: null,
+      lod,
+      surfaces: extractSurfaces(geom, vertices, bbox, lod, ctx),
+    });
+  });
+  return templates;
 }
 
 // ---------------------------------------------------------------------------

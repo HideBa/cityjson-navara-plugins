@@ -18,6 +18,7 @@ import {
   mapMetadata,
   mergeBBox,
   parseCityObject,
+  parseGeometryTemplates,
 } from "../cityjson/parseHelpers";
 import { AppearanceMerger } from "../cityjson/appearance";
 
@@ -57,7 +58,12 @@ export function parseCityJSONSeq(text: string): CityModel {
   // into one model-wide table. The header is registered too: the spec does
   // not give it an appearance, but a writer that put one there loses nothing.
   const appearance = new AppearanceMerger();
-  appearance.register(header.appearance);
+  // The header is where CityJSONSeq keeps `geometry-templates`, with the
+  // header's appearance.
+  const templates = parseGeometryTemplates(
+    header["geometry-templates"],
+    appearance.register(header.appearance),
+  );
 
   // Lines 2+: CityJSONFeature objects
   for (let i = 1; i < lines.length; i++) {
@@ -73,7 +79,7 @@ export function parseCityJSONSeq(text: string): CityModel {
       string,
       CityJSONObject,
     ][]) {
-      const obj = parseCityObject(id, rawObj, realVertices, ctx);
+      const obj = parseCityObject(id, rawObj, realVertices, ctx, templates);
       objects[id] = obj;
       modelBBox = mergeBBox(modelBBox, obj.bbox);
     }
@@ -86,6 +92,7 @@ export function parseCityJSONSeq(text: string): CityModel {
     bbox: modelBBox,
     objects,
     vertexCount: totalVertexCount,
+    ...(templates ? { implicitTemplates: templates } : {}),
     ...(built === undefined ? {} : { appearance: built }),
   };
 }

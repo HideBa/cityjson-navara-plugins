@@ -13,6 +13,7 @@ import {
   mapMetadata,
   mergeBBox,
   parseCityObject,
+  parseGeometryTemplates,
 } from "./parseHelpers";
 import { AppearanceMerger } from "./appearance";
 
@@ -42,12 +43,13 @@ export function parseCityJSON(root: CityJSONRoot): CityModel {
   let modelBBox: BBox3 | null = null;
   const appearance = new AppearanceMerger();
   const ctx = appearance.register(root.appearance);
+  const templates = parseGeometryTemplates(root["geometry-templates"], ctx);
 
   for (const [id, rawObj] of Object.entries(root.CityObjects) as [
     string,
     CityJSONObject,
   ][]) {
-    const obj = parseCityObject(id, rawObj, realVertices, ctx);
+    const obj = parseCityObject(id, rawObj, realVertices, ctx, templates);
     objects[id] = obj;
     modelBBox = mergeBBox(modelBBox, obj.bbox);
   }
@@ -58,13 +60,14 @@ export function parseCityJSON(root: CityJSONRoot): CityModel {
     bbox: modelBBox,
     objects,
     vertexCount: root.vertices.length,
+    ...(templates ? { implicitTemplates: templates } : {}),
     ...withAppearance(appearance.build()),
   };
 }
 
 /** Spread helper: a model without appearance has NO `appearance` key at all. */
-function withAppearance(
-  appearance: ReturnType<AppearanceMerger["build"]>,
-): { appearance?: NonNullable<ReturnType<AppearanceMerger["build"]>> } {
+function withAppearance(appearance: ReturnType<AppearanceMerger["build"]>): {
+  appearance?: NonNullable<ReturnType<AppearanceMerger["build"]>>;
+} {
   return appearance === undefined ? {} : { appearance };
 }

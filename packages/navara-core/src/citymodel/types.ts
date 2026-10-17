@@ -209,8 +209,9 @@ export interface CityObject {
   readonly childrenRoles?: ReadonlyArray<string | null>;
   /** The object's addresses. Absent when the source carries none. */
   readonly address?: ReadonlyArray<CityAddress>;
-  /** The object's implicit geometry. Absent when it has none. Its template is
-   *  not part of {@link surfaces}. */
+  /** The object's (first) implicit geometry. Absent when it has none. Its
+   *  template, placed, IS part of {@link surfaces} (`implicitSurfaces.ts`), so
+   *  a reader that instances from this reference must not also draw those. */
   readonly implicitGeometry?: ImplicitGeometryRef;
   /** Level of detail string from the source geometry (e.g. "2", "2.2"). */
   readonly lod: string | null;

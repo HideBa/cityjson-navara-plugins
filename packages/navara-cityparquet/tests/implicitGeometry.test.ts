@@ -13,6 +13,7 @@ import {
   decodeImplicitTemplates,
   decodeTableObjects,
 } from "../src/decodeTable";
+import { withImplicitSurfaces, type CityModel } from "@cityjson/navara-core";
 import {
   readCityParquetTable,
   readImplicitGeometriesTable,
@@ -101,6 +102,52 @@ describe("implicit geometries written by the reference writer", () => {
           ),
         ),
       );
+    }
+  });
+
+  it("places each object's template into its surfaces, at the export's coordinates", async () => {
+    // What `assembleCityParquetModel` does once the tables are decoded (the
+    // fixture has no CRS, so the package itself cannot be georeferenced).
+    const [table, templates, expected] = await Promise.all([
+      readCityParquetTable(await bytesOf("vegetation.parquet")),
+      readImplicitGeometriesTable(
+        await bytesOf("implicit_geometries.parquet"),
+      ).then((t) => decodeImplicitTemplates(t)),
+      oracle(),
+    ]);
+    const model = withImplicitSurfaces({
+      sourceEncoding: "cityparquet",
+      metadata: {},
+      bbox: null,
+      objects: decodeTableObjects(table),
+      vertexCount: 0,
+      implicitTemplates: templates,
+    } satisfies CityModel);
+    for (const [id, instance] of Object.entries(expected.objects)) {
+      const m = instance.transformationMatrix ?? IDENTITY;
+      const p = instance.point;
+      const placedVertex = (v: Vec3): Vec3 =>
+        grid([
+          m[0]! * v[0] + m[1]! * v[1] + m[2]! * v[2] + m[3]! + p[0],
+          m[4]! * v[0] + m[5]! * v[1] + m[6]! * v[2] + m[7]! + p[1],
+          m[8]! * v[0] + m[9]! * v[1] + m[10]! * v[2] + m[11]! + p[2],
+        ]);
+      const template = expected.templates[instance.template]!;
+      expect(
+        model.objects[id]!.surfaces.map((s) =>
+          s.rings.map((ring) => ring.map(grid)),
+        ),
+        id,
+      ).toEqual(
+        template.boundaries.map((face) =>
+          face.map((ring) =>
+            ring.map((index) =>
+              placedVertex(expected["vertices-templates"][index]!),
+            ),
+          ),
+        ),
+      );
+      expect(model.objects[id]!.bbox, id).not.toBeNull();
     }
   });
 });
