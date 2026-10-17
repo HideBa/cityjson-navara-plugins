@@ -439,8 +439,11 @@ describe("CityModelMesh hidden types", () => {
     const m = new CityModelMesh(partOpts);
     m.setThemeStyle({ fill: "vertex", edges: { color: 0x1a1a1a } });
     const edgeVertices = () =>
-      (m.object3d.children[0] as LineSegments).geometry.getAttribute("position")
-        .count;
+      (
+        m.object3d.children.find(
+          (c) => c instanceof LineSegments,
+        ) as LineSegments
+      ).geometry.getAttribute("position").count;
     // Three stacked quads, 4 boundary edges each, 2 endpoints per edge.
     expect(edgeVertices()).toBe(24);
     m.setHiddenTypes(["Building"]);

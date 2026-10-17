@@ -27,16 +27,23 @@ import {
   appearanceThemesEqual,
   buildCityMeshArrays,
   computeOriginOffset,
+  partitionCells,
   projectPositionsToEnu,
   raisePositionsInEnu,
   sameLodGeometry,
   type AppearanceTheme,
   type CityMeshArrays,
   type CityModel,
+  type MeshCell,
   type SurfaceStyleEvaluator,
   type Vec3,
 } from "@cityjson/navara-core";
-import { geometryFromMeshArrays } from "./cityMeshGeometry";
+import {
+  cellGeometry,
+  computeCellBounds,
+  drawCellOnly,
+  geometryFromMeshArrays,
+} from "./cityMeshGeometry";
 import {
   buildPlacement,
   geodeticBoundsFromBBox,
@@ -151,6 +158,11 @@ function sameVisibleIds(
   return true;
 }
 
+/** The side of a static layer's grid cell, in metres: small enough that the
+ *  frustum culls inside a city, large enough that a district is a handful
+ *  of draws. */
+export const STATIC_CELL_SIZE = 250;
+
 export class CityModelMesh {
   readonly id: string;
   readonly epsg: number;
@@ -165,6 +177,10 @@ export class CityModelMesh {
   private hiddenTypes: ReadonlySet<string>;
   private visibleObjectIds: ReadonlySet<string> | null;
   private arrays: CityMeshArrays;
+  /** The build's cells (`partitionCells`). The root mesh draws the first
+   *  one itself; {@link cellMeshes} draw the rest, one child each. */
+  private cells: readonly MeshCell[] = [];
+  private readonly cellMeshes: Mesh[] = [];
   /** The style texture every material of this mesh reads (`cityStyle.ts`):
    *  colours, highlight and the texture mask are writes into it. */
   private readonly style: SlotStyle;
@@ -246,6 +262,7 @@ export class CityModelMesh {
     this.object3d.userData.layerId = this.id;
     this.object3d.castShadow = true;
     this.object3d.receiveShadow = true;
+    this.syncCells();
     this.applyPlacement();
     // After `applyPlacement`: the theme's edge child copies the mesh's
     // matrixWorld when it builds, and every later placement change runs
@@ -284,7 +301,46 @@ export class CityModelMesh {
       // floats/sinks by the offset.
       heightOffset: this.placement.heightOffset,
     });
-    return arrays;
+    // Reordered so each cell is one range of the buffers; nothing else
+    // changes, so slots, picking and hiding read the result as before.
+    const partitioned = partitionCells(arrays, STATIC_CELL_SIZE);
+    this.cells = partitioned.cells;
+    return partitioned.arrays;
+  }
+
+  /**
+   * Draw the build one cell at a time: the root draws the first cell, and
+   * every further cell is a child mesh on the root's own attributes, index,
+   * materials and placement, bounded by its own vertices. The root keeps the
+   * whole layer's bounds, so the engine frames and culls the layer as before
+   * and the first cell is simply never culled on its own.
+   */
+  private syncCells(): void {
+    for (const mesh of this.cellMeshes) {
+      this.object3d.remove(mesh);
+      mesh.geometry.dispose();
+    }
+    this.cellMeshes.length = 0;
+    const [first, ...rest] = this.cells;
+    if (first) drawCellOnly(this.geometry, this.arrays, first);
+    rest.forEach((cell, i) => {
+      const mesh = new Mesh(
+        cellGeometry(this.geometry, this.arrays, cell),
+        this.object3d.material,
+      );
+      mesh.name = `${this.object3d.name}:cell${i + 1}`;
+      mesh.userData.layerId = this.id;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.customDepthMaterial = this.depthMaterial;
+      // Navara never composes a child's matrix (see the edge child in
+      // `themeStyle.ts`), so each cell carries the root's world matrix.
+      mesh.matrixAutoUpdate = false;
+      mesh.matrixWorld.copy(this.object3d.matrixWorld);
+      mesh.matrixWorldNeedsUpdate = false;
+      this.object3d.add(mesh);
+      this.cellMeshes.push(mesh);
+    });
   }
 
   /** The ENU frame, its ECEF matrix and the offset baked into both, for
@@ -310,6 +366,9 @@ export class CityModelMesh {
     this.object3d.matrix.copy(this.placement.matrixWorld);
     this.object3d.matrixWorld.copy(this.placement.matrixWorld);
     this.object3d.matrixWorldNeedsUpdate = false;
+    for (const mesh of this.cellMeshes) {
+      mesh.matrixWorld.copy(this.placement.matrixWorld);
+    }
   }
 
   private get geometry(): BufferGeometry {
@@ -333,6 +392,7 @@ export class CityModelMesh {
         this.releaseMaterials(this.object3d.material);
         this.object3d.material = createCityMaterial(this.style.uniforms);
         this.shadowMaterials.register(this.object3d.material);
+        this.shareMaterials();
         this.theme.materialsReplaced();
       }
       return;
@@ -353,7 +413,14 @@ export class CityModelMesh {
     this.object3d.material = next;
     for (const m of next) this.shadowMaterials.register(m);
     this.releaseMaterials(previous);
+    this.shareMaterials();
     this.theme.materialsReplaced();
+  }
+
+  /** Every cell draws with the root's material (array): a group's material
+   *  index is its index in the whole build. */
+  private shareMaterials(): void {
+    for (const mesh of this.cellMeshes) mesh.material = this.object3d.material;
   }
 
   /** Unregister from the shadow registry FIRST, then dispose, so the
@@ -568,6 +635,9 @@ export class CityModelMesh {
     // Navara frustum-culls on the sphere; a raycast may have cached the box.
     geometry.computeBoundingSphere();
     if (geometry.boundingBox) geometry.computeBoundingBox();
+    this.cellMeshes.forEach((mesh, i) =>
+      computeCellBounds(mesh.geometry, this.cells[i + 1]!),
+    );
     // The edge lines copied the old positions.
     this.theme.geometryReplaced();
     this.requestRender();
@@ -585,6 +655,7 @@ export class CityModelMesh {
     this.style.replace(this.arrays);
     this.object3d.geometry = geometryFromMeshArrays(this.arrays);
     old.dispose();
+    this.syncCells();
     this.applyMaterials();
     this.applyHidden();
     this.repaint();
@@ -709,10 +780,12 @@ export class CityModelMesh {
       0,
       Infinity,
     );
-    // `false`: the mesh's only children are its edge lines, and a line hit
-    // must never answer for the surface under the cursor. Nearest first; a
-    // hidden slot is still in the geometry, so it is skipped, not hit.
-    for (const hit of raycaster.intersectObject(this.object3d, false)) {
+    // The root and its cells, never the edge lines: a line hit must never
+    // answer for the surface under the cursor. Each cell's bounds prune the
+    // cells the ray misses. Nearest first; a hidden slot is still in the
+    // geometry, so it is skipped, not hit.
+    const meshes = [this.object3d, ...this.cellMeshes];
+    for (const hit of raycaster.intersectObjects(meshes, false)) {
       if (!hit.face || this.style.isHidden(this.arrays.slots[hit.face.a]!)) {
         continue;
       }
@@ -787,6 +860,7 @@ export class CityModelMesh {
 
   dispose(): void {
     this.theme.dispose();
+    for (const mesh of this.cellMeshes) mesh.geometry.dispose();
     this.geometry.dispose();
     this.textures?.dispose();
     this.textures = null;

@@ -22,8 +22,8 @@
  * that read one.
  */
 
-import type { CityMeshArrays } from "@cityjson/navara-core";
-import { BufferAttribute, BufferGeometry } from "three";
+import type { CityMeshArrays, MeshCell } from "@cityjson/navara-core";
+import { Box3, BufferAttribute, BufferGeometry, Sphere, Vector3 } from "three";
 
 /**
  * Wrap `arrays` in an indexed `BufferGeometry` with the attributes the
@@ -51,6 +51,75 @@ export function geometryFromMeshArrays(arrays: CityMeshArrays): BufferGeometry {
   }
   geometry.computeBoundingSphere();
   return geometry;
+}
+
+/**
+ * Restrict `geometry` to drawing one cell of a partitioned build
+ * (`partitionCells`): its index range, and under a texture theme its own
+ * draw groups, each keeping its index into the layer's material array.
+ */
+export function drawCellOnly(
+  geometry: BufferGeometry,
+  arrays: CityMeshArrays,
+  cell: MeshCell,
+): void {
+  geometry.setDrawRange(cell.indexStart, cell.indexCount);
+  geometry.clearGroups();
+  const groups = arrays.textureGroups;
+  if (!groups) return;
+  for (let g = cell.groupStart; g < cell.groupStart + cell.groupCount; g++) {
+    geometry.addGroup(groups[g]!.start, groups[g]!.count, g);
+  }
+}
+
+/**
+ * A geometry drawing one cell of `root`'s build. It shares every attribute
+ * and the index with `root`, so the buffers upload once for the whole
+ * layer; only its draw range, groups and bounds are its own.
+ */
+export function cellGeometry(
+  root: BufferGeometry,
+  arrays: CityMeshArrays,
+  cell: MeshCell,
+): BufferGeometry {
+  const geometry = new BufferGeometry();
+  for (const [name, attribute] of Object.entries(root.attributes)) {
+    geometry.setAttribute(name, attribute);
+  }
+  geometry.setIndex(root.getIndex());
+  drawCellOnly(geometry, arrays, cell);
+  computeCellBounds(geometry, cell);
+  return geometry;
+}
+
+/**
+ * Bounding box and sphere over the cell's own vertex range. Three's own
+ * `computeBoundingSphere` reads every vertex of the shared attribute, which
+ * would give each cell the whole layer's bounds and cull nothing.
+ */
+export function computeCellBounds(
+  geometry: BufferGeometry,
+  cell: MeshCell,
+): void {
+  const p = geometry.getAttribute("position").array as Float32Array;
+  const from = cell.vertexStart * 3;
+  const to = (cell.vertexStart + cell.vertexCount) * 3;
+  const box = (geometry.boundingBox ??= new Box3());
+  box.makeEmpty();
+  const v = new Vector3();
+  for (let i = from; i < to; i += 3) {
+    box.expandByPoint(v.set(p[i]!, p[i + 1]!, p[i + 2]!));
+  }
+  const sphere = (geometry.boundingSphere ??= new Sphere());
+  box.getCenter(sphere.center);
+  let r2 = 0;
+  for (let i = from; i < to; i += 3) {
+    r2 = Math.max(
+      r2,
+      sphere.center.distanceToSquared(v.set(p[i]!, p[i + 1]!, p[i + 2]!)),
+    );
+  }
+  sphere.radius = cell.vertexCount > 0 ? Math.sqrt(r2) : -1;
 }
 
 /**
