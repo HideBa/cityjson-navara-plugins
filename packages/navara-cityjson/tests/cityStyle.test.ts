@@ -69,7 +69,7 @@ describe("CityStyleTexture", () => {
   });
 
   it("then uploads only the texels a commit changed, one range per row", () => {
-    const t = new CityStyleTexture(2500);
+    const t = new CityStyleTexture(20_000);
     t.commit();
     uploaded(t);
     const version = t.texture.version;
@@ -82,6 +82,41 @@ describe("CityStyleTexture", () => {
       { start: 5 * 4, count: 3 * 4 },
       { start: 1030 * 4, count: 4 },
     ]);
+  });
+
+  it("uploads a small texture whole: a ranged upload costs synchronous GL queries", () => {
+    // three reads UNPACK_* back with getParameter around every ranged
+    // upload; a stream holds hundreds of small cell textures, and a restyle
+    // that queried for each blocked the main thread for over a second.
+    const t = new CityStyleTexture(2500);
+    t.commit();
+    uploaded(t);
+    t.setFlags(5, SLOT_SELECTED);
+    t.commit();
+    expect(t.texture.updateRanges).toEqual([]);
+  });
+
+  it("uploads whole when a commit changed most of the texture", () => {
+    const t = new CityStyleTexture(20_000);
+    t.commit();
+    uploaded(t);
+    t.setFlags(5, SLOT_SELECTED);
+    t.commit();
+    expect(t.texture.updateRanges).toHaveLength(1);
+    for (let s = 0; s < 20_000; s++) t.setColor(s, 1, 0, 0);
+    t.commit();
+    expect(t.texture.updateRanges).toEqual([]);
+  });
+
+  it("keeps a whole upload whole when a small commit follows before it lands", () => {
+    const t = new CityStyleTexture(20_000);
+    t.commit();
+    uploaded(t);
+    for (let s = 0; s < 20_000; s++) t.setColor(s, 1, 0, 0);
+    t.commit();
+    t.setFlags(5, SLOT_SELECTED);
+    t.commit();
+    expect(t.texture.updateRanges).toEqual([]);
   });
 
   it("does not upload a commit that changed nothing", () => {

@@ -49,6 +49,12 @@ import { paintSlotFlags } from "./surfaceColorLayers";
  *  with fewer slots gets a texture exactly as wide as it needs. */
 export const STYLE_TEXTURE_WIDTH = 1024;
 
+/** Below this many texels a texture always uploads whole. three brackets
+ *  every ranged upload with synchronous `getParameter` reads of the unpack
+ *  state, which cost more than sending a small texture outright; a stream's
+ *  hundreds of cell textures paid them on every restyle. */
+const RANGED_MIN_TEXELS = 16_384;
+
 /** Bumped whenever the shader patch changes, so no cached program is reused. */
 const PATCH_VERSION = "city-style-5";
 
@@ -62,10 +68,12 @@ function linearToSrgbByte(c: number): number {
  * changed, once per burst of writes.
  *
  * The first upload sends the whole texture (three allocates the GPU copy from
- * it). After that a commit sends, per row, the span of texels whose bytes
- * changed, through three's `updateRanges`: a hover touches one object's
- * slots, not the cell's. A write that leaves a byte as it was is not a
- * change, so a commit after a no-op repaint uploads nothing.
+ * it). After that, on a texture of at least {@link RANGED_MIN_TEXELS}, a
+ * commit that changed at most a quarter of it sends, per row, the span of
+ * texels whose bytes changed, through three's `updateRanges`: a hover on a
+ * large static layer touches one object's slots, not the layer's. Anything
+ * else uploads whole. A write that leaves a byte as it was is not a change,
+ * so a commit after a no-op repaint uploads nothing.
  */
 export class CityStyleTexture {
   readonly texture: DataTexture;
@@ -77,10 +85,10 @@ export class CityStyleTexture {
   private readonly rowLo: Int32Array;
   private readonly rowHi: Int32Array;
   private dirty = false;
-  /** Whether three has uploaded the texture once. Until then a commit must
-   *  leave `updateRanges` empty: a range on the allocating upload would
-   *  leave the rest of the GPU copy undefined. */
-  private uploaded = false;
+  /** A whole upload is asked for and three has not made it yet. Until it
+   *  has, no commit may add a range: three would send only the ranges, and
+   *  on the allocating upload the rest of the GPU copy would be undefined. */
+  private wholePending = true;
 
   constructor(slotCount: number) {
     this.slotCount = slotCount;
@@ -103,7 +111,7 @@ export class CityStyleTexture {
     this.texture.generateMipmaps = false;
     this.texture.flipY = false;
     this.texture.onUpdate = () => {
-      this.uploaded = true;
+      this.wholePending = false;
     };
     this.texture.needsUpdate = true;
   }
@@ -164,11 +172,28 @@ export class CityStyleTexture {
   commit(): void {
     if (!this.dirty) return;
     this.dirty = false;
+    const texels = this.width * this.rowLo.length;
+    let changed = 0;
+    for (let row = 0; row < this.rowLo.length; row++) {
+      const lo = this.rowLo[row]!;
+      const hi = this.rowHi[row]!;
+      if (lo <= hi) changed += hi - lo + 1;
+    }
+    const ranged =
+      !this.wholePending &&
+      texels >= RANGED_MIN_TEXELS &&
+      changed * 4 <= texels;
+    // A whole upload must not leave earlier ranges behind: three would read
+    // them as "only these".
+    if (!ranged) {
+      this.texture.clearUpdateRanges();
+      this.wholePending = true;
+    }
     for (let row = 0; row < this.rowLo.length; row++) {
       const lo = this.rowLo[row]!;
       const hi = this.rowHi[row]!;
       if (lo > hi) continue;
-      if (this.uploaded) {
+      if (ranged) {
         this.texture.addUpdateRange(
           (row * this.width + lo) * 4,
           (hi - lo + 1) * 4,
