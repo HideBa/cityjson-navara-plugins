@@ -249,13 +249,21 @@ export function projectCityObjects(
     let box: MutableBBox | null = object.bbox
       ? ([...projectBBox(object.bbox, target)] as MutableBBox)
       : null;
+    // One projected vertex per source vertex object: a corner its surfaces
+    // share stays shared, which is what lets the mesh builder place it once.
+    const projected = new Map<Vec3, Vec3>();
     const surfaces = object.surfaces.map((surface) => ({
       ...surface,
       rings: surface.rings.map((ring) =>
         ring.map((point): Vec3 => {
-          const [x, y] = target.toTarget(point[0], point[1]);
-          box = extend(box, x, y, point[2]);
-          return [x, y, point[2]];
+          let out = projected.get(point);
+          if (out === undefined) {
+            const [x, y] = target.toTarget(point[0], point[1]);
+            box = extend(box, x, y, point[2]);
+            out = [x, y, point[2]];
+            projected.set(point, out);
+          }
+          return out;
         }),
       ),
     }));

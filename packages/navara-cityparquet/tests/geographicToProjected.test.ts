@@ -154,6 +154,31 @@ function objectAt(lon: number, lat: number): CityObject {
 }
 
 describe("projectCityObjects", () => {
+  it("keeps a vertex shared by two surfaces one object", () => {
+    const target = coordinateTargetFor(6697, [139.6, 35.45]);
+    const base = objectAt(139.6, 35.45);
+    const ring = base.surfaces[0]!.rings[0]!;
+    const objects: Record<string, CityObject> = {
+      a: {
+        ...base,
+        surfaces: [
+          ...base.surfaces,
+          {
+            type: "WallSurface",
+            rings: [[ring[1]!, ring[0]!, [139.6, 35.45, 0]]],
+            attributes: {},
+            lod: "2",
+          },
+        ],
+      },
+    };
+    projectCityObjects(objects, target);
+    const [roof, wall] = objects.a!.surfaces;
+    expect(wall!.rings[0]![0]).toBe(roof!.rings[0]![1]);
+    expect(wall!.rings[0]![1]).toBe(roof!.rings[0]![0]);
+    expect(wall!.rings[0]![2]).not.toBe(roof!.rings[0]![0]);
+  });
+
   it("projects an address location with the rings", () => {
     const target = coordinateTargetFor(6697, [139.6, 35.45]);
     const objects: Record<string, CityObject> = {

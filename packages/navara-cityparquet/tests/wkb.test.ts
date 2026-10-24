@@ -73,6 +73,39 @@ describe("decodeWkb", () => {
     expect(d.faces[1]?.[0]?.[0]).toEqual([0, 0, 3]);
   });
 
+  it("hands every repeat of a coordinate in one geometry the same Vec3", () => {
+    // The mesh builder projects each vertex OBJECT once, so a corner shared
+    // by several faces must arrive as one object, as CityJSON's do.
+    const w = new W();
+    w.u8(1).u32(1015).u32(2);
+    polygonZ(w, 0);
+    polygonZ(w, 0);
+    const d = decodeWkb(w.out());
+    if (d.kind !== "faces") throw new Error("wrong kind");
+    const [a, b] = [d.faces[0]![0]!, d.faces[1]![0]!];
+    expect(b[0]).toBe(a[0]);
+    expect(b[2]).toBe(a[2]);
+    expect(a[1]).not.toBe(a[0]);
+    expect(a.map((v) => [...v])).toEqual([
+      [0, 0, 0],
+      [1, 0, 0],
+      [1, 1, 0],
+      [0, 1, 0],
+    ]);
+  });
+
+  it("never shares a Vec3 between coordinates that differ", () => {
+    const w = new W();
+    w.u8(1).u32(1015).u32(2);
+    polygonZ(w, 0);
+    polygonZ(w, -0);
+    const d = decodeWkb(w.out());
+    if (d.kind !== "faces") throw new Error("wrong kind");
+    // -0 and 0 are different bits; both decode to their own values.
+    expect(d.faces[1]![0]![0]).not.toBe(d.faces[0]![0]![0]);
+    expect(Object.is(d.faces[1]![0]![0]![2], -0)).toBe(true);
+  });
+
   it("decodes MultiPolygonZ (footprints) and polygon holes", () => {
     const w = new W();
     w.u8(1)
@@ -339,9 +372,9 @@ describe("decodeWkb on real cityparquet data", () => {
     if (a.kind !== "faces") throw new Error(`expected faces, got ${a.kind}`);
     expect(a.faces.length).toBe(7);
     expect(a.memberFaceCounts).toEqual([7]);
-    expect(
-      a.faces.map((f) => f[0]?.length ?? 0).sort((x, y) => x - y),
-    ).toEqual([3, 4, 4, 4, 4, 4, 4]);
+    expect(a.faces.map((f) => f[0]?.length ?? 0).sort((x, y) => x - y)).toEqual(
+      [3, 4, 4, 4, 4, 4, 4],
+    );
     expectPlausibleShell(a.faces, 3);
 
     // Pand.0002 is a plain six-face box.

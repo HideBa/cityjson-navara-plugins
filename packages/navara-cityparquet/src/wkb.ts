@@ -1,11 +1,13 @@
 /**
  * Minimal little-endian ISO-WKB reader for the CityJSON → CityParquet geometry
  * mapping. Behaviour mirrors `cityparquet-rs/crates/cityparquet/src/wkb_read.rs`
- * — the inverse of the writer that produced these blobs — with one deliberate
- * difference: the Rust reader interns coordinates into a shared pool because
- * its caller rebuilds a CityJSON vertex list, whereas this one hands back plain
- * `Vec3` rings, which is what the mesh builder wants. Deduplication, if it is
- * ever worth doing here, belongs at the mesh-building layer.
+ * — the inverse of the writer that produced these blobs. Like the Rust reader
+ * it interns coordinates, within one geometry: every repeat of a coordinate
+ * (a corner shared by several faces, a ring's closing vertex) is the same
+ * `Vec3` object, as a CityJSON vertex index is. The mesh builder projects
+ * each vertex object once, and a shared object is one allocation, not three.
+ * Two coordinates share an object only when all three values are identical
+ * (`Object.is`, so `0` and `-0` stay apart).
  *
  * Engine-free: no `@navaramap/*` imports.
  */
@@ -71,6 +73,8 @@ const RING_CLOSURE_EPSILON = 1e-9;
 class Cursor {
   private readonly view: DataView;
   private pos = 0;
+  /** The last coordinate decoded per hash of its bytes. */
+  private readonly pool = new Map<number, Vec3>();
 
   constructor(bytes: Uint8Array) {
     this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -106,17 +110,32 @@ class Cursor {
     return v;
   }
 
-  f64(): number {
-    this.require(8, "8 bytes (f64)");
-    const v = this.view.getFloat64(this.pos, true);
-    this.pos += 8;
-    return v;
-  }
-
   coord(): Vec3 {
-    // Array-literal evaluation is left-to-right, so this reads x, y, z in
-    // buffer order.
-    return [this.f64(), this.f64(), this.f64()];
+    this.require(24, "24 bytes (XYZ)");
+    const view = this.view;
+    const at = this.pos;
+    let h = 0;
+    for (let i = 0; i < 24; i += 4) {
+      h = Math.imul(h ^ view.getUint32(at + i, true), 0x9e3779b1);
+    }
+    const x = view.getFloat64(at, true);
+    const y = view.getFloat64(at + 8, true);
+    const z = view.getFloat64(at + 16, true);
+    this.pos += 24;
+    // A hash collision with a different coordinate replaces the pooled one:
+    // only sharing is lost, never a value.
+    const seen = this.pool.get(h);
+    if (
+      seen !== undefined &&
+      Object.is(seen[0], x) &&
+      Object.is(seen[1], y) &&
+      Object.is(seen[2], z)
+    ) {
+      return seen;
+    }
+    const v: Vec3 = [x, y, z];
+    this.pool.set(h, v);
+    return v;
   }
 
   /**
