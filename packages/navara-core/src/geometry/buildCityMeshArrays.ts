@@ -29,6 +29,7 @@ import {
   type LinearRGB,
 } from "../styling/surfaceColors";
 import type { BuildingSurfaceType } from "../citymodel/types";
+import type { VertexPlacer } from "../geo/vertexPlacer";
 
 /**
  * A contiguous INDEX range of the arrays drawn with one texture image
@@ -149,6 +150,11 @@ interface PendingSurface {
  * still takes its `objectKeys` slot and its object index — object indices must
  * be identical to an unfiltered build, or every consumer that maps an index
  * back through `objectKeys` shifts by the number of filtered objects before it.
+ *
+ * `place`, when given, writes each vertex's final position (local ENU metres,
+ * `vertexPlacer.ts`) and `originOffset` is not used: the positions come out
+ * placed, and the normals are taken where they are drawn. Without it the
+ * positions are source-CRS deltas from `originOffset`.
  */
 export function buildCityMeshArrays(
   model: CityModel,
@@ -161,6 +167,7 @@ export function buildCityMeshArrays(
    *  host passes `resolveSurfaceColorsLinear(itsPalette)` to bake its own. */
   surfaceColors: Record<BuildingSurfaceType, LinearRGB> = SURFACE_COLORS_LINEAR,
   visibleObjectIds: ReadonlySet<string> | null = null,
+  place: VertexPlacer | null = null,
 ): CityMeshArrays {
   const objectKeys: string[] = [];
   const objectTypes: string[] = [];
@@ -310,9 +317,13 @@ export function buildCityMeshArrays(
     for (let i = 0; i < vertices.length; i++) {
       const v = vertices[i]!;
       const base = (first + i) * 3;
-      posArray[base] = v[0] - originOffset[0];
-      posArray[base + 1] = v[1] - originOffset[1];
-      posArray[base + 2] = v[2] - originOffset[2];
+      if (place) {
+        place.place(v, posArray, base);
+      } else {
+        posArray[base] = v[0] - originOffset[0];
+        posArray[base + 1] = v[1] - originOffset[1];
+        posArray[base + 2] = v[2] - originOffset[2];
+      }
       if (uvArray && triangulation.uvs) {
         const uv = triangulation.uvs[i]!;
         uvArray[(first + i) * 2] = uv[0];

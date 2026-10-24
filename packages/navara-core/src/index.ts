@@ -129,6 +129,8 @@ export {
   geodeticRingsToEnu,
 } from "./geo/sourceToEnu";
 export { raisePositionsInEnu } from "./geo/raiseEnu";
+export type { VertexPlacer } from "./geo/vertexPlacer";
+export { createVertexPlacer } from "./geo/vertexPlacer";
 export type { RasterPixels, GeoidSampleDeps } from "./geo/geoidHeight";
 export {
   GEOID_TILEJSON_URL,

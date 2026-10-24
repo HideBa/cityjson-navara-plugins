@@ -2,7 +2,7 @@
  * Re-place already-projected local-ENU positions after a change of the
  * vertical-datum offset, without going back to source coordinates.
  *
- * `projectPositionsToEnu` adds `heightOffset` to every vertex's geodetic
+ * A placed vertex (`createVertexPlacer`) has `heightOffset` added to its geodetic
  * height and the frame origin carries the same offset. Changing it by `dh`
  * therefore moves, in ECEF:
  *  - the frame origin by `dh · up₀` (its rotation depends only on the origin's
@@ -42,10 +42,18 @@ export function raisePositionsInEnu(
   if (deltaHeight === 0) return positions;
   const m = frame.matrix;
   // Columns: east (0..2), north (4..6), up (8..10), origin (12..14).
-  const ex = m[0]!, ey = m[1]!, ez = m[2]!;
-  const nx = m[4]!, ny = m[5]!, nz = m[6]!;
-  const ux = m[8]!, uy = m[9]!, uz = m[10]!;
-  const tx = m[12]!, ty = m[13]!, tz = m[14]!;
+  const ex = m[0]!,
+    ey = m[1]!,
+    ez = m[2]!;
+  const nx = m[4]!,
+    ny = m[5]!,
+    nz = m[6]!;
+  const ux = m[8]!,
+    uy = m[9]!,
+    uz = m[10]!;
+  const tx = m[12]!,
+    ty = m[13]!,
+    tz = m[14]!;
   for (let i = 0; i < positions.length; i += 3) {
     const e = positions[i]!;
     const n = positions[i + 1]!;
@@ -75,8 +83,7 @@ export function raisePositionsInEnu(
     // dh·(Rᵀn − ẑ): the up component subtracts the origin's own rise.
     positions[i] = e + s * (ex * gx + ey * gy + ez * gz);
     positions[i + 1] = n + s * (nx * gx + ny * gy + nz * gz);
-    positions[i + 2] =
-      u + (s * (ux * gx + uy * gy + uz * gz) - deltaHeight);
+    positions[i + 2] = u + (s * (ux * gx + uy * gy + uz * gz) - deltaHeight);
   }
   return positions;
 }

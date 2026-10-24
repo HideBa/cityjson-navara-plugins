@@ -27,8 +27,8 @@ import {
   appearanceThemesEqual,
   buildCityMeshArrays,
   computeOriginOffset,
+  createVertexPlacer,
   partitionCells,
-  projectPositionsToEnu,
   raisePositionsInEnu,
   sameLodGeometry,
   type AppearanceTheme,
@@ -37,6 +37,7 @@ import {
   type MeshCell,
   type SurfaceStyleEvaluator,
   type Vec3,
+  type VertexPlacer,
 } from "@cityjson/navara-core";
 import {
   cellGeometry,
@@ -173,6 +174,10 @@ export class CityModelMesh {
   private readonly originOffset: Vec3;
   private readonly makePlacementMatrix: ((lle: Lle) => Matrix4) | undefined;
   private placement: Placement;
+  /** Places vertices for {@link placerFor}; kept across rebuilds, so a LoD
+   *  switch reuses every vertex an earlier build projected. */
+  private placer: VertexPlacer | null = null;
+  private placerFor: Placement | null = null;
   private lod: string | readonly string[] | null;
   private hiddenTypes: ReadonlySet<string>;
   private visibleObjectIds: ReadonlySet<string> | null;
@@ -278,6 +283,23 @@ export class CityModelMesh {
   /** Every object of the LoD selection, hidden or not: hiding is a flag
    *  ({@link applyHidden}), so a toggle never rebuilds. */
   private buildArrays(): CityMeshArrays {
+    // Positions come out in local ENU metres, each vertex placed exactly:
+    // source (x, y, z) -> lng/lat -> +heightOffset -> ECEF -> inverse ENU
+    // frame. Source-CRS deltas are NOT ENU metres: a projected CRS carries
+    // scale factor and grid convergence, so a delta 5 km from the origin is
+    // off by metres in position and by a fraction of a degree in bearing.
+    // The placer belongs to the current placement (its frame and height
+    // offset), so a new placement starts a new one.
+    if (this.placer === null || this.placerFor !== this.placement) {
+      this.placer = createVertexPlacer({
+        epsg: this.epsg,
+        frame: this.placement.frame,
+        // From the SAME bundle as the frame — the two must agree or the mesh
+        // floats/sinks by the offset.
+        heightOffset: this.placement.heightOffset,
+      });
+      this.placerFor = this.placement;
+    }
     const arrays = buildCityMeshArrays(
       this.model,
       this.id,
@@ -286,21 +308,9 @@ export class CityModelMesh {
       null,
       this.appearance,
       this.colors.surfaceColorsLinear,
+      null,
+      this.placer,
     );
-    // buildCityMeshArrays emits *source-CRS deltas* from originOffset. Those
-    // are NOT ENU metres: a projected CRS carries scale factor and grid
-    // convergence, so a delta 5 km from the origin is off by metres in
-    // position and by a fraction of a degree in bearing. Re-place every vertex
-    // exactly: source (x, y, z) -> lng/lat -> +heightOffset -> ECEF ->
-    // inverse ENU frame. Runs once per LoD rebuild, not per frame.
-    projectPositionsToEnu(arrays.positions, {
-      originOffset: this.originOffset,
-      epsg: this.epsg,
-      frame: this.placement.frame,
-      // From the SAME bundle as the frame — the two must agree or the mesh
-      // floats/sinks by the offset.
-      heightOffset: this.placement.heightOffset,
-    });
     // Reordered so each cell is one range of the buffers; nothing else
     // changes, so slots, picking and hiding read the result as before.
     const partitioned = partitionCells(arrays, STATIC_CELL_SIZE);

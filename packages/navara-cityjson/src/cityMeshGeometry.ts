@@ -6,8 +6,8 @@
  * Every attribute intentionally *wraps* the caller's typed array rather than
  * copying it:
  *
- * - `position` is rewritten in place by `projectPositionsToEnu` when a layer's
- *   ENU frame or height offset is resolved, so it must alias.
+ * - `position` is moved in place by `raisePositionsInEnu` when a layer's
+ *   height offset is resolved, so it must alias.
  * - `citySlot` names each vertex's surface. The style texture is indexed by
  *   it, so colour, highlight and the texture mask never touch a vertex, and
  *   the CPU raycast reads it back through `arrays.slots`.

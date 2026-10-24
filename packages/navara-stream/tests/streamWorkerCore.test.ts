@@ -439,14 +439,11 @@ describe("streamWorkerCore", () => {
     expect(cells[0]!.objects.map((o) => o.id).sort()).toEqual(["p", "q"]);
   });
 
-  it("bakes a PROJECTED source byte for byte as it did before the frame path", async () => {
-    // A baseline PIN, not a failing test: the geographic-to-ENU milestone adds
-    // a second bake path (rings already geodetic, converted per cell by
-    // arithmetic) beside this one, and a projected source — RD New here, and
-    // every FlatCityBuf source — must keep going through proj4 and
-    // `projectPositionsToEnu` with the same numbers. Captured from the code as
-    // it stood before that change, to the centimetre in ENU and to 1e-4 in
-    // each normal component.
+  it("bakes a PROJECTED source to pinned ENU positions and normals", async () => {
+    // A baseline PIN: a projected source — RD New here, and every
+    // FlatCityBuf source — goes through proj4 vertex by vertex into the
+    // cell's ENU frame. Positions to the centimetre, normals to 1e-4 in each
+    // component.
     const { posted, send } = harness(fakeAdapter([feature("a", 100, 100)]));
     await send({ type: "open", id: 0, source: { url: "fake://x" } });
     await send(fetchMsg(1, ["2/0/0"]));
@@ -468,9 +465,13 @@ describe("streamWorkerCore", () => {
       -92.2, -97.46, 10, -102.18, -97.74, 10, -101.91, -107.72, 0, -101.91,
       -107.72, 0, -91.93, -107.45, 0, -92.2, -97.46, 10,
     ]);
+    // The normal is taken from the placed ENU corners, so it carries the grid
+    // convergence at the roof (about 1.6 degrees this far west of RD's
+    // central meridian). The cross product of the corners above gives
+    // (0.0198, -0.7074, 0.7065) to their 2-decimal rounding.
     expect(round(cell.geometry.normals, 4)).toEqual([
-      0, -0.7071, 0.7071, 0, -0.7071, 0.7071, 0, -0.7071, 0.7071, 0, -0.7071,
-      0.7071, 0, -0.7071, 0.7071, 0, -0.7071, 0.7071,
+      0.0196, -0.7073, 0.7066, 0.0196, -0.7073, 0.7066, 0.0196, -0.7073, 0.7066,
+      0.0196, -0.7073, 0.7066, 0.0196, -0.7073, 0.7066, 0.0196, -0.7073, 0.7066,
     ]);
   });
 

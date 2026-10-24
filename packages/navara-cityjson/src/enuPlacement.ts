@@ -11,8 +11,8 @@
  * Scope: this module places an **origin**, not vertices. Source-CRS deltas
  * from that origin are not ENU metres (a projected CRS carries a point scale
  * factor and a grid convergence angle), so every vertex is separately
- * transformed by core's `projectPositionsToEnu` in the geometry build path —
- * Task B6 for static layers, the FlatCityBuf worker for streaming cells.
+ * placed by core's `createVertexPlacer` in the geometry build path — the
+ * static `CityModelMesh` and the stream worker's cell bake.
  *
  * Vertical datum: CityJSON z is normally orthometric (NAP for EPSG:7415)
  * while the ENU frame sits on the WGS84 ellipsoid, so a geoid undulation
@@ -149,7 +149,7 @@ export function geodeticBoundsFromBBox(
  * datum `heightOffset` (the geoid undulation from `geoidHeightAt`).
  *
  * **Invariant:** the same `heightOffset` MUST be passed to
- * `projectPositionsToEnu` for that layer's vertices. The offset then appears
+ * `createVertexPlacer` for that layer's vertices. The offset then appears
  * on both sides of the ENU subtraction and cancels, so local coordinates stay
  * small and a vertex at the origin's own height lands at ENU z = 0. Offsetting
  * only the vertices floats the mesh `heightOffset` metres up; offsetting only
@@ -194,7 +194,7 @@ export interface Placement {
   readonly frame: EnuFrame;
   /** That same frame as an ENU->ECEF matrix, for the mesh's `matrixWorld`. */
   readonly matrixWorld: Matrix4;
-  /** The offset baked into `frame`, to hand to `projectPositionsToEnu`. */
+  /** The offset baked into `frame`, to hand to `createVertexPlacer`. */
   readonly heightOffset: number;
 }
 
@@ -203,7 +203,7 @@ export interface Placement {
  *
  * `makePlacementFrame` already documents the frame+offset invariant, but a
  * caller still had to remember to derive the matrix from the SAME frame and to
- * pass the SAME offset on to `projectPositionsToEnu` — three values wired by
+ * pass the SAME offset on to `createVertexPlacer` — three values wired by
  * hand at every call site. This returns all three together, so the only way to
  * mis-wire them is to ignore the bundle. `CityModelMesh` (Task B6) and the
  * streaming cell path (Tasks C5/C8) both consume it.

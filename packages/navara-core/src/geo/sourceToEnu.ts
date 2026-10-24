@@ -16,9 +16,9 @@
  *       -> geodeticToEcef                  = ECEF metres
  *       -> inverse of the frame's ENU matrix = local ENU metres
  *
- * The cost is one proj4 *projection* per vertex, paid once per geometry build
- * (a LoD change, or a worker decoding a cell) — never per frame. In the
- * FlatCityBuf pipeline it runs inside the worker.
+ * The cost is one proj4 *projection* per vertex. Geometry builds pay it
+ * through `createVertexPlacer` (`vertexPlacer.ts`), once per distinct vertex
+ * object rather than once per triangle corner; never per frame.
  *
  * Note the difference between a projection and a *converter*: proj4's
  * three-argument call `proj4(from, to, coord)` re-parses both CRS definitions
@@ -38,7 +38,7 @@ import type { BBox3, CityObject, Vec3 } from "../citymodel/types";
 import { geodeticToEcef, type EnuFrame } from "./enuFrame";
 
 /** Just the half of proj4's `Converter` this module uses. */
-interface SourceToWgs84 {
+export interface SourceToWgs84 {
   forward(coords: [number, number]): [number, number];
 }
 
@@ -46,7 +46,7 @@ interface SourceToWgs84 {
  * One reusable source-CRS -> WGS84 converter. Hoist this out of any per-vertex
  * loop; constructing it is the expensive part, using it is not.
  */
-function makeWgs84Converter(epsg: number): SourceToWgs84 {
+export function makeWgs84Converter(epsg: number): SourceToWgs84 {
   ensureProjDef(epsg);
   return proj4(`EPSG:${epsg}`, "WGS84") as SourceToWgs84;
 }
@@ -228,7 +228,11 @@ function enuBoxOfGeodeticBox(
     for (const lat of [bbox[1], bbox[4]]) {
       for (const z of [bbox[2], bbox[5]]) {
         const h = z + heightOffset;
-        if (!Number.isFinite(lng) || !Number.isFinite(lat) || !Number.isFinite(h)) {
+        if (
+          !Number.isFinite(lng) ||
+          !Number.isFinite(lat) ||
+          !Number.isFinite(h)
+        ) {
           return null;
         }
         box = extend(box, geodeticToEnu(lng, lat, h, frame));

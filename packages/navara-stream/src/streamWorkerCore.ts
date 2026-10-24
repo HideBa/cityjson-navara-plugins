@@ -21,7 +21,7 @@ import {
   geodeticRingsToEnu,
   localMetricFrameFromDescriptor,
   makeEnuFrame,
-  projectPositionsToEnu,
+  createVertexPlacer,
   type AppearanceTheme,
   resolveSurfaceColorsLinear,
   SURFACE_COLORS_LINEAR,
@@ -212,12 +212,13 @@ function estimateRetainedBytes(
  * one of two spaces (`docs/plans/2026-09-23-geographic-to-enu.md`):
  *
  * - `"projected"` — the original. `buildCityMeshArrays` emits source-CRS deltas
- *   from the cell centre, and the renderer treats a cell's vertices as ENU
- *   metres, which for a projected CRS is wrong by the point scale factor and
- *   the grid convergence angle and ignores the vertical datum entirely. The
- *   correction is per-vertex, so it belongs off the main thread: right here
- *   (Task A13b's `projectPositionsToEnu`; `CityModelMesh` does the identical
- *   thing for static layers). EVERY FlatCityBuf source and every projected
+ *   from the cell centre unless it is handed a placer, and the renderer treats a
+ *   cell's vertices as ENU metres, which for a projected CRS is wrong by the
+ *   point scale factor and the grid convergence angle and ignores the vertical
+ *   datum entirely. The correction is per-vertex, so it belongs off the main
+ *   thread: right here, through a `createVertexPlacer` per bake, which projects
+ *   each distinct vertex once (`CityModelMesh` does the same for static
+ *   layers). EVERY FlatCityBuf source and every projected
  *   CityParquet one takes this path, unchanged.
  * - `"bucket"` — a GEOGRAPHIC source (EPSG:6697). Its rings are already
  *   geodetic, so they are converted into the cell's ENU frame by arithmetic
@@ -845,20 +846,20 @@ export function installStreamWorker(
               null,
               msg.appearance ?? null,
               surfaceColors,
+              null,
+              // A projected source is placed vertex by vertex in the cell's
+              // OWN frame: source-CRS deltas are off by the projection's scale
+              // factor and grid convergence, which is metres and a fraction of
+              // a degree of bearing at cell scale. One placer per bake: the
+              // decoded vertices are new objects on every fetch.
+              place.kind === "projected"
+                ? createVertexPlacer({
+                    epsg: place.epsg,
+                    frame,
+                    heightOffset: place.heightOffset,
+                  })
+                : null,
             );
-            if (place.kind === "projected") {
-              // `a.positions` are source-CRS deltas from `origin`; the renderer
-              // wants local ENU metres in the cell's OWN frame, so re-place
-              // every vertex exactly. Without this the deltas are off by the
-              // projection's scale factor and grid convergence, which is metres
-              // and a fraction of a degree of bearing at cell scale.
-              projectPositionsToEnu(a.positions, {
-                originOffset: origin,
-                epsg: place.epsg,
-                frame,
-                heightOffset: place.heightOffset,
-              });
-            }
             const ruleColors = styleColors(
               msg,
               cellModel,

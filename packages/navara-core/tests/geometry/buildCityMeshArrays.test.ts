@@ -23,6 +23,14 @@ import type {
   Surface,
   Vec3,
 } from "../../src/citymodel/types";
+import proj4 from "proj4";
+import { ensureProjDef } from "../../src/citymodel/crsProjDefs";
+import { makeEnuFrame } from "../../src/geo/enuFrame";
+import { projectPositionsToEnu } from "../../src/geo/sourceToEnu";
+import {
+  createVertexPlacer,
+  type VertexPlacer,
+} from "../../src/geo/vertexPlacer";
 
 const fixture = path.resolve(
   import.meta.dirname!,
@@ -800,5 +808,173 @@ describe("indexed per surface", () => {
     const big = buildCityMeshArrays(makeModel(objects), "test");
     expect(big.positions.length / 3).toBe(65_536);
     expect(big.indices).toBeInstanceOf(Uint32Array);
+  });
+});
+
+describe("buildCityMeshArrays with a vertex placer", () => {
+  // A stand-in for the ENU placement: a quarter turn about z plus a shift, so
+  // a placed position and a placed normal are both told apart from the
+  // unplaced ones.
+  const quarterTurn: VertexPlacer = {
+    place(v, out, at) {
+      out[at] = -v[1] + 1000;
+      out[at + 1] = v[0] - 2000;
+      out[at + 2] = v[2];
+    },
+    projectedCount: () => 0,
+  };
+
+  it("writes the placed position of every corner and ignores originOffset", () => {
+    const ring: Vec3[] = [
+      [100, 200, 0],
+      [110, 200, 0],
+      [110, 200, 10],
+      [100, 200, 10],
+    ];
+    const model = makeModel({
+      w: makeObject("w", [makeSurface("WallSurface", ring)]),
+    });
+    const arrays = buildCityMeshArrays(
+      model,
+      "L",
+      [50, 50, 50],
+      null,
+      null,
+      null,
+      SURFACE_COLORS_LINEAR,
+      null,
+      quarterTurn,
+    );
+    const placed = new Float32Array(12);
+    ring.forEach((v, i) => quarterTurn.place(v, placed, i * 3));
+    expectVertexSet(arrays.positions, [
+      ...[0, 1, 2, 3].map(
+        (i) => [...placed.subarray(i * 3, i * 3 + 3)] as unknown as Vec3,
+      ),
+    ]);
+  });
+
+  it("computes normals from the placed positions", () => {
+    // A wall in the x/z plane faces -y or +y; a quarter turn about z makes
+    // that face +x or -x, so a normal taken before placement would be wrong.
+    const ring: Vec3[] = [
+      [100, 200, 0],
+      [110, 200, 0],
+      [110, 200, 10],
+      [100, 200, 10],
+    ];
+    const model = makeModel({
+      w: makeObject("w", [makeSurface("WallSurface", ring)]),
+    });
+    const arrays = buildCityMeshArrays(
+      model,
+      "L",
+      [0, 0, 0],
+      null,
+      null,
+      null,
+      SURFACE_COLORS_LINEAR,
+      null,
+      quarterTurn,
+    );
+    expect(Math.abs(arrays.normals[0]!)).toBeCloseTo(1, 6);
+    expect(arrays.normals[1]!).toBeCloseTo(0, 6);
+    expect(arrays.normals[2]!).toBeCloseTo(0, 6);
+  });
+
+  it("projects a vertex shared by two surfaces once", () => {
+    const a: Vec3 = [155000, 463000, 0];
+    const b: Vec3 = [155010, 463000, 0];
+    const c: Vec3 = [155010, 463010, 0];
+    const d: Vec3 = [155000, 463010, 0];
+    const top: Vec3 = [155005, 463005, 8];
+    const model = makeModel({
+      r: makeObject("r", [
+        makeSurface("RoofSurface", [a, b, top]),
+        makeSurface("RoofSurface", [b, c, top]),
+        makeSurface("RoofSurface", [c, d, top]),
+        makeSurface("RoofSurface", [d, a, top]),
+      ]),
+    });
+    ensureProjDef(7415);
+    const [lng, lat] = proj4("EPSG:7415", "WGS84", [155000, 463000]) as [
+      number,
+      number,
+    ];
+    const placer = createVertexPlacer({
+      epsg: 7415,
+      frame: makeEnuFrame(lng, lat, 0),
+      heightOffset: 0,
+    });
+    const arrays = buildCityMeshArrays(
+      model,
+      "L",
+      [0, 0, 0],
+      null,
+      null,
+      null,
+      SURFACE_COLORS_LINEAR,
+      null,
+      placer,
+    );
+    expect(arrays.positions.length / 3).toBe(12);
+    expect(placer.projectedCount()).toBe(5);
+  });
+});
+
+describe("buildCityMeshArrays placed against projected afterwards", () => {
+  it("puts every vertex within a millimetre of projectPositionsToEnu on the deltas", () => {
+    // The two routes to ENU: place each source vertex directly, or emit
+    // Float32 deltas from an origin and project those. They differ only by
+    // the deltas' Float32 rounding, which is far under a millimetre here.
+    const lift = (dx: number, dy: number, z: number): Vec3 => [
+      85000 + dx,
+      446000 + dy,
+      z,
+    ];
+    const surfaces: Surface[] = [];
+    for (let i = 0; i < 20; i++) {
+      const x = (i % 5) * 400 - 800;
+      const y = Math.floor(i / 5) * 350 - 500;
+      surfaces.push(
+        makeSurface("RoofSurface", [
+          lift(x, y, 6),
+          lift(x + 12.5, y, 6),
+          lift(x + 12.5, y + 9.25, 11),
+          lift(x, y + 9.25, 11),
+        ]),
+      );
+    }
+    const grid = makeModel({ g: makeObject("g", surfaces) });
+    ensureProjDef(7415);
+    const originOffset = [85000, 446000, 0] as const;
+    const [lng, lat] = proj4("EPSG:7415", "WGS84", [85000, 446000]) as [
+      number,
+      number,
+    ];
+    const opts = {
+      epsg: 7415,
+      frame: makeEnuFrame(lng, lat, 43),
+      heightOffset: 43,
+    };
+    const placed = buildCityMeshArrays(
+      grid,
+      "L",
+      [0, 0, 0],
+      null,
+      null,
+      null,
+      SURFACE_COLORS_LINEAR,
+      null,
+      createVertexPlacer(opts),
+    ).positions;
+    const deltas = buildCityMeshArrays(grid, "L", originOffset, null).positions;
+    projectPositionsToEnu(deltas, { originOffset, ...opts });
+    expect(placed.length).toBe(deltas.length);
+    let worst = 0;
+    for (let i = 0; i < placed.length; i++) {
+      worst = Math.max(worst, Math.abs(placed[i]! - deltas[i]!));
+    }
+    expect(worst).toBeLessThan(1e-3);
   });
 });
