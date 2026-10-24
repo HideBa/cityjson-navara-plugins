@@ -1,7 +1,7 @@
 /**
- * A static layer projects each vertex once per placement: a LoD switch
- * reuses the vertices an earlier build placed, and only a new placement (a
- * new height offset) starts over.
+ * A static layer projects each vertex once for its life: a LoD switch reuses
+ * the vertices an earlier build projected, and so does a new placement (a
+ * new height offset), which only redoes the arithmetic into its frame.
  */
 import { describe, it, expect, vi } from "vitest";
 import type { CityModel, Surface } from "@cityjson/navara-core";
@@ -12,9 +12,9 @@ vi.mock("@cityjson/navara-core", async (importOriginal) => {
   return {
     ...core,
     createVertexPlacer: (
-      opts: Parameters<typeof core.createVertexPlacer>[0],
+      ...args: Parameters<typeof core.createVertexPlacer>
     ) => {
-      const placer = core.createVertexPlacer(opts);
+      const placer = core.createVertexPlacer(...args);
       placers.push(placer);
       return placer;
     },
@@ -91,12 +91,15 @@ describe("CityModelMesh vertex placement", () => {
     expect(positions(m)).toEqual(positions(new CityModelMesh(opts)));
   });
 
-  it("starts a new placer for a new height offset", () => {
+  it("places a new height offset from the projections it already has", () => {
     placers.length = 0;
     const m = new CityModelMesh(opts);
     m.setHeightOffset(43);
     m.setLod("1");
+    // A new placer for the new frame, on the same projections: LoD 1's four
+    // corners were projected for LoD 2, so the count stays at six.
     expect(placers).toHaveLength(2);
+    expect(placers[1]!.projectedCount()).toBe(6);
     expect(positions(m)).toEqual(
       positions(new CityModelMesh({ ...opts, lod: "1", heightOffset: 43 })),
     );

@@ -7,56 +7,118 @@
  * 3DBAG, and again on every rebuild. The parser hands every ring the SAME
  * `Vec3` object for the same vertex index (`buildSurface`), and triangulation
  * keeps those objects, so a cache keyed by the object projects each vertex
- * once for as long as the placer lives: one bake in the worker, the life of
- * one placement on the static path.
+ * once for as long as the cache lives.
  *
- * The computation is {@link sourceToEnuPoint}'s, on the double-precision
- * source coordinates, stored as the Float32 the position buffer holds. A
- * `Vec3` is never mutated after parsing, which is what makes its identity a
- * valid key; a placer is tied to one frame and one height offset, so a new
- * placement needs a new placer.
+ * What is cached is the proj4 half, `{@link ProjectedVertices}`: a vertex's
+ * geodetic position as the terms of `geodeticToEcef` that do not depend on
+ * height. It holds for any frame and any height offset, so a static layer
+ * keeps one for its life and a new placement (a geoid offset arriving) does
+ * not re-project. The ENU half is arithmetic per corner, in the same order as
+ * `geodeticToEnu`, so a placed vertex is bit for bit
+ * {@link sourceToEnuPoint}'s answer, stored as the Float32 the position
+ * buffer holds.
+ *
+ * A `Vec3` is never mutated after parsing, which is what makes its identity a
+ * valid key. A source whose decoder makes a new `Vec3` per corner (the
+ * CityParquet WKB reader) shares nothing, and pays a map entry per corner on
+ * top of the projection.
  */
 import type { Vec3 } from "../citymodel/types";
-import {
-  geodeticToEnu,
-  makeWgs84Converter,
-  type SourceToEnuOptions,
-} from "./sourceToEnu";
+import { WGS84_A, WGS84_E2 } from "./enuFrame";
+import { makeWgs84Converter, type SourceToEnuOptions } from "./sourceToEnu";
+
+/** Per vertex: n, cos(phi), cos(lambda), sin(lambda), sin(phi). */
+const TERMS = 5;
+
+/** Source vertices' geodetic positions, projected once each, for one CRS. */
+export interface ProjectedVertices {
+  readonly epsg: number;
+  /** The slot of `v`'s terms in {@link terms}, projecting it if new. */
+  slotOf(v: Vec3): number;
+  /** {@link TERMS} numbers per slot. Replaced when it grows: read it after
+   *  {@link slotOf}. */
+  terms(): Float64Array;
+  /** How many distinct vertices have been projected so far. */
+  count(): number;
+}
+
+export function createProjectedVertices(epsg: number): ProjectedVertices {
+  const convert = makeWgs84Converter(epsg);
+  const slots = new Map<Vec3, number>();
+  let store = new Float64Array(TERMS * 1024);
+  let count = 0;
+  return {
+    epsg,
+    slotOf(v) {
+      let slot = slots.get(v);
+      if (slot !== undefined) return slot;
+      // geodeticToEcef's own terms, computed the way it computes them.
+      const [lng, lat] = convert.forward([v[0], v[1]]);
+      const lam = (lng * Math.PI) / 180;
+      const phi = (lat * Math.PI) / 180;
+      const sinPhi = Math.sin(phi);
+      slot = count++;
+      if ((slot + 1) * TERMS > store.length) {
+        const grown = new Float64Array(store.length * 2);
+        grown.set(store);
+        store = grown;
+      }
+      const at = slot * TERMS;
+      store[at] = WGS84_A / Math.sqrt(1 - WGS84_E2 * sinPhi * sinPhi);
+      store[at + 1] = Math.cos(phi);
+      store[at + 2] = Math.cos(lam);
+      store[at + 3] = Math.sin(lam);
+      store[at + 4] = sinPhi;
+      slots.set(v, slot);
+      return slot;
+    },
+    terms: () => store,
+    count: () => count,
+  };
+}
 
 export interface VertexPlacer {
   /** Write `v`'s ENU position into `out[at..at+3]`. */
   place(v: Vec3, out: Float32Array, at: number): void;
-  /** How many distinct vertices have been projected so far. */
+  /** How many distinct vertices its {@link ProjectedVertices} has projected. */
   projectedCount(): number;
 }
 
-export function createVertexPlacer(opts: SourceToEnuOptions): VertexPlacer {
-  const convert = makeWgs84Converter(opts.epsg);
+/**
+ * Places vertices in `opts.frame`, raised by `opts.heightOffset`. `projected`
+ * carries projections over from an earlier placer of the same CRS; without
+ * it the placer starts its own.
+ */
+export function createVertexPlacer(
+  opts: SourceToEnuOptions,
+  projected: ProjectedVertices = createProjectedVertices(opts.epsg),
+): VertexPlacer {
+  if (projected.epsg !== opts.epsg) {
+    throw new Error(
+      `A placer for EPSG:${opts.epsg} cannot reuse EPSG:${projected.epsg} projections.`,
+    );
+  }
   const { frame, heightOffset } = opts;
-  const slots = new Map<Vec3, number>();
-  let store = new Float32Array(3 * 1024);
-  let count = 0;
+  const m = frame.matrix;
   return {
     place(v, out, at) {
-      let slot = slots.get(v);
-      if (slot === undefined) {
-        const [lng, lat] = convert.forward([v[0], v[1]]);
-        const enu = geodeticToEnu(lng, lat, v[2] + heightOffset, frame);
-        slot = count++;
-        if (slot * 3 + 3 > store.length) {
-          const grown = new Float32Array(store.length * 2);
-          grown.set(store);
-          store = grown;
-        }
-        store[slot * 3] = enu[0];
-        store[slot * 3 + 1] = enu[1];
-        store[slot * 3 + 2] = enu[2];
-        slots.set(v, slot);
-      }
-      out[at] = store[slot * 3]!;
-      out[at + 1] = store[slot * 3 + 1]!;
-      out[at + 2] = store[slot * 3 + 2]!;
+      const slot = projected.slotOf(v);
+      const t = projected.terms();
+      const i = slot * TERMS;
+      const n = t[i]!;
+      const cosPhi = t[i + 1]!;
+      const h = v[2] + heightOffset;
+      // geodeticToEnu: ECEF, then the frame's transpose rotation.
+      const x = (n + h) * cosPhi * t[i + 2]!;
+      const y = (n + h) * cosPhi * t[i + 3]!;
+      const z = (n * (1 - WGS84_E2) + h) * t[i + 4]!;
+      const dx = x - m[12]!;
+      const dy = y - m[13]!;
+      const dz = z - m[14]!;
+      out[at] = m[0]! * dx + m[1]! * dy + m[2]! * dz;
+      out[at + 1] = m[4]! * dx + m[5]! * dy + m[6]! * dz;
+      out[at + 2] = m[8]! * dx + m[9]! * dy + m[10]! * dz;
     },
-    projectedCount: () => count,
+    projectedCount: () => projected.count(),
   };
 }

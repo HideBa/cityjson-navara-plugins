@@ -27,6 +27,7 @@ import {
   appearanceThemesEqual,
   buildCityMeshArrays,
   computeOriginOffset,
+  createProjectedVertices,
   createVertexPlacer,
   partitionCells,
   raisePositionsInEnu,
@@ -36,6 +37,7 @@ import {
   type CityModel,
   type MeshCell,
   type SurfaceStyleEvaluator,
+  type ProjectedVertices,
   type Vec3,
   type VertexPlacer,
 } from "@cityjson/navara-core";
@@ -174,8 +176,10 @@ export class CityModelMesh {
   private readonly originOffset: Vec3;
   private readonly makePlacementMatrix: ((lle: Lle) => Matrix4) | undefined;
   private placement: Placement;
-  /** Places vertices for {@link placerFor}; kept across rebuilds, so a LoD
-   *  switch reuses every vertex an earlier build projected. */
+  /** Every vertex any build has projected, kept for the layer's life: a LoD
+   *  switch or a new placement reuses them. */
+  private projected: ProjectedVertices | null = null;
+  /** Places vertices in {@link placerFor}'s frame. */
   private placer: VertexPlacer | null = null;
   private placerFor: Placement | null = null;
   private lod: string | readonly string[] | null;
@@ -289,15 +293,19 @@ export class CityModelMesh {
     // scale factor and grid convergence, so a delta 5 km from the origin is
     // off by metres in position and by a fraction of a degree in bearing.
     // The placer belongs to the current placement (its frame and height
-    // offset), so a new placement starts a new one.
+    // offset); the projections under it belong to the layer.
+    this.projected ??= createProjectedVertices(this.epsg);
     if (this.placer === null || this.placerFor !== this.placement) {
-      this.placer = createVertexPlacer({
-        epsg: this.epsg,
-        frame: this.placement.frame,
-        // From the SAME bundle as the frame — the two must agree or the mesh
-        // floats/sinks by the offset.
-        heightOffset: this.placement.heightOffset,
-      });
+      this.placer = createVertexPlacer(
+        {
+          epsg: this.epsg,
+          frame: this.placement.frame,
+          // From the SAME bundle as the frame — the two must agree or the
+          // mesh floats/sinks by the offset.
+          heightOffset: this.placement.heightOffset,
+        },
+        this.projected,
+      );
       this.placerFor = this.placement;
     }
     const arrays = buildCityMeshArrays(

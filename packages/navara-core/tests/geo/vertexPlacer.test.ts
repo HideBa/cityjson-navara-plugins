@@ -3,7 +3,10 @@ import proj4 from "proj4";
 import { ensureProjDef } from "../../src/citymodel/crsProjDefs";
 import { makeEnuFrame } from "../../src/geo/enuFrame";
 import { sourceToEnuPoint } from "../../src/geo/sourceToEnu";
-import { createVertexPlacer } from "../../src/geo/vertexPlacer";
+import {
+  createProjectedVertices,
+  createVertexPlacer,
+} from "../../src/geo/vertexPlacer";
 import type { Vec3 } from "../../src/citymodel/types";
 
 // EPSG:7415 = RD New (x/y) + NAP (z), as in sourceToEnu.test.ts.
@@ -72,5 +75,31 @@ describe("createVertexPlacer", () => {
     vertices.forEach((v, i) => placer.place(v, again, i * 3));
     expect(again).toEqual(first);
     expect(placer.projectedCount()).toBe(vertices.length);
+  });
+
+  it("reuses another placement's projections when they share a cache", () => {
+    // A new height offset is a new frame and a new placer, but the same
+    // source vertices: proj4 is not run again, and each placer still lands
+    // every vertex exactly where sourceToEnuPoint does at its own offset.
+    const projected = createProjectedVertices(EPSG);
+    const vertices: Vec3[] = [
+      [160000, 468000, 12],
+      [154321.125, 462001.5, -3.25],
+    ];
+    for (const heightOffset of [0, 43.5]) {
+      const opts = {
+        epsg: EPSG,
+        frame: frameAtOrigin(heightOffset),
+        heightOffset,
+      };
+      const placer = createVertexPlacer(opts, projected);
+      const out = new Float32Array(6);
+      vertices.forEach((v, i) => placer.place(v, out, i * 3));
+      const want = new Float32Array(
+        vertices.flatMap((v) => sourceToEnuPoint(v[0], v[1], v[2], opts)),
+      );
+      expect(out).toEqual(want);
+      expect(placer.projectedCount()).toBe(2);
+    }
   });
 });
