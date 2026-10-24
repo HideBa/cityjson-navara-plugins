@@ -259,7 +259,8 @@ async function probeByteLength(
  *  response's own Content-Length when it sends one, else by the claimed
  *  length, and in every case by a 4 MiB cap on the body read); a signal that
  *  fires mid-slice rejects the slice with its abort reason even when the
- *  fetch or its body ignores it; no slice is cached. */
+ *  fetch or its body ignores it; a `200` whose body is exactly the range is
+ *  taken as the range; no slice is cached. */
 export async function asyncBufferFromHttp(
   url: string,
   opts: { byteLength?: number; fetch?: typeof fetch } = {},
@@ -301,9 +302,9 @@ export async function asyncBufferFromHttp(
         return buf;
       }
       if (res.status === 200) {
-        // A 200 carries the WHOLE resource, so the size that matters is the
-        // file's, not the range's: a 1 KiB slice of a 335 MB file answered 200
-        // would otherwise download all of it. The response's own
+        // A 200 normally carries the WHOLE resource, so the size that matters
+        // is the file's, not the range's: a 1 KiB slice of a 335 MB file
+        // answered 200 would otherwise download all of it. The response's own
         // Content-Length is the authority (the caller's `byteLength` may be
         // stale); without one, the claimed length decides, and the body read
         // is capped anyway so an understated claim still cannot pull in a
@@ -323,7 +324,13 @@ export async function asyncBufferFromHttp(
           refusal,
         });
         bytesRead += whole.byteLength;
-        return whole.slice(s, e);
+        if (whole.byteLength === byteLength) return whole.slice(s, e);
+        // A cache can answer a range it already holds with 200 and just that
+        // range's bytes (Chromium's does, for a repeated ranged GET).
+        if (whole.byteLength === e - s) return whole;
+        throw new Error(
+          `Range request for bytes ${s}-${e - 1} of ${url} was answered 200 with ${whole.byteLength} bytes, neither the ${e - s}-byte range nor the ${byteLength}-byte file.`,
+        );
       }
       discardBody(res);
       throw new Error(

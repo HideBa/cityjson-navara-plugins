@@ -287,6 +287,37 @@ describe("asyncBufferFromHttp", () => {
 });
 
 describe("asyncBufferFromHttp transport hardening", () => {
+  it("takes a 200 that carries exactly the requested bytes as the range, not as the whole file", async () => {
+    // Chromium's HTTP cache, asked again for a range it already holds, can
+    // answer 200 with just that range's bytes (and a Content-Length of 0).
+    // Slicing those as if they were the whole file gave an empty buffer,
+    // which hyparquet read as an offset index with no pages.
+    const bytes = new Uint8Array(1000).map((_, i) => i % 251);
+    for (const headers of [{}, { "Content-Length": "0" }] as HeadersInit[]) {
+      const cached = (async () =>
+        new Response(bytes.slice(100, 150), {
+          status: 200,
+          headers,
+        })) as typeof fetch;
+      const buf = await asyncBufferFromHttp("https://example.test/f.parquet", {
+        byteLength: 1000,
+        fetch: cached,
+      });
+      const out = new Uint8Array(await buf.slice(100, 150));
+      expect(Array.from(out)).toEqual(Array.from(bytes.slice(100, 150)));
+    }
+  });
+
+  it("rejects a 200 whose body is neither the whole file nor the requested range", async () => {
+    const short = (async () =>
+      new Response(new Uint8Array(30), { status: 200 })) as typeof fetch;
+    const buf = await asyncBufferFromHttp("https://example.test/f.parquet", {
+      byteLength: 1000,
+      fetch: short,
+    });
+    await expect(buf.slice(100, 150)).rejects.toThrow(/30 bytes/);
+  });
+
   it("rejects with AbortError when the signal fires during an in-flight slice, and the fetch received that signal", async () => {
     let received: AbortSignal | undefined;
     let started!: () => void;
