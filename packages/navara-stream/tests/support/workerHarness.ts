@@ -21,7 +21,7 @@ import {
 
 export function harness(
   adapter: StreamSourceAdapter,
-  options?: { retainedByteBudget?: number },
+  options?: { retainedByteBudget?: number; featureByteBudget?: number },
 ) {
   const posted: WorkerResponse[] = [];
   const ctx = {

@@ -174,6 +174,10 @@ export function createFcbSourceAdapter(): StreamSourceAdapter {
     // FlatCityBuf bakes exactly the requested LoD (or all, for `null`).
     bakeLod: (lod) => lod,
 
+    // A feature carries every LoD and `select` keeps them all, so any read
+    // holds every LoD.
+    heldCeiling: () => null,
+
     close(): void {
       reader = undefined;
       appearance = new AppearanceMerger();

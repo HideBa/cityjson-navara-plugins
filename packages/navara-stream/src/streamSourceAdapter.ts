@@ -130,5 +130,12 @@ export interface StreamSourceAdapter {
     lod: string | null,
     lodsSeen: ReadonlyArray<string>,
   ): string | readonly (string | null)[] | null;
+  /** The LoD ceiling a `select(…, { lod })` read holds: every LoD at or below
+   *  the returned label, or every LoD for `null`. The worker keeps what it
+   *  read and answers a later request from it when this ceiling covers the
+   *  requested LoD. CityParquet answers `lod` (it reads every geometry column
+   *  at or below it), FlatCityBuf `null` (a feature carries every LoD).
+   *  Omitted, a read answers only a request for the same `lod`. */
+  heldCeiling?(lod: string | null): string | null;
   close(): void;
 }

@@ -70,6 +70,20 @@ export const RESIDENT_BYTE_BUDGET = 512 * 1024 * 1024;
  * hard cap at all.
  */
 export const WORKER_RETAINED_BYTE_BUDGET = 512 * 1024 * 1024;
+/**
+ * What the worker's feature store may hold (estimated, like the cell cache):
+ * the decoded features of the cells it has read, so a LoD, appearance or
+ * level change over them re-bakes instead of reading again. A miss only costs
+ * a read, so this is a soft cap, and a single cover larger than it is still
+ * held whole. It is sized to hold more than one cover read at every LoD.
+ *
+ * The two worker budgets overlap: where a cell is baked from the bare model
+ * (a projected source, or a view that drops nothing), the cell cache and the
+ * store hold the same objects and both count them; where it is baked from a
+ * per-cell ENU copy (a geographic source), the copy is a second set. So the
+ * worker can retain up to the sum of the two.
+ */
+export const WORKER_FEATURE_BYTE_BUDGET = 512 * 1024 * 1024;
 export const MIN_COVER_CELLS = 9;
 export const MAX_COVER_CELLS = 64;
 export const MIN_CELL_M = 50;

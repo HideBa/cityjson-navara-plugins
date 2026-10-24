@@ -147,6 +147,7 @@ async function setupWorker(
 ): Promise<{
   handler: (ev: { data: unknown }) => void | Promise<void>;
   posted: WorkerResponse[];
+  selects: () => number;
 }> {
   vi.resetModules();
 
@@ -221,7 +222,7 @@ async function setupWorker(
   await import("../src/fcb.worker");
   const handler = fakeSelf.onmessage;
   if (!handler) throw new Error("worker module did not register onmessage");
-  return { handler, posted };
+  return { handler, posted, selects: () => selectCallCount };
 }
 
 function teardown(): void {
@@ -1140,5 +1141,88 @@ describe("fcb.worker — object types", () => {
       "SolitaryVegetationObject",
     ]);
     teardown();
+  });
+});
+
+/** A feature at LoD 1 and LoD 2 whose roofs carry a material, in its own
+ *  feature-local appearance — what the adapter's merger rewrites. */
+function materialFeature(id: string, cx: number, cy: number) {
+  const vertices: [number, number, number][] = [
+    [cx - 5, cy - 5, 0],
+    [cx + 5, cy - 5, 0],
+    [cx + 5, cy + 5, 10],
+    [cx - 5, cy + 5, 10],
+  ];
+  const geometry = (lod: string) => ({
+    type: "MultiSurface",
+    lod,
+    boundaries: [[[0, 1, 2, 3]]],
+    semantics: { surfaces: [{ type: "RoofSurface" }], values: [0] },
+    material: { colour: { values: [0] } },
+  });
+  return {
+    toCityJSON: () => ({
+      type: "CityJSONFeature",
+      id,
+      vertices,
+      appearance: {
+        materials: [{ name: `roof-${id}`, diffuseColor: [0.8, 0.1, 0.1] }],
+      },
+      CityObjects: {
+        [id]: { type: "Building", geometry: [geometry("1"), geometry("2")] },
+      },
+    }),
+  } as unknown as FakeCityJSONFeature;
+}
+
+describe("fcb.worker — the feature store", () => {
+  it("bakes another LoD and theme from what it read, as a fresh read does", async () => {
+    const features = [
+      materialFeature("a", 100, 100),
+      materialFeature("b", 140, 100),
+    ];
+    const fetch = (id: number, lod: string | null) => ({
+      data: {
+        type: "fetch",
+        id,
+        bbox: [0, 0, 1000, 200],
+        level: 2,
+        cells: ["2/0/0"],
+        lod,
+        rules: [],
+        rulesEnabled: false,
+        appearance: { kind: "material", name: "colour" },
+      },
+    });
+    const cell = (posted: WorkerResponse[], id: number) =>
+      posted.find(
+        (m): m is Extract<WorkerResponse, { type: "cell" }> =>
+          m.type === "cell" && m.id === id,
+      );
+
+    const held = await setupWorker(features);
+    await held.handler({
+      data: { type: "open", id: 0, source: { url: "fake://x" } },
+    });
+    await held.handler(fetch(1, "2"));
+    await held.handler(fetch(2, "1"));
+    // Fetch 2 is baked from what fetch 1 read: the held worker reads no more
+    // than the fresh one, which reads once.
+    const heldSelects = held.selects();
+    teardown();
+
+    const fresh = await setupWorker(features);
+    await fresh.handler({
+      data: { type: "open", id: 0, source: { url: "fake://x" } },
+    });
+    await fresh.handler(fetch(2, "1"));
+    const freshSelects = fresh.selects();
+    teardown();
+
+    expect(heldSelects).toBe(freshSelects);
+    const h = cell(held.posted, 2);
+    expect(h).toBeDefined();
+    expect(h!.appearanceThemes).toEqual([{ kind: "material", name: "colour" }]);
+    expect(h).toEqual(cell(fresh.posted, 2));
   });
 });

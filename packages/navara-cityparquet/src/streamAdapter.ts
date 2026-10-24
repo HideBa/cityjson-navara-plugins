@@ -325,11 +325,10 @@ export function createCityParquetSourceAdapter(
     appearance: () => undefined,
 
     bakeLod: (lod, lodsSeen) =>
-      bakeLodSelection(
-        lod,
-        lodsSeen,
-        stream?.header.lods ?? [],
-      ),
+      bakeLodSelection(lod, lodsSeen, stream?.header.lods ?? []),
+
+    // A read at `lod` decodes every geometry column at or below it.
+    heldCeiling: (lod) => lod,
 
     close(): void {
       openController?.abort();

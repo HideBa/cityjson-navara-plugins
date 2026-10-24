@@ -32,7 +32,11 @@ import {
   type LocalMetricFrameDescriptor,
 } from "@cityjson/navara-core";
 import { bucketFeatures } from "./bucketFeatures";
-import { WORKER_RETAINED_BYTE_BUDGET } from "./constants";
+import {
+  WORKER_FEATURE_BYTE_BUDGET,
+  WORKER_RETAINED_BYTE_BUDGET,
+} from "./constants";
+import { FeatureStore, lodView, modelBytes } from "./featureStore";
 import { toObjectRecords } from "./objectRecords";
 import type {
   OpenedSource,
@@ -79,15 +83,14 @@ interface CachedCell {
   readonly retainedBytes: number;
 }
 
-/** Per-entry costs of a decoded `CityObject` graph, in bytes. Shape-based
- *  guesses at V8's layout, not measurements of it: an object's own fields and
- *  its `attributes`/`bbox`/`parents`/`children`, a surface's fields and its
- *  `rings` array, a ring's array header, and a `[x, y, z]` coordinate tuple
- *  (a JSArray: header + elements backing store + three doubles). */
-const BYTES_PER_OBJECT = 320;
-const BYTES_PER_SURFACE = 160;
-const BYTES_PER_RING = 40;
-const BYTES_PER_VERTEX = 88;
+/** A held cell that owns nothing. */
+const emptyModel: CityModel = {
+  sourceEncoding: "flatcitybuf",
+  metadata: {},
+  bbox: null,
+  objects: {},
+  vertexCount: 0,
+};
 
 /** The last expression compiled, by its JSON: a layer's style changes far
  *  less often than its cells are baked. `null` evaluator: it does not
@@ -177,21 +180,6 @@ function estimateRetainedBytes(
   colors: Float32Array,
   objectKeys: ReadonlyArray<string>,
 ): number {
-  let objects = 0;
-  let surfaces = 0;
-  let rings = 0;
-  let vertices = 0;
-  for (const obj of Object.values(model.objects)) {
-    if (!obj) continue;
-    objects += 1;
-    for (const surface of obj.surfaces) {
-      surfaces += 1;
-      for (const ring of surface.rings) {
-        rings += 1;
-        vertices += ring.length;
-      }
-    }
-  }
   let keyBytes = 0;
   for (const key of objectKeys) keyBytes += key.length * 2 + 24;
   return (
@@ -199,10 +187,7 @@ function estimateRetainedBytes(
     slotSurfaces.byteLength +
     colors.byteLength +
     keyBytes +
-    objects * BYTES_PER_OBJECT +
-    surfaces * BYTES_PER_SURFACE +
-    rings * BYTES_PER_RING +
-    vertices * BYTES_PER_VERTEX
+    modelBytes(model)
   );
 }
 
@@ -480,6 +465,8 @@ function unionLods(
 export interface StreamWorkerOptions {
   /** Overrides {@link WORKER_RETAINED_BYTE_BUDGET} (tests). */
   readonly retainedByteBudget?: number;
+  /** The feature store's budget; defaults to `WORKER_FEATURE_BYTE_BUDGET`. */
+  readonly featureByteBudget?: number;
 }
 
 export function installStreamWorker(
@@ -524,6 +511,12 @@ export function installStreamWorker(
    *  releases entries here (see the `evict`/`close` handlers below). Without
    *  it, this map would grow without bound as the viewport pans. */
   const cells = new Map<CellKey, CachedCell>();
+  /** The decoded features of the cells read so far, by requested cell, so a
+   *  later request at a LoD they cover re-bakes rather than reads
+   *  (`featureStore.ts`). Cleared with the cell cache. */
+  const store = new FeatureStore(
+    options.featureByteBudget ?? WORKER_FEATURE_BYTE_BUDGET,
+  );
   /** Running sum of `cells`' `retainedBytes`, kept by the helpers below —
    *  every mutation of `cells` goes through one of them, or the total (and
    *  therefore the cap) silently drifts. Map insertion order is the LRU
@@ -549,6 +542,7 @@ export function installStreamWorker(
   function cacheClear(): void {
     cells.clear();
     retainedBytes = 0;
+    store.clear();
   }
 
   /** Moves `key` to the most-recently-used end. */
@@ -729,26 +723,40 @@ export function installStreamWorker(
           }
         };
 
-        // Query the requested cells WHOLE, not the view: a cell's objects
+        if (msg.cells.length === 0) {
+          post({ type: "done", id: msg.id }); // nothing requested
+          return;
+        }
+        // What a read at `msg.lod` holds, and whether that is all a held
+        // read can answer (`StreamSourceAdapter.heldCeiling`).
+        const exact = adapter.heldCeiling === undefined;
+        const ceiling = adapter.heldCeiling
+          ? adapter.heldCeiling(msg.lod)
+          : msg.lod;
+        // Cells the store answers are baked from what was read before; only
+        // the others are read.
+        const held = new Map<CellKey, CityModel>();
+        for (const key of msg.cells) {
+          const model = store.get(key, msg.lod);
+          if (model) held.set(key, model);
+        }
+        const toRead = msg.cells.filter((key) => !held.has(key));
+        // Query the cells to read WHOLE, not the view: a cell's objects
         // are owned by bbox centre, so a view that reaches only part of a
         // boundary cell would otherwise bake that cell with the objects in
         // its other part missing — and the cell, once resident, is never
         // refetched to fill them in. `msg.bbox` stays a diagnostic.
-        const queryBBox = unionOfCellBounds(theGrid, msg.cells);
-        if (!queryBBox) {
-          post({ type: "done", id: msg.id }); // nothing requested
-          return;
-        }
+        const queryBBox = unionOfCellBounds(theGrid, toRead);
 
         try {
           // Decode in chunks, yielding so a superseded fetch can be
           // cancelled.
           const models: CityModel[] = [];
           let sinceYield = 0;
-          for await (const model of adapter.select(queryBBox, {
-            lod: msg.lod,
-            signal: my.signal,
-          })) {
+          const read = queryBBox
+            ? adapter.select(queryBBox, { lod: msg.lod, signal: my.signal })
+            : [];
+          for await (const model of read) {
             if (my.signal.aborted) {
               post({
                 type: "error",
@@ -765,6 +773,18 @@ export function installStreamWorker(
             }
           }
 
+          // A read may also stop early, without an error, once its signal
+          // is aborted — and an `open` of another source aborts it — so
+          // nothing it returned is filed as all the cells hold.
+          if (my.signal.aborted) {
+            post({
+              type: "error",
+              id: msg.id,
+              message: "aborted",
+              aborted: true,
+            });
+            return;
+          }
           const resident = new Set(msg.cells);
           const buckets = bucketFeatures(
             models,
@@ -773,12 +793,31 @@ export function installStreamWorker(
             new Set(),
             adapter.ownership ?? "object",
           );
+          // File the read, complete, under the cells it was made for — and
+          // only those: a feature owned by a cell nobody asked for came back
+          // because it crosses the query, which is not all that cell owns.
+          // An empty cell is held as empty.
+          for (const key of toRead) {
+            store.set(key, buckets.get(key) ?? emptyModel, ceiling, exact);
+            held.set(key, buckets.get(key) ?? emptyModel);
+          }
+          store.trim(resident);
           // Built once per fetch, AFTER the traversal so this fetch's own
           // features are in it: the tables a material theme reads its diffuse
           // colours from, and the theme list the main thread learns from.
           const builtAppearance = adapter.appearance();
           const appearanceThemes = appearanceThemesSeen(builtAppearance);
-          for (const [key, cellModelBare] of buckets) {
+          for (const key of msg.cells) {
+            const heldModel = held.get(key);
+            if (!heldModel || Object.keys(heldModel.objects).length === 0) {
+              continue;
+            }
+            // The cell as a read at THIS request's LoD would have returned
+            // it: everything below — records, LoD list, retained bytes, the
+            // cached model a `surfaces` reply reads — sees this view.
+            const cellModelBare = exact
+              ? heldModel
+              : lodView(heldModel, ceiling);
             if (my.signal.aborted) {
               // A newer fetch/probe/cancel superseded this one mid-loop: any
               // cells already touched THIS call are for an incomplete result
@@ -797,7 +836,6 @@ export function installStreamWorker(
               });
               return;
             }
-            if (!resident.has(key)) continue; // outside the requested cover
             const bareModel: CityModel = builtAppearance
               ? { ...cellModelBare, appearance: builtAppearance }
               : cellModelBare;

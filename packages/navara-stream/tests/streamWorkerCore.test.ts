@@ -73,6 +73,58 @@ function feature(id: string, cx: number, cy: number): CityModel {
   };
 }
 
+/** A Building with a LoD 1 block and a LoD 2 roof, both at (cx, cy). */
+function twoLodFeature(id: string, cx: number, cy: number): CityModel {
+  const vertices: [number, number, number][] = [
+    [cx - 5, cy - 5, 0],
+    [cx + 5, cy - 5, 0],
+    [cx + 5, cy + 5, 10],
+    [cx - 5, cy + 5, 10],
+  ];
+  const geometry = (lod: string, type: string) => ({
+    type: "MultiSurface",
+    lod,
+    boundaries: [[[0, 1, 2, 3]]],
+    semantics: { surfaces: [{ type }], values: [0] },
+  });
+  const raw = {
+    type: "Building",
+    attributes: { height: 10 },
+    geometry: [geometry("1", "WallSurface"), geometry("2", "RoofSurface")],
+  } as unknown as CityJSONObject;
+  const real = dequantizeAll(vertices, {
+    scale: [1, 1, 1],
+    translate: [0, 0, 0],
+  });
+  const obj: CityObject = parseCityObject(id, raw, real);
+  return {
+    sourceEncoding: "cityparquet",
+    metadata: {},
+    bbox: obj.bbox,
+    objects: { [id]: obj },
+    vertexCount: vertices.length,
+  };
+}
+
+/** `f` as a reader that skips geometry above `lod` returns it. */
+function atOrBelow(f: CityModel, lod: string | null): CityModel {
+  if (lod === null) return f;
+  const objects: Record<string, CityObject> = {};
+  for (const [id, obj] of Object.entries(f.objects)) {
+    const surfaces = obj!.surfaces.filter(
+      (s) => s.lod === null || Number(s.lod) <= Number(lod),
+    );
+    // The object's LoD is the highest it still carries, as the reader's.
+    const lods = surfaces.flatMap((s) => (s.lod === null ? [] : [s.lod]));
+    objects[id] = {
+      ...obj!,
+      surfaces,
+      lod: lods.sort((a, b) => Number(b) - Number(a))[0] ?? null,
+    };
+  }
+  return { ...f, objects };
+}
+
 type Box = readonly [number, number, number, number];
 
 function intersects(b: BBox3 | null, q: Box): boolean {
@@ -82,6 +134,11 @@ function intersects(b: BBox3 | null, q: Box): boolean {
 
 interface FakeAdapter extends StreamSourceAdapter {
   readonly selectBBoxes: Box[];
+  /** The `lod` of every `select`, in order. */
+  readonly selectLods: (string | null)[];
+  /** When set, `select` returns only surfaces at or below the requested
+   *  LoD, as CityParquet's reader does. */
+  filterLods: boolean;
   /** When set, `select` awaits this before yielding each feature — lets a
    *  test land a second request mid-traversal. */
   gate: Promise<void> | null;
@@ -101,11 +158,16 @@ interface FakeAdapter extends StreamSourceAdapter {
   /** When set, `select` throws (rather than returning) once its signal is
    *  aborted — as a real range reader does. */
   throwWhenAborted: boolean;
+  /** When set, `select` stops yielding, without an error, once its signal is
+   *  aborted — which the adapter contract also allows. */
+  returnWhenAborted: boolean;
 }
 
 function fakeAdapter(features: CityModel[]): FakeAdapter {
   const adapter: FakeAdapter = {
     selectBBoxes: [],
+    selectLods: [],
+    filterLods: false,
     gate: null,
     closed: 0,
     opens: [],
@@ -115,6 +177,7 @@ function fakeAdapter(features: CityModel[]): FakeAdapter {
     openGates: {},
     lods: undefined,
     throwWhenAborted: false,
+    returnWhenAborted: false,
     async open(req): Promise<OpenedSource> {
       adapter.opens.push(req);
       const url = "url" in req.source ? req.source.url : "";
@@ -138,8 +201,9 @@ function fakeAdapter(features: CityModel[]): FakeAdapter {
         features.filter((f) => intersects(f.bbox, bbox)).length + 100,
       );
     },
-    async *select(bbox, { signal }) {
+    async *select(bbox, { lod, signal }) {
       adapter.selectBBoxes.push(bbox);
+      adapter.selectLods.push(lod);
       // Honours the bbox, like a real spatial index: only intersecting
       // features come back.
       for (const f of features) {
@@ -147,7 +211,10 @@ function fakeAdapter(features: CityModel[]): FakeAdapter {
         if (adapter.throwWhenAborted && signal.aborted) {
           throw new Error("read aborted");
         }
-        if (intersects(f.bbox, bbox)) yield f;
+        if (adapter.returnWhenAborted && signal.aborted) return;
+        if (intersects(f.bbox, bbox)) {
+          yield adapter.filterLods ? atOrBelow(f, lod) : f;
+        }
       }
     },
     appearance: () => undefined,
@@ -862,5 +929,202 @@ describe("streamWorkerCore — retained memory", () => {
     expect(posted.filter(ofType("cell"))).toHaveLength(2);
     await send({ type: "surfaces", id: 2, objectId: "a" });
     expect(posted.find(ofType("surfaceData"))?.objectId).toBe("a");
+  });
+});
+
+describe("streamWorkerCore feature store", () => {
+  const atLod = (id: number, cells: string[], lod: string | null) => ({
+    ...(fetchMsg(id, cells) as Extract<WorkerRequest, { type: "fetch" }>),
+    lod,
+  });
+  const cellsOf = (posted: WorkerResponse[], id: number) =>
+    posted.filter(ofType("cell")).filter((c) => c.id === id);
+
+  /** A CityParquet-like source: a read at `lod` holds every LoD at or
+   *  below it. */
+  function parquetLike(features: CityModel[]): FakeAdapter {
+    const adapter = fakeAdapter(features);
+    adapter.filterLods = true;
+    adapter.heldCeiling = (lod) => lod;
+    adapter.bakeLod = (lod) => lod;
+    return adapter;
+  }
+
+  it("bakes a LoD the cells were already read at without reading again", async () => {
+    const adapter = parquetLike([
+      twoLodFeature("a", 100, 100),
+      twoLodFeature("b", 500, 100),
+    ]);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(atLod(1, ["2/0/0", "2/1/0"], "2"));
+    await send(atLod(2, ["2/0/0", "2/1/0"], "1"));
+    await send(atLod(3, ["2/0/0", "2/1/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2"]);
+    expect(
+      cellsOf(posted, 2)
+        .map((c) => c.key)
+        .sort(),
+    ).toEqual(["2/0/0", "2/1/0"]);
+    expect(posted.at(-1)).toEqual({ type: "done", id: 3 });
+  });
+
+  it("gives from held data exactly what a fresh read at that LoD gives", async () => {
+    const features = [twoLodFeature("a", 100, 100)];
+    const held = harness(parquetLike(features));
+    await held.send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await held.send(atLod(1, ["2/0/0"], null));
+    await held.send(atLod(2, ["2/0/0"], "1"));
+    await held.send({ type: "surfaces", id: 3, objectId: "a" });
+
+    const fresh = harness(parquetLike(features));
+    await fresh.send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await fresh.send(atLod(2, ["2/0/0"], "1"));
+    await fresh.send({ type: "surfaces", id: 3, objectId: "a" });
+
+    const [h] = cellsOf(held.posted, 2);
+    expect(h).toBeDefined();
+    expect(h).toEqual(cellsOf(fresh.posted, 2)[0]);
+    expect(held.posted.find(ofType("surfaceData"))).toEqual(
+      fresh.posted.find(ofType("surfaceData")),
+    );
+  });
+
+  it("reads again above the held ceiling, and only the cells not held", async () => {
+    const adapter = parquetLike([
+      twoLodFeature("a", 100, 100),
+      twoLodFeature("b", 500, 100),
+    ]);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(atLod(1, ["2/0/0"], "1"));
+    await send(atLod(2, ["2/0/0", "2/1/0"], "1"));
+    await send(atLod(3, ["2/0/0"], "2"));
+    const grid = makeGrid(EXTENT);
+    expect(adapter.selectLods).toEqual(["1", "1", "2"]);
+    expect(adapter.selectBBoxes.slice(1)).toEqual([
+      unionOfCellBounds(grid, ["2/1/0"]),
+      unionOfCellBounds(grid, ["2/0/0"]),
+    ]);
+  });
+
+  it("holds an empty cell as empty", async () => {
+    const adapter = parquetLike([twoLodFeature("a", 100, 100)]);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(atLod(1, ["2/0/0", "2/2/2"], "2"));
+    await send(atLod(2, ["2/2/2"], "2"));
+    expect(adapter.selectLods).toEqual(["2"]);
+  });
+
+  it("does not hold a cell nobody asked for, though the read crossed it", async () => {
+    // 'w' straddles x = 400 but is owned by 2/1/0, which is not requested.
+    const adapter = parquetLike([twoLodFeature("w", 402, 100)]);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(atLod(1, ["2/0/0"], "2"));
+    await send(atLod(2, ["2/1/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2", "2"]);
+  });
+
+  it("answers an evicted cell from what it read", async () => {
+    const adapter = parquetLike([twoLodFeature("a", 100, 100)]);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(atLod(1, ["2/0/0"], "2"));
+    await send({ type: "evict", id: 2, cells: ["2/0/0"] });
+    await send(atLod(3, ["2/0/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2"]);
+    expect(cellsOf(posted, 3)).toHaveLength(1);
+  });
+
+  it("holds nothing from a read that was superseded", async () => {
+    const adapter = parquetLike([twoLodFeature("a", 100, 100)]);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    let release!: () => void;
+    adapter.gate = new Promise((r) => (release = r));
+    const first = send(atLod(1, ["2/0/0"], "2"));
+    adapter.gate = null;
+    const second = send(atLod(2, ["2/1/0"], "2"));
+    release();
+    await Promise.all([first, second]);
+    await send(atLod(3, ["2/0/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2", "2", "2"]);
+  });
+
+  it("holds nothing from a superseded read that stopped without an error", async () => {
+    const adapter = parquetLike([twoLodFeature("a", 100, 100)]);
+    adapter.returnWhenAborted = true;
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    let release!: () => void;
+    adapter.gate = new Promise((r) => (release = r));
+    const first = send(atLod(1, ["2/0/0"], "2"));
+    adapter.gate = null;
+    const second = send(atLod(2, ["2/1/0"], "2"));
+    release();
+    await Promise.all([first, second]);
+    expect(posted.find(errorOf(1))?.aborted).toBe(true);
+    await send(atLod(3, ["2/0/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2", "2", "2"]);
+    expect(cellsOf(posted, 3)).toHaveLength(1);
+  });
+
+  it("holds nothing of the previous source when another opens during a read", async () => {
+    const adapter = parquetLike([twoLodFeature("a", 100, 100)]);
+    adapter.returnWhenAborted = true;
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    let release!: () => void;
+    adapter.gate = new Promise((r) => (release = r));
+    let openRelease!: () => void;
+    adapter.openGates["fake://y"] = new Promise((r) => (openRelease = r));
+    const read = send(atLod(1, ["2/0/0"], "2"));
+    adapter.gate = null;
+    const reopen = send({ type: "open", id: 2, source: { url: "fake://y" } });
+    release();
+    await read;
+    openRelease();
+    await reopen;
+    await send(atLod(3, ["2/0/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2", "2"]);
+    expect(cellsOf(posted, 3)).toHaveLength(1);
+  });
+
+  it("drops the least recently used held cells over its budget, never the request's own", async () => {
+    const adapter = parquetLike([
+      twoLodFeature("a", 100, 100),
+      twoLodFeature("b", 500, 100),
+    ]);
+    const { send } = harness(adapter, { featureByteBudget: 1 });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(atLod(1, ["2/0/0"], "2"));
+    await send(atLod(2, ["2/0/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2"]);
+    await send(atLod(3, ["2/1/0"], "2"));
+    await send(atLod(4, ["2/0/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2", "2", "2"]);
+  });
+
+  it("forgets what it read on close", async () => {
+    const adapter = parquetLike([twoLodFeature("a", 100, 100)]);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(atLod(1, ["2/0/0"], "2"));
+    await send({ type: "close", id: 2 });
+    await send({ type: "open", id: 3, source: { url: "fake://x" } });
+    await send(atLod(4, ["2/0/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2", "2"]);
+  });
+
+  it("re-reads every fetch for a source that states no ceiling unless the LoD is the same", async () => {
+    const adapter = fakeAdapter([feature("a", 100, 100)]);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(atLod(1, ["2/0/0"], "2"));
+    await send(atLod(2, ["2/0/0"], "2"));
+    await send(atLod(3, ["2/0/0"], "1"));
+    expect(adapter.selectLods).toEqual(["2", "1"]);
   });
 });
