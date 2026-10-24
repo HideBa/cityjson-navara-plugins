@@ -106,7 +106,10 @@ async function decodeWithImageBitmap(blob: Blob): Promise<RasterPixels> {
   const bitmap = await createImageBitmap(blob);
   try {
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    const ctx = canvas.getContext("2d");
+    // A software canvas: `getImageData` on a GPU one waits for the GPU to
+    // finish whatever it is drawing, which while a large layer uploads is
+    // seconds of main-thread freeze for one 256 px tile.
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) throw new Error("no 2d context for geoid tile decoding");
     ctx.drawImage(bitmap, 0, 0);
     const image = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
