@@ -19,9 +19,10 @@
  * buffer holds.
  *
  * A `Vec3` is never mutated after parsing, which is what makes its identity a
- * valid key. A source whose decoder makes a new `Vec3` per corner (the
- * CityParquet WKB reader) shares nothing, and pays a map entry per corner on
- * top of the projection.
+ * valid key. The cache is bounded: when it holds `capacity` vertices it
+ * starts again, so a source that shares few vertex objects cannot grow it by
+ * an entry per corner for a layer's life. Sharing is local (a vertex's faces
+ * are one object's), so a bound costs only the reuse across a restart.
  */
 import type { Vec3 } from "../citymodel/types";
 import { WGS84_A, WGS84_E2 } from "./enuFrame";
@@ -38,14 +39,23 @@ export interface ProjectedVertices {
   /** {@link TERMS} numbers per slot. Replaced when it grows: read it after
    *  {@link slotOf}. */
   terms(): Float64Array;
-  /** How many distinct vertices have been projected so far. */
+  /** How many projections it has run, a vertex projected again after a
+   *  restart counted twice. */
   count(): number;
+  /** How many vertices it holds now, at most its capacity. */
+  size(): number;
 }
 
-export function createProjectedVertices(epsg: number): ProjectedVertices {
+/** The default bound: about 3.5 MB of entries and terms. */
+const DEFAULT_CAPACITY = 1 << 16;
+
+export function createProjectedVertices(
+  epsg: number,
+  capacity = DEFAULT_CAPACITY,
+): ProjectedVertices {
   const convert = makeWgs84Converter(epsg);
   const slots = new Map<Vec3, number>();
-  let store = new Float64Array(TERMS * 1024);
+  let store = new Float64Array(TERMS * Math.min(capacity, 1024));
   let count = 0;
   return {
     epsg,
@@ -57,9 +67,13 @@ export function createProjectedVertices(epsg: number): ProjectedVertices {
       const lam = (lng * Math.PI) / 180;
       const phi = (lat * Math.PI) / 180;
       const sinPhi = Math.sin(phi);
-      slot = count++;
+      if (slots.size === capacity) slots.clear();
+      slot = slots.size;
+      count++;
       if ((slot + 1) * TERMS > store.length) {
-        const grown = new Float64Array(store.length * 2);
+        const grown = new Float64Array(
+          Math.min(store.length * 2, capacity * TERMS),
+        );
         grown.set(store);
         store = grown;
       }
@@ -74,13 +88,14 @@ export function createProjectedVertices(epsg: number): ProjectedVertices {
     },
     terms: () => store,
     count: () => count,
+    size: () => slots.size,
   };
 }
 
 export interface VertexPlacer {
   /** Write `v`'s ENU position into `out[at..at+3]`. */
   place(v: Vec3, out: Float32Array, at: number): void;
-  /** How many distinct vertices its {@link ProjectedVertices} has projected. */
+  /** How many projections its {@link ProjectedVertices} has run. */
   projectedCount(): number;
 }
 

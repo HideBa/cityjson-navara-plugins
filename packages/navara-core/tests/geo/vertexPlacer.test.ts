@@ -77,6 +77,28 @@ describe("createVertexPlacer", () => {
     expect(placer.projectedCount()).toBe(vertices.length);
   });
 
+  it("forgets its oldest projections when full, and still places exactly", () => {
+    // A bounded cache: a source that shares no vertex objects must not grow
+    // a map entry per corner for the layer's life.
+    const projected = createProjectedVertices(EPSG, 4);
+    const opts = { epsg: EPSG, frame: frameAtOrigin(0), heightOffset: 0 };
+    const placer = createVertexPlacer(opts, projected);
+    const vertices: Vec3[] = [];
+    for (let i = 0; i < 6; i++) vertices.push([155000 + i, 463000 - i, i]);
+    const out = new Float32Array(vertices.length * 3);
+    vertices.forEach((v, i) => placer.place(v, out, i * 3));
+    expect(projected.size()).toBeLessThanOrEqual(4);
+    // The first vertex was forgotten, so placing it again projects it again.
+    const again = new Float32Array(3);
+    placer.place(vertices[0]!, again, 0);
+    expect(placer.projectedCount()).toBe(7);
+    const want = new Float32Array(
+      vertices.flatMap((v) => sourceToEnuPoint(v[0], v[1], v[2], opts)),
+    );
+    expect(out).toEqual(want);
+    expect([...again]).toEqual([...want.subarray(0, 3)]);
+  });
+
   it("reuses another placement's projections when they share a cache", () => {
     // A new height offset is a new frame and a new placer, but the same
     // source vertices: proj4 is not run again, and each placer still lands
