@@ -75,3 +75,52 @@ export function bucketFeatures(
   }
   return result;
 }
+
+/**
+ * The models each cell at `level` owns, split as `bucketFeatures` would
+ * merge them: a whole model per cell under `"feature"` ownership; under
+ * `"object"`, each model cut into one part per owning cell, a part keeping
+ * its model's fields. `bucketFeatures` over one cell's list gives exactly
+ * that cell of `bucketFeatures` over all of `models`. Models keep their
+ * order.
+ *
+ * Ownership nests: what a cell owns at `level` is what its children own at
+ * `level + 1`, so a cell's list can be split again for a finer level, and
+ * its children's lists joined for it.
+ */
+export function ownedModels(
+  models: Iterable<CityModel>,
+  grid: Grid,
+  level: number,
+  ownership: CellOwnership = "object",
+): Map<CellKey, CityModel[]> {
+  const out = new Map<CellKey, CityModel[]>();
+  const file = (key: CellKey | null, m: CityModel) => {
+    if (key === null) return;
+    const list = out.get(key);
+    if (list) list.push(m);
+    else out.set(key, [m]);
+  };
+  for (const m of models) {
+    if (ownership === "feature") {
+      if (m.bbox) file(ownerKey(grid, m.bbox, level), m);
+      continue;
+    }
+    const parts = new Map<CellKey, Record<string, CityObject>>();
+    for (const obj of Object.values(m.objects)) {
+      if (!obj?.bbox) continue;
+      const key = ownerKey(grid, obj.bbox, level);
+      if (key === null) continue;
+      let objects = parts.get(key);
+      if (!objects) {
+        objects = {};
+        parts.set(key, objects);
+      }
+      objects[obj.id] = obj;
+    }
+    for (const [key, objects] of parts) {
+      file(key, parts.size === 1 ? m : { ...m, objects });
+    }
+  }
+  return out;
+}

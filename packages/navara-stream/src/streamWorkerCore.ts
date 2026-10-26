@@ -31,12 +31,12 @@ import {
   type CityObject,
   type LocalMetricFrameDescriptor,
 } from "@cityjson/navara-core";
-import { bucketFeatures } from "./bucketFeatures";
+import { bucketFeatures, ownedModels } from "./bucketFeatures";
 import {
   WORKER_FEATURE_BYTE_BUDGET,
   WORKER_RETAINED_BYTE_BUDGET,
 } from "./constants";
-import { FeatureStore, lodView, modelBytes } from "./featureStore";
+import { FeatureStore, answerCell, lodView, modelBytes } from "./featureStore";
 import { toObjectRecords } from "./objectRecords";
 import type {
   OpenedSource,
@@ -82,15 +82,6 @@ interface CachedCell {
   /** What this entry costs the worker, by {@link estimateRetainedBytes}. */
   readonly retainedBytes: number;
 }
-
-/** A held cell that owns nothing. */
-const emptyModel: CityModel = {
-  sourceEncoding: "flatcitybuf",
-  metadata: {},
-  bbox: null,
-  objects: {},
-  vertexCount: 0,
-};
 
 /** The last expression compiled, by its JSON: a layer's style changes far
  *  less often than its cells are baked. `null` evaluator: it does not
@@ -187,7 +178,7 @@ function estimateRetainedBytes(
     slotSurfaces.byteLength +
     colors.byteLength +
     keyBytes +
-    modelBytes(model)
+    modelBytes([model])
   );
 }
 
@@ -733,12 +724,24 @@ export function installStreamWorker(
         const ceiling = adapter.heldCeiling
           ? adapter.heldCeiling(msg.lod)
           : msg.lod;
-        // Cells the store answers are baked from what was read before; only
+        const ownership = adapter.ownership ?? "object";
+        // Cells the store answers — from their own reads, a coarser cell's
+        // or their children's — are baked from what was read before; only
         // the others are read.
-        const held = new Map<CellKey, CityModel>();
+        const held = new Map<CellKey, readonly CityModel[]>();
+        const used = new Set<CellKey>();
+        const splits = new Map<CellKey, Map<CellKey, CityModel[]>>();
         for (const key of msg.cells) {
-          const model = store.get(key, msg.lod);
-          if (model) held.set(key, model);
+          const models = answerCell(
+            store,
+            theGrid,
+            key,
+            msg.lod,
+            ownership,
+            used,
+            splits,
+          );
+          if (models) held.set(key, models);
         }
         const toRead = msg.cells.filter((key) => !held.has(key));
         // Query the cells to read WHOLE, not the view: a cell's objects
@@ -786,32 +789,34 @@ export function installStreamWorker(
             return;
           }
           const resident = new Set(msg.cells);
-          const buckets = bucketFeatures(
-            models,
-            theGrid,
-            msg.level,
-            new Set(),
-            adapter.ownership ?? "object",
-          );
+          const owned = ownedModels(models, theGrid, msg.level, ownership);
           // File the read, complete, under the cells it was made for — and
           // only those: a feature owned by a cell nobody asked for came back
           // because it crosses the query, which is not all that cell owns.
           // An empty cell is held as empty.
           for (const key of toRead) {
-            store.set(key, buckets.get(key) ?? emptyModel, ceiling, exact);
-            held.set(key, buckets.get(key) ?? emptyModel);
+            const cellModels = owned.get(key) ?? [];
+            store.set(key, cellModels, ceiling, exact);
+            held.set(key, cellModels);
           }
-          store.trim(resident);
+          // Never drop what this request is baked from.
+          store.trim(new Set([...resident, ...used]));
           // Built once per fetch, AFTER the traversal so this fetch's own
           // features are in it: the tables a material theme reads its diffuse
           // colours from, and the theme list the main thread learns from.
           const builtAppearance = adapter.appearance();
           const appearanceThemes = appearanceThemesSeen(builtAppearance);
           for (const key of msg.cells) {
-            const heldModel = held.get(key);
-            if (!heldModel || Object.keys(heldModel.objects).length === 0) {
-              continue;
-            }
+            // Everything `key` owns, merged into the one model a read of it
+            // would have bucketed.
+            const heldModel = bucketFeatures(
+              held.get(key) ?? [],
+              theGrid,
+              msg.level,
+              new Set(),
+              ownership,
+            ).get(key);
+            if (!heldModel) continue;
             // The cell as a read at THIS request's LoD would have returned
             // it: everything below — records, LoD list, retained bytes, the
             // cached model a `surfaces` reply reads — sees this view.

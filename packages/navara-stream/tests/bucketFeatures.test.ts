@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { makeGrid } from "../src/tileGrid";
-import { bucketFeatures } from "../src/bucketFeatures";
+import { bucketFeatures, ownedModels } from "../src/bucketFeatures";
 import type { CityModel } from "@cityjson/navara-core";
 
 const grid = makeGrid([0, 0, 0, 1000, 1000, 30]); // rootCell 1600, level 2 -> 400 m
@@ -107,14 +107,7 @@ function family(px: number, cx: number): CityModel {
   return {
     sourceEncoding: "cityparquet",
     metadata: {},
-    bbox: [
-      Math.min(px, cx) - 5,
-      95,
-      0,
-      Math.max(px, cx) + 5,
-      105,
-      10,
-    ],
+    bbox: [Math.min(px, cx) - 5, 95, 0, Math.max(px, cx) + 5, 105, 10],
     vertexCount: 16,
     objects: {
       p: { ...parent, children: ["c"] },
@@ -148,13 +141,7 @@ describe("bucketFeatures ownership", () => {
         p: { ...straddling.objects.p!, bbox: null, surfaces: [] },
       },
     };
-    const out = bucketFeatures(
-      [withBareParent],
-      grid,
-      2,
-      new Set(),
-      "feature",
-    );
+    const out = bucketFeatures([withBareParent], grid, 2, new Set(), "feature");
     expect([...out.keys()]).toEqual(["2/0/0"]);
     expect(Object.keys(out.get("2/0/0")!.objects).sort()).toEqual(["c", "p"]);
   });
@@ -179,5 +166,64 @@ describe("bucketFeatures ownership", () => {
       "feature",
     );
     expect(out.size).toBe(0);
+  });
+});
+
+describe("ownedModels", () => {
+  /** One feature with objects at each of `centres`. */
+  function family(centres: [string, number, number][]): CityModel {
+    const parts = centres.map(([id, x, y]) => model(id, x, y));
+    return {
+      ...parts[0]!,
+      bbox: [
+        Math.min(...parts.map((p) => p.bbox![0])),
+        Math.min(...parts.map((p) => p.bbox![1])),
+        0,
+        Math.max(...parts.map((p) => p.bbox![3])),
+        Math.max(...parts.map((p) => p.bbox![4])),
+        10,
+      ],
+      objects: Object.assign({}, ...parts.map((p) => p.objects)),
+    };
+  }
+
+  it("gives each cell what bucketFeatures would merge into it", () => {
+    const models = [
+      family([
+        ["p", 300, 100],
+        ["q", 520, 100],
+      ]),
+      model("a", 100, 100),
+      model("b", 700, 700),
+    ];
+    for (const ownership of ["object", "feature"] as const) {
+      const all = bucketFeatures(models, grid, 2, new Set(), ownership);
+      const owned = ownedModels(models, grid, 2, ownership);
+      expect([...owned.keys()].sort()).toEqual([...all.keys()].sort());
+      for (const [key, list] of owned) {
+        expect(
+          bucketFeatures(list, grid, 2, new Set(), ownership).get(key),
+        ).toEqual(all.get(key));
+      }
+    }
+  });
+
+  it("cuts a feature by object only under object ownership", () => {
+    const f = family([
+      ["p", 300, 100],
+      ["q", 520, 100],
+    ]);
+    const byObject = ownedModels([f], grid, 2, "object");
+    expect(Object.keys(byObject.get("2/0/0")![0]!.objects)).toEqual(["p"]);
+    expect(Object.keys(byObject.get("2/1/0")![0]!.objects)).toEqual(["q"]);
+    const byFeature = ownedModels([f], grid, 2, "feature");
+    expect(byFeature.get("2/1/0")).toEqual([f]);
+    expect(byFeature.has("2/0/0")).toBe(false);
+  });
+
+  it("splits a coarser cell's list into what its children own", () => {
+    const models = [model("a", 100, 100), model("b", 500, 100)];
+    const coarse = ownedModels(models, grid, 1).get("1/0/0")!;
+    expect(ownedModels(coarse, grid, 2)).toEqual(ownedModels(models, grid, 2));
   });
 });

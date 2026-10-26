@@ -562,6 +562,274 @@ describe("streamWorkerCore", () => {
   });
 });
 
+/** A cell message with order-free fields: per object, the multiset of its
+ *  triangles (each vertex's position, normal and base colour), so cells
+ *  whose objects came from reads in another order compare equal. */
+function canonical(cells: Iterable<Extract<WorkerResponse, { type: "cell" }>>) {
+  const out = new Map<string, unknown>();
+  for (const c of cells) {
+    const g = c.geometry;
+    const tris = new Map<string, string[]>();
+    for (let t = 0; t < g.triangleCount; t++) {
+      const verts: string[] = [];
+      let obj = "";
+      for (let k = 0; k < 3; k++) {
+        const v = g.indices[t * 3 + k]!;
+        const slot = g.slots[v]!;
+        obj = g.objectKeys[g.slotObjects[slot]!]!;
+        verts.push(
+          [
+            ...g.positions.subarray(v * 3, v * 3 + 3),
+            ...g.normals.subarray(v * 3, v * 3 + 3),
+            ...g.baseColors.subarray(slot * 3, slot * 3 + 3),
+          ].join(","),
+        );
+      }
+      const list = tris.get(obj) ?? [];
+      list.push(verts.sort().join("|"));
+      tris.set(obj, list);
+    }
+    out.set(c.key, {
+      objects: [...c.objects].sort((a, b) => a.id.localeCompare(b.id)),
+      triangles: [...tris].map(([id, l]) => [id, l.sort()]).sort(),
+      retainedBytes: c.retainedBytes,
+      lodsSeen: [...c.lodsSeen].sort(),
+      surfaceAttrKeys: [...c.surfaceAttrKeys].sort(),
+      frame: c.frame,
+      appearanceThemes: c.appearanceThemes,
+      objectTypes: [...g.objectTypes].sort(),
+    });
+  }
+  return out;
+}
+
+describe("streamWorkerCore feature store across levels", () => {
+  // The grid over EXTENT has a 1600 m root: level 1 cells are 800 m, level
+  // 2 cells 400 m, level 3 cells 200 m.
+  const at = (
+    id: number,
+    level: number,
+    cells: string[],
+    lod: string | null = "2",
+  ): WorkerRequest => ({
+    type: "fetch",
+    id,
+    bbox: [0, 0, 1000, 1000],
+    level,
+    cells,
+    lod,
+    rules: [],
+    rulesEnabled: false,
+  });
+  const cellsOf = (posted: WorkerResponse[], id: number) =>
+    posted.filter(ofType("cell")).filter((c) => c.id === id);
+  function parquetLike(features: CityModel[]): FakeAdapter {
+    const adapter = fakeAdapter(features);
+    adapter.filterLods = true;
+    adapter.heldCeiling = (lod) => lod;
+    return adapter;
+  }
+
+  /** A Building at (cx - 20, cy) with a part at (cx + 20, cy), as one
+   *  feature: its bbox centre is (cx, cy). */
+  function family(id: string, cx: number, cy: number): CityModel {
+    const a = twoLodFeature(id, cx - 20, cy);
+    const b = twoLodFeature(`${id}-part`, cx + 20, cy);
+    const bbox: BBox3 = [
+      Math.min(a.bbox![0], b.bbox![0]),
+      Math.min(a.bbox![1], b.bbox![1]),
+      Math.min(a.bbox![2], b.bbox![2]),
+      Math.max(a.bbox![3], b.bbox![3]),
+      Math.max(a.bbox![4], b.bbox![4]),
+      Math.max(a.bbox![5], b.bbox![5]),
+    ];
+    return { ...a, bbox, objects: { ...a.objects, ...b.objects } };
+  }
+
+  const FEATURES = [
+    twoLodFeature("a", 100, 100),
+    twoLodFeature("b", 500, 100),
+    twoLodFeature("c", 100, 500),
+    twoLodFeature("d", 700, 700),
+  ];
+  const LEVEL_2 = ["2/0/0", "2/1/0", "2/0/1", "2/1/1"];
+
+  async function fresh(features: CityModel[], msg: WorkerRequest) {
+    const { posted, send } = harness(parquetLike(features));
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(msg);
+    return posted;
+  }
+
+  it("answers a finer level from the coarser cell it read, exactly as a fresh read", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 1, ["1/0/0"]));
+    await send(at(2, 2, LEVEL_2));
+    expect(adapter.selectLods).toEqual(["2"]);
+    const expected = cellsOf(await fresh(FEATURES, at(2, 2, LEVEL_2)), 2);
+    expect(expected).toHaveLength(4);
+    expect(cellsOf(posted, 2)).toEqual(expected);
+  });
+
+  it("answers from a cell read two levels up", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 0, ["0/0/0"]));
+    await send(at(2, 2, LEVEL_2));
+    expect(adapter.selectLods).toEqual(["2"]);
+    expect(cellsOf(posted, 2)).toEqual(
+      cellsOf(await fresh(FEATURES, at(2, 2, LEVEL_2)), 2),
+    );
+  });
+
+  it("answers a coarser cell from its four children", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 2, LEVEL_2));
+    await send(at(2, 1, ["1/0/0"]));
+    expect(adapter.selectLods).toEqual(["2"]);
+    const expected = cellsOf(await fresh(FEATURES, at(2, 1, ["1/0/0"])), 2);
+    expect(expected).toHaveLength(1);
+    expect(canonical(cellsOf(posted, 2))).toEqual(canonical(expected));
+  });
+
+  it("answers a coarser cell from children read two levels down", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    const level3: string[] = [];
+    for (let c = 0; c < 4; c++) {
+      for (let r = 0; r < 4; r++) level3.push(`3/${c}/${r}`);
+    }
+    await send(at(1, 3, level3));
+    await send(at(2, 1, ["1/0/0"]));
+    expect(adapter.selectLods).toEqual(["2"]);
+    expect(canonical(cellsOf(posted, 2))).toEqual(
+      canonical(cellsOf(await fresh(FEATURES, at(2, 1, ["1/0/0"])), 2)),
+    );
+  });
+
+  it("reads a coarser cell whole when one of its children is missing", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 2, ["2/0/0", "2/1/0", "2/0/1"]));
+    await send(at(2, 1, ["1/0/0"]));
+    expect(adapter.selectLods).toEqual(["2", "2"]);
+    expect(adapter.selectBBoxes.at(-1)).toEqual(
+      unionOfCellBounds(makeGrid(EXTENT), ["1/0/0"]),
+    );
+  });
+
+  it("does not answer from a coarser cell read below the LoD", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 1, ["1/0/0"], "1"));
+    await send(at(2, 2, ["2/0/0"], "2"));
+    await send(at(3, 2, ["2/1/0"], "1"));
+    expect(adapter.selectLods).toEqual(["1", "2"]);
+  });
+
+  it("re-owns a feature by its own bbox at the new level", async () => {
+    // The family straddles x = 400: its building is in 2/0/0, its part in
+    // 2/1/0, and the feature (bbox centre x = 400) belongs to 2/1/0.
+    const features = [family("f", 400, 100), twoLodFeature("a", 100, 100)];
+    for (const ownership of ["feature", "object"] as const) {
+      const adapter = parquetLike(features);
+      Object.assign(adapter, { ownership });
+      const { posted, send } = harness(adapter);
+      await send({ type: "open", id: 0, source: { url: "fake://x" } });
+      await send(at(1, 1, ["1/0/0"]));
+      await send(at(2, 2, ["2/0/0", "2/1/0"]));
+      expect(adapter.selectLods).toEqual(["2"]);
+
+      const reference = parquetLike(features);
+      Object.assign(reference, { ownership });
+      const direct = harness(reference);
+      await direct.send({ type: "open", id: 0, source: { url: "fake://x" } });
+      await direct.send(at(2, 2, ["2/0/0", "2/1/0"]));
+      expect(cellsOf(posted, 2)).toEqual(cellsOf(direct.posted, 2));
+    }
+  });
+
+  it("joins children read at different ceilings for a LoD they all cover", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 2, ["2/0/0", "2/1/0"], "2"));
+    await send(at(2, 2, ["2/0/1", "2/1/1"], "1"));
+    await send(at(3, 1, ["1/0/0"], "1"));
+    expect(adapter.selectLods).toEqual(["2", "1"]);
+    expect(canonical(cellsOf(posted, 3))).toEqual(
+      canonical(cellsOf(await fresh(FEATURES, at(3, 1, ["1/0/0"], "1")), 3)),
+    );
+    await send(at(4, 1, ["1/0/0"], "2"));
+    expect(adapter.selectLods).toEqual(["2", "1", "2"]);
+  });
+
+  it("joins direct children with a child answered by its own children", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 2, ["2/0/0", "2/1/0", "2/0/1"]));
+    await send(at(2, 3, ["3/2/2", "3/3/2", "3/2/3", "3/3/3"]));
+    await send(at(3, 1, ["1/0/0"]));
+    expect(adapter.selectLods).toEqual(["2", "2"]);
+    expect(canonical(cellsOf(posted, 3))).toEqual(
+      canonical(cellsOf(await fresh(FEATURES, at(3, 1, ["1/0/0"])), 3)),
+    );
+  });
+
+  it("answers across levels only the same LoD for a source that states no ceiling", async () => {
+    const adapter = fakeAdapter(FEATURES);
+    const { send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 1, ["1/0/0"], "2"));
+    await send(at(2, 2, ["2/0/0"], "2"));
+    await send(at(3, 2, ["2/1/0"], "1"));
+    expect(adapter.selectLods).toEqual(["2", "1"]);
+  });
+
+  it("joins a feature cut across children back whole under object ownership", async () => {
+    const features = [family("f", 400, 100), twoLodFeature("a", 100, 100)];
+    const adapter = parquetLike(features);
+    const { posted, send } = harness(adapter);
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 2, LEVEL_2));
+    await send(at(2, 1, ["1/0/0"]));
+    expect(adapter.selectLods).toEqual(["2"]);
+    expect(canonical(cellsOf(posted, 2))).toEqual(
+      canonical(cellsOf(await fresh(features, at(2, 1, ["1/0/0"])), 2)),
+    );
+  });
+
+  it("drops empty held cells over its budget too", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { send } = harness(adapter, { featureByteBudget: 100 });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 3, ["3/7/7"]));
+    await send(at(2, 3, ["3/7/6"]));
+    await send(at(3, 3, ["3/6/7"]));
+    await send(at(4, 3, ["3/7/7"]));
+    expect(adapter.selectLods).toEqual(["2", "2", "2", "2"]);
+  });
+
+  it("keeps the cells it answered from, though over its budget", async () => {
+    const adapter = parquetLike(FEATURES);
+    const { send } = harness(adapter, { featureByteBudget: 1 });
+    await send({ type: "open", id: 0, source: { url: "fake://x" } });
+    await send(at(1, 1, ["1/0/0"]));
+    await send(at(2, 2, ["2/0/0"]));
+    await send(at(3, 2, ["2/1/0"]));
+    expect(adapter.selectLods).toEqual(["2"]);
+  });
+});
+
 describe("streamWorkerCore — reopening", () => {
   for (const failure of ["refused", "throws"] as const) {
     it(`an open of another source that ${failure} leaves nothing of the previous one`, async () => {

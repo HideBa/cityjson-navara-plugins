@@ -70,22 +70,36 @@ async function worker(dir: string) {
   ) {
     level++;
   }
-  const cells = keysCovering(
-    grid,
-    [extent[0], extent[1], extent[3], extent[4]],
-    level,
-  );
-  const fetch = (id: number, lod: string | null): WorkerRequest => ({
+  const box: [number, number, number, number] = [
+    extent[0],
+    extent[1],
+    extent[3],
+    extent[4],
+  ];
+  const fetch = (
+    id: number,
+    lod: string | null,
+    at: number = level,
+    cells: string[] = keysCovering(grid, box, at),
+  ): WorkerRequest => ({
     type: "fetch",
     id,
-    bbox: [extent[0], extent[1], extent[3], extent[4]],
-    level,
+    bbox: box,
+    level: at,
     cells,
     lod,
     rules: [],
     rulesEnabled: false,
   });
-  return { posted, send, fetch, reads };
+  /** The four children of every cell covering the extent at `at`. */
+  const children = (at: number) =>
+    keysCovering(grid, box, at).flatMap((key) => {
+      const [l, c, r] = key.split("/").map(Number) as [number, number, number];
+      return [0, 1].flatMap((dc) =>
+        [0, 1].map((dr) => `${l + 1}/${2 * c + dc}/${2 * r + dr}`),
+      );
+    });
+  return { posted, send, fetch, reads, level, children };
 }
 
 function cellsOf(posted: WorkerResponse[], id: number) {
@@ -129,5 +143,81 @@ describe.each(["two-buildings-cityparquet", "plateau-6697-cityparquet"])(
         expect(reply(held.posted)).toEqual(reply(fresh.posted));
       },
     );
+  },
+);
+
+/** A cell message with order-free fields: per object, the multiset of its
+ *  triangles (each vertex's position, normal and base colour), so cells
+ *  whose objects came from reads in another order compare equal. */
+function canonical(cells: Iterable<Extract<WorkerResponse, { type: "cell" }>>) {
+  const out = new Map<string, unknown>();
+  for (const c of cells) {
+    const g = c.geometry;
+    const tris = new Map<string, string[]>();
+    for (let t = 0; t < g.triangleCount; t++) {
+      const verts: string[] = [];
+      let obj = "";
+      for (let k = 0; k < 3; k++) {
+        const v = g.indices[t * 3 + k]!;
+        const slot = g.slots[v]!;
+        obj = g.objectKeys[g.slotObjects[slot]!]!;
+        verts.push(
+          [
+            ...g.positions.subarray(v * 3, v * 3 + 3),
+            ...g.normals.subarray(v * 3, v * 3 + 3),
+            ...g.baseColors.subarray(slot * 3, slot * 3 + 3),
+          ].join(","),
+        );
+      }
+      const list = tris.get(obj) ?? [];
+      list.push(verts.sort().join("|"));
+      tris.set(obj, list);
+    }
+    out.set(c.key, {
+      objects: [...c.objects].sort((a, b) => a.id.localeCompare(b.id)),
+      triangles: [...tris].map(([id, l]) => [id, l.sort()]).sort(),
+      retainedBytes: c.retainedBytes,
+      lodsSeen: [...c.lodsSeen].sort(),
+      surfaceAttrKeys: [...c.surfaceAttrKeys].sort(),
+      frame: c.frame,
+      appearanceThemes: c.appearanceThemes,
+      objectTypes: [...g.objectTypes].sort(),
+    });
+  }
+  return out;
+}
+
+describe.each(["two-buildings-cityparquet", "plateau-6697-cityparquet"])(
+  "the feature store across levels over %s",
+  (dir) => {
+    it("bakes a finer level from a coarser read exactly as a fresh read", async () => {
+      const held = await worker(dir);
+      await held.send(held.fetch(1, "2.2", held.level - 1));
+      await held.send(held.fetch(2, "2.2", held.level + 1));
+      expect(held.reads).toEqual(["2.2"]);
+
+      const fresh = await worker(dir);
+      await fresh.send(fresh.fetch(2, "2.2", fresh.level + 1));
+      const f = cellsOf(fresh.posted, 2);
+      expect(f.size).toBeGreaterThan(0);
+      expect(cellsOf(held.posted, 2)).toEqual(f);
+    });
+
+    it("bakes a coarser level from finer reads with the same objects", async () => {
+      const held = await worker(dir);
+      // One level coarser than the cover, read through all its children.
+      const coarse = held.level - 1;
+      await held.send(held.fetch(1, "2.2", coarse + 1, held.children(coarse)));
+      await held.send(held.fetch(2, "2.2", coarse));
+      expect(held.reads).toEqual(["2.2"]);
+
+      const fresh = await worker(dir);
+      await fresh.send(fresh.fetch(2, "2.2", coarse));
+      const f = cellsOf(fresh.posted, 2);
+      expect(f.size).toBeGreaterThan(0);
+      expect(canonical(cellsOf(held.posted, 2).values())).toEqual(
+        canonical(f.values()),
+      );
+    });
   },
 );

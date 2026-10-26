@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import type { CityModel, CityObject, Surface } from "@cityjson/navara-core";
 import {
+  BYTES_PER_ENTRY,
   FeatureStore,
   ceilingCovers,
   lodView,
@@ -113,7 +114,7 @@ describe("lodView", () => {
 describe("FeatureStore", () => {
   it("answers a held cell only for a LoD its ceiling covers", () => {
     const store = new FeatureStore(1e9);
-    const held = model(["1", "2"]);
+    const held = [model(["1", "2"])];
     store.set("2/0/0", held, "2");
     expect(store.get("2/0/0", "1")).toBe(held);
     expect(store.get("2/0/0", "2")).toBe(held);
@@ -123,19 +124,19 @@ describe("FeatureStore", () => {
 
   it("replaces a cell's read with a later one", () => {
     const store = new FeatureStore(1e9);
-    store.set("2/0/0", model(["1"]), "1");
-    const wider = model(["1", "2", "3"]);
+    store.set("2/0/0", [model(["1"])], "1");
+    const wider = [model(["1", "2", "3"])];
     store.set("2/0/0", wider, null);
     expect(store.get("2/0/0", "3")).toBe(wider);
-    expect(store.bytes).toBe(modelBytes(wider));
+    expect(store.bytes).toBe(BYTES_PER_ENTRY + modelBytes(wider));
   });
 
   it("drops the least recently used cells over budget, never a kept one", () => {
-    const one = modelBytes(model(["1"]));
+    const one = BYTES_PER_ENTRY + modelBytes([model(["1"])]);
     const store = new FeatureStore(one * 2);
-    store.set("a", model(["1"]), "1");
-    store.set("b", model(["1"]), "1");
-    store.set("c", model(["1"]), "1");
+    store.set("a", [model(["1"])], "1");
+    store.set("b", [model(["1"])], "1");
+    store.set("c", [model(["1"])], "1");
     store.get("a", "1"); // a is now the most recent
     store.trim(new Set(["c"]));
     expect(store.get("b", "1")).toBeUndefined();
@@ -146,7 +147,7 @@ describe("FeatureStore", () => {
 
   it("forgets everything on clear", () => {
     const store = new FeatureStore(1e9);
-    store.set("a", model(["1"]), "1");
+    store.set("a", [model(["1"])], "1");
     store.clear();
     expect(store.get("a", "1")).toBeUndefined();
     expect(store.bytes).toBe(0);
@@ -156,7 +157,7 @@ describe("FeatureStore", () => {
 describe("FeatureStore exact entries", () => {
   it("answers only the same LoD for a source that states no ceiling", () => {
     const store = new FeatureStore(1e9);
-    const held = model(["1", "2"]);
+    const held = [model(["1", "2"])];
     store.set("a", held, "2", true);
     expect(store.get("a", "2")).toBe(held);
     expect(store.get("a", "1")).toBeUndefined();
